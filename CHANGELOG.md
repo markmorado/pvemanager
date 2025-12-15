@@ -4,7 +4,15 @@ All notable changes to PVEmanager will be documented in this file.
 
 ---
 
-## [v2.1.4] - 2025-12-13
+## [v1.0] - 2025-12-15
+
+### 🎉 Initial Production Release
+
+Production-ready version with complete feature set for Proxmox management.
+
+---
+
+## [v2.1.4] - 2025-12-13 (Development)
 
 ### 🔄 System Updates Feature
 

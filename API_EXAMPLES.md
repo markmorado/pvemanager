@@ -43,7 +43,7 @@ curl -X GET "http://localhost:8000/settings/api/version"
 Response:
 ```json
 {
-  "version": "2.1.4"
+  "version": "1.0"
 }
 ```
 
@@ -58,9 +58,9 @@ Response:
 ```json
 {
   "current_version": "2.1.3",
-  "latest_version": "2.1.4",
+  "latest_version": "1.0",
   "update_available": true,
-  "changelog": "## [v2.1.4] - 2025-12-13\n\n### New Features...",
+  "changelog": "## [v1.0] - 2025-12-15\n\n### Initial Release...",
   "commits_behind": 5,
   "error": null
 }

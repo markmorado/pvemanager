@@ -1,4 +1,4 @@
-# 🚀 Server Panel Deployment Guide v2.1.4
+# 🚀 Server Panel Deployment Guide v1.0
 
 Comprehensive guide for deploying Server Panel on a VPS with optional NGINX and SSL support.
 
