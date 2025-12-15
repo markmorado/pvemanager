@@ -4090,7 +4090,7 @@ def save_vm_instance(
 ) -> VMInstance:
     """Save or update VM instance configuration"""
     
-    # Проверяем, существует ли уже запись
+    # Проверяем, существует ли уже активная запись
     existing = db.query(VMInstance).filter(
         VMInstance.server_id == server_id,
         VMInstance.vmid == vmid,
@@ -4120,34 +4120,68 @@ def save_vm_instance(
         db.commit()
         db.refresh(existing)
         return existing
-    else:
-        # Создаем новую запись
-        instance = VMInstance(
-            server_id=server_id,
-            vmid=vmid,
-            node=node,
-            vm_type=vm_type,
-            name=name,
-            cores=cores,
-            memory=memory,
-            disk_size=disk_size,
-            ip_address=ip_address,
-            ip_prefix=ip_prefix,
-            gateway=gateway,
-            nameserver=nameserver,
-            cloud_init_user=cloud_init_user,
-            cloud_init_password=cloud_init_password,
-            ssh_keys=ssh_keys,
-            template_id=template_id,
-            template_name=template_name,
-            description=description,
-            extra_config=extra_config,
-            owner_id=owner_id
-        )
-        db.add(instance)
+    
+    # Проверяем, есть ли удалённая запись с тем же vmid (soft-deleted)
+    deleted_existing = db.query(VMInstance).filter(
+        VMInstance.server_id == server_id,
+        VMInstance.vmid == vmid,
+        VMInstance.deleted_at != None
+    ).first()
+    
+    if deleted_existing:
+        # Восстанавливаем и обновляем удалённую запись
+        deleted_existing.node = node
+        deleted_existing.vm_type = vm_type
+        deleted_existing.name = name
+        deleted_existing.cores = cores
+        deleted_existing.memory = memory
+        deleted_existing.disk_size = disk_size
+        deleted_existing.ip_address = ip_address
+        deleted_existing.ip_prefix = ip_prefix
+        deleted_existing.gateway = gateway
+        deleted_existing.nameserver = nameserver
+        deleted_existing.cloud_init_user = cloud_init_user
+        deleted_existing.cloud_init_password = cloud_init_password
+        deleted_existing.ssh_keys = ssh_keys
+        deleted_existing.template_id = template_id
+        deleted_existing.template_name = template_name
+        deleted_existing.description = description
+        deleted_existing.extra_config = extra_config
+        deleted_existing.owner_id = owner_id
+        deleted_existing.status = 'unknown'
+        deleted_existing.deleted_at = None  # Восстанавливаем запись
+        deleted_existing.updated_at = func.now()
         db.commit()
-        db.refresh(instance)
-        return instance
+        db.refresh(deleted_existing)
+        return deleted_existing
+    
+    # Создаем новую запись
+    instance = VMInstance(
+        server_id=server_id,
+        vmid=vmid,
+        node=node,
+        vm_type=vm_type,
+        name=name,
+        cores=cores,
+        memory=memory,
+        disk_size=disk_size,
+        ip_address=ip_address,
+        ip_prefix=ip_prefix,
+        gateway=gateway,
+        nameserver=nameserver,
+        cloud_init_user=cloud_init_user,
+        cloud_init_password=cloud_init_password,
+        ssh_keys=ssh_keys,
+        template_id=template_id,
+        template_name=template_name,
+        description=description,
+        extra_config=extra_config,
+        owner_id=owner_id
+    )
+    db.add(instance)
+    db.commit()
+    db.refresh(instance)
+    return instance
 
 
 def get_vm_instance(db: Session, server_id: int, vmid: int) -> VMInstance:
