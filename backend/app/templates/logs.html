@@ -674,7 +674,7 @@
                 <td>${log.action}</td>
                 <td class="log-message" title="${escapeHtml(log.message)}">${escapeHtml(log.message)}</td>
                 <td>${log.username || '-'}</td>
-                <td style="font-family: monospace; font-size: 0.8rem;">${log.ip_address || '-'}</td>
+                <td style="font-family: monospace; font-size: 0.8rem; color: var(--text-primary);">${log.ip_address || '-'}</td>
                 <td class="${log.success ? 'log-success' : 'log-failed'}">${log.success ? '✓' : '✗'}</td>
             </tr>
         `).join('');
