@@ -2614,9 +2614,9 @@ async function executeCreateVM(event) {
         start_after_create: document.getElementById('vmStartAfterCreate').checked,
         onboot: document.getElementById('vmOnboot').checked,
         enable_ha: document.getElementById('vmEnableHA').checked,
-        ipam_ip: allocatedIP,
-        ipam_gateway: allocatedGateway,
-        ipam_allocation_id: allocationId
+        ip_address: allocatedIP,
+        gateway: allocatedGateway,
+        ipam_network_id: ipamNetworkId ? parseInt(ipamNetworkId) : null
     };
     
     try {

@@ -754,15 +754,43 @@ async def deploy_vm_from_template(
             if error:
                 logger.warning(f"IPAM registration failed for manually specified IP: {error}")
         
+        # Get network mask (CIDR) and gateway from IPAM network if IP is specified
+        network_mask = "24"  # Default mask
+        gateway = deploy_data.gateway
+        
+        # Try to get proper network mask and gateway from IPAM
+        if allocated_ip and (deploy_data.ipam_network_id or ipam_allocation):
+            try:
+                from ..models import IPAMNetwork
+                network_id = deploy_data.ipam_network_id
+                if ipam_allocation and hasattr(ipam_allocation, 'network_id'):
+                    network_id = ipam_allocation.network_id
+                
+                if network_id:
+                    network = db.query(IPAMNetwork).filter(IPAMNetwork.id == network_id).first()
+                    if network:
+                        # Extract mask from CIDR (e.g., "10.10.10.0/24" -> "24")
+                        if network.network and '/' in network.network:
+                            network_mask = network.network.split('/')[1]
+                            logger.info(f"Using network mask /{network_mask} from IPAM network {network.name}")
+                        # Get gateway if not already specified
+                        if not gateway and network.gateway:
+                            gateway = network.gateway
+                            logger.info(f"Using gateway {gateway} from IPAM network {network.name}")
+            except Exception as e:
+                logger.warning(f"Could not get network info from IPAM: {e}")
+        
         # Configure VM
         ip_config = None
         if allocated_ip:
-            if deploy_data.gateway:
-                ip_config = f"ip={allocated_ip}/24,gw={deploy_data.gateway}"
+            logger.info(f"Configuring VM {new_vmid} with IP {allocated_ip}/{network_mask}, gateway: {gateway}")
+            if gateway:
+                ip_config = f"ip={allocated_ip}/{network_mask},gw={gateway}"
             else:
-                ip_config = f"ip={allocated_ip}/24"
-        elif allocated_ip is None:
+                ip_config = f"ip={allocated_ip}/{network_mask}"
+        else:
             ip_config = "ip=dhcp"
+            logger.info(f"Configuring VM {new_vmid} with DHCP")
         
         # Combine user's SSH key with deploy request SSH keys
         ssh_keys = deploy_data.ssh_keys or ""
