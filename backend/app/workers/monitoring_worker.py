@@ -194,6 +194,169 @@ class MonitoringWorker:
             logger.info(f"Server {server.name} is back ONLINE")
         
         self.last_server_states[server_id] = True
+    
+    def run_server_availability_check(self):
+        """
+        Dedicated server availability check - runs every 30 seconds.
+        Sends notifications about offline servers with 10-minute repeat interval.
+        Immediately notifies when server comes back online.
+        """
+        db = SessionLocal()
+        try:
+            # Get all active users with admin role for server notifications
+            users = db.query(User).filter(
+                User.is_active == True,
+                User.role.in_(['admin', 'superadmin'])
+            ).all()
+            
+            if not users:
+                logger.debug("[SERVER CHECK] No admin users, skipping server availability check")
+                return
+            
+            # Get all Proxmox servers
+            servers = db.query(ProxmoxServer).all()
+            
+            if not servers:
+                logger.debug("[SERVER CHECK] No Proxmox servers configured")
+                return
+            
+            logger.debug(f"[SERVER CHECK] Checking availability of {len(servers)} servers")
+            
+            for server in servers:
+                try:
+                    client = self._create_proxmox_client(server)
+                    
+                    # Quick connectivity check - just test if API responds
+                    if client.is_connected():
+                        # Server is online
+                        was_offline = self.last_server_states.get(server.id) == False
+                        
+                        # Update server status in DB
+                        if not server.is_online or was_offline:
+                            server.is_online = True
+                            server.last_error = None
+                            server.last_check = utcnow()
+                            db.commit()
+                        
+                        # Notify immediately if server recovered
+                        if was_offline:
+                            self._notify_server_recovered(db, server, users)
+                        
+                        self.last_server_states[server.id] = True
+                    else:
+                        raise ConnectionError("API not responding")
+                        
+                except ValueError as e:
+                    # Configuration error - log but don't mark as offline
+                    logger.warning(f"[SERVER CHECK] Server {server.name} configuration error: {e}")
+                    
+                except Exception as e:
+                    # Server is offline
+                    error_msg = str(e)
+                    was_online = self.last_server_states.get(server.id, True)
+                    
+                    # Update server status in DB
+                    server.is_online = False
+                    server.last_error = error_msg[:500]
+                    server.last_check = utcnow()
+                    db.commit()
+                    
+                    # Check if we should send notification
+                    last_alert = self.last_server_alerts.get(server.id, 0)
+                    now = datetime.now().timestamp()
+                    time_since_last_alert = now - last_alert
+                    
+                    # Send notification if:
+                    # 1. Server just went offline (was_online)
+                    # 2. OR 10 minutes passed since last notification
+                    should_notify = was_online or (time_since_last_alert >= 600)
+                    
+                    if should_notify:
+                        self._send_server_offline_notification(db, server, error_msg, users)
+                        self.last_server_alerts[server.id] = now
+                        
+                        if was_online:
+                            logger.warning(f"[SERVER CHECK] Server {server.name} went OFFLINE: {error_msg}")
+                        else:
+                            logger.warning(f"[SERVER CHECK] Server {server.name} still OFFLINE (repeat notification)")
+                    
+                    self.last_server_states[server.id] = False
+                    
+        except Exception as e:
+            logger.error(f"[SERVER CHECK] Critical error: {e}", exc_info=True)
+        finally:
+            db.close()
+    
+    def _send_server_offline_notification(self, db, server: ProxmoxServer, error: str, users: List[User]):
+        """Send server offline notification to all admin users"""
+        lang = get_panel_language(db)
+        
+        title = t("notify_server_offline_title", lang, server_name=server.name)
+        message = t("notify_server_offline_message", lang, 
+                   server_name=server.name, 
+                   hostname=server.hostname or server.ip_address,
+                   error=error[:200])
+        data = {
+            "server_id": server.id,
+            "server_name": server.name,
+            "hostname": server.hostname or server.ip_address,
+            "error": error
+        }
+        
+        for user in users:
+            try:
+                run_async(
+                    NotificationService.create_and_send(
+                        db=db,
+                        user_id=user.id,
+                        notification_type="system",
+                        level="critical",
+                        title=title,
+                        message=message,
+                        data=data,
+                        source="server_monitor",
+                        source_id=str(server.id)
+                    )
+                )
+            except Exception as e:
+                logger.error(f"Failed to send offline notification to user {user.id}: {e}")
+    
+    def _notify_server_recovered(self, db, server: ProxmoxServer, users: List[User]):
+        """Send immediate notification that server came back online"""
+        lang = get_panel_language(db)
+        
+        title = t("notify_server_online_title", lang, server_name=server.name)
+        message = t("notify_server_online_message", lang,
+                   server_name=server.name,
+                   hostname=server.hostname or server.ip_address)
+        data = {
+            "server_id": server.id,
+            "server_name": server.name,
+            "hostname": server.hostname or server.ip_address
+        }
+        
+        for user in users:
+            try:
+                run_async(
+                    NotificationService.create_and_send(
+                        db=db,
+                        user_id=user.id,
+                        notification_type="system",
+                        level="success",
+                        title=title,
+                        message=message,
+                        data=data,
+                        source="server_monitor",
+                        source_id=str(server.id),
+                        force_send=True  # Always send recovery notifications immediately
+                    )
+                )
+            except Exception as e:
+                logger.error(f"Failed to send recovery notification to user {user.id}: {e}")
+        
+        logger.info(f"[SERVER CHECK] Server {server.name} is back ONLINE - notification sent")
+        # Clear alert cooldown so next offline will notify immediately
+        self.last_server_alerts.pop(server.id, None)
         
     def run_vm_status_monitoring(self):
         """Monitor VM status changes and server connectivity"""
@@ -602,14 +765,31 @@ class MonitoringWorker:
             ).all()
             
             deleted_count = 0
+            released_ips = 0
             for vm in active_vms:
                 if (vm.server_id, vm.vmid) not in all_seen:
                     vm.deleted_at = sync_time
                     deleted_count += 1
                     logger.info(f"[VM SYNC] Marked VM {vm.name} (server={vm.server_id}, vmid={vm.vmid}) as deleted")
+                    
+                    # Release IPAM allocation for deleted VM
+                    try:
+                        from app.ipam_service import IPAMService
+                        ipam = IPAMService(db)
+                        released, released_ip = ipam.release_ip_by_vmid(
+                            proxmox_server_id=vm.server_id,
+                            proxmox_vmid=vm.vmid,
+                            released_by="system",
+                            reason=f"VM {vm.name} ({vm.vmid}) no longer exists on Proxmox"
+                        )
+                        if released:
+                            released_ips += 1
+                            logger.info(f"[VM SYNC] Released IPAM IP {released_ip} for deleted VM {vm.name}")
+                    except Exception as e:
+                        logger.warning(f"[VM SYNC] Failed to release IPAM for VM {vm.vmid}: {e}")
             
             db.commit()
-            logger.info(f"[VM SYNC] Cache sync completed. Processed {len(all_vms_data)} VMs/containers, marked {deleted_count} as deleted")
+            logger.info(f"[VM SYNC] Cache sync completed. Processed {len(all_vms_data)} VMs/containers, marked {deleted_count} as deleted, released {released_ips} IPs")
             
         except Exception as e:
             logger.error(f"[VM SYNC] Critical error: {e}", exc_info=True)
@@ -646,6 +826,16 @@ def start_monitoring_worker():
     from apscheduler.triggers.interval import IntervalTrigger
     
     scheduler = BackgroundScheduler()
+    
+    # Server availability check - every 30 seconds
+    # Sends notifications on offline, repeats every 10 minutes, notifies immediately on recovery
+    scheduler.add_job(
+        monitoring_worker.run_server_availability_check,
+        trigger=IntervalTrigger(seconds=30),
+        id='server_availability_check',
+        name='Check server availability',
+        replace_existing=True
+    )
     
     # VM status monitoring - every 30 seconds
     scheduler.add_job(
