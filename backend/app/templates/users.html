@@ -1,0 +1,1259 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('users_management') }}{% endblock %}
+
+{% block content %}
+<!-- Page Header -->
+<div class="page-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+    <div>
+        <h1 style="font-size: 1.75rem; font-weight: 600; margin: 0; color: var(--text-primary);"><i class="fa-solid fa-users"></i> {{ t('users_management') }}</h1>
+        <p style="color: var(--text-secondary); margin-top: 0.25rem;">{{ t('dashboard') }} / {{ t('settings') }} / {{ t('users') }}</p>
+    </div>
+    <div data-permission="users.create">
+        <button class="btn btn-success" onclick="showAddUserModal()">
+            <i class="fa-solid fa-plus"></i> {{ t('add_user') }}
+        </button>
+    </div>
+</div>
+
+<!-- Tabs -->
+<div class="tabs-container" style="margin-bottom: 1.5rem;">
+    <div style="display: flex; gap: 0.5rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0;">
+        <button class="tab-btn active" data-tab="users" onclick="switchTab('users')">
+            <i class="fa-solid fa-users"></i> {{ t('users') }}
+        </button>
+        <button class="tab-btn" data-tab="roles" onclick="switchTab('roles')">
+            <i class="fa-solid fa-tag"></i> {{ t('roles') }}
+        </button>
+        <button class="tab-btn" data-tab="sessions" onclick="switchTab('sessions')">
+            <i class="fa-solid fa-key"></i> {{ t('active_sessions') }}
+        </button>
+        <button class="tab-btn" data-tab="security" onclick="switchTab('security')">
+            <i class="fa-solid fa-shield"></i> {{ t('security') }}
+        </button>
+    </div>
+</div>
+
+<style>
+    .tab-btn {
+        padding: 0.75rem 1.25rem;
+        background: transparent;
+        border: none;
+        border-bottom: 2px solid transparent;
+        color: var(--text-secondary);
+        cursor: pointer;
+        font-size: 0.875rem;
+        font-weight: 500;
+        transition: all 0.2s ease;
+    }
+    .tab-btn:hover {
+        color: var(--text-primary);
+        background: var(--bg-hover);
+    }
+    .tab-btn.active {
+        color: var(--accent);
+        border-bottom-color: var(--accent);
+    }
+    .tab-content {
+        display: none;
+    }
+    .tab-content.active {
+        display: block;
+    }
+    
+    /* Мобильная адаптация */
+    @media (max-width: 768px) {
+        .page-header {
+            flex-direction: column;
+            align-items: flex-start !important;
+            gap: 1rem;
+        }
+        
+        .page-header h1 {
+            font-size: 1.25rem !important;
+        }
+        
+        .tabs-container > div {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+        
+        .tab-btn {
+            padding: 0.5rem 1rem;
+            white-space: nowrap;
+        }
+        
+        .card table th,
+        .card table td {
+            padding: 0.5rem 0.25rem;
+            font-size: 0.75rem;
+        }
+        
+        /* Скрываем менее важные колонки */
+        .card table th:nth-child(4),
+        .card table td:nth-child(4),
+        .card table th:nth-child(5),
+        .card table td:nth-child(5),
+        .card table th:nth-child(6),
+        .card table td:nth-child(6) {
+            display: none;
+        }
+    }
+    
+    @media (max-width: 480px) {
+        .card table th:nth-child(3),
+        .card table td:nth-child(3) {
+            display: none;
+        }
+        
+        .btn {
+            padding: 0.35rem 0.75rem;
+            font-size: 0.75rem;
+        }
+    }
+</style>
+
+<div class="tab-panels">
+    <!-- Users Tab -->
+    <div class="tab-content active" id="tab-users">
+        <div class="card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <h3 style="margin: 0; color: var(--text-primary);"><i class="fa-solid fa-users"></i> {{ t('user_list') }}</h3>
+                <button class="btn btn-secondary" onclick="loadUsers()"><i class="fa-solid fa-rotate"></i></button>
+            </div>
+            <div class="table-responsive">
+                <table class="table" id="usersTable">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>{{ t('username') }}</th>
+                            <th>{{ t('full_name') }}</th>
+                            <th>Email</th>
+                            <th>{{ t('role') }}</th>
+                            <th>{{ t('status') }}</th>
+                            <th>{{ t('last_login') }}</th>
+                            <th>{{ t('actions') }}</th>
+                        </tr>
+                    </thead>
+                    <tbody id="usersTableBody">
+                        <tr>
+                            <td colspan="8" style="text-align: center; color: var(--text-muted);">
+                                <i class="fa-solid fa-spinner fa-spin"></i> {{ t('loading') }}...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Roles Tab -->
+    <div class="tab-content" id="tab-roles">
+        <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 1rem;">
+            <div class="card">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                    <h3 style="margin: 0; color: var(--text-primary);"><i class="fa-solid fa-tag"></i> {{ t('roles') }}</h3>
+                    <button class="btn btn-success btn-sm" onclick="showAddRoleModal()"><i class="fa-solid fa-plus"></i></button>
+                </div>
+                <div id="rolesList" style="display: flex; flex-direction: column; gap: 0.5rem;">
+                    <div style="text-align: center; color: var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> {{ t('loading') }}...</div>
+                </div>
+            </div>
+            <div class="card">
+                <h3 style="margin: 0 0 1rem 0; color: var(--text-primary);"><i class="fa-solid fa-key"></i> {{ t('permissions') }}</h3>
+                <div id="permissionsPanel" style="color: var(--text-muted); text-align: center; padding: 2rem;">
+                    {{ t('select_role_to_edit') }}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sessions Tab -->
+    <div class="tab-content" id="tab-sessions">
+        <div class="card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <h3 style="margin: 0; color: var(--text-primary);"><i class="fa-solid fa-key"></i> {{ t('active_sessions') }}</h3>
+                <div style="display: flex; gap: 0.5rem;">
+                    <button class="btn btn-danger btn-sm" onclick="terminateAllSessions()"><i class="fa-solid fa-ban"></i> {{ t('terminate_all') }}</button>
+                    <button class="btn btn-secondary btn-sm" onclick="loadSessions()"><i class="fa-solid fa-rotate"></i></button>
+                </div>
+            </div>
+            <div class="table-responsive">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>{{ t('user') }}</th>
+                            <th>IP</th>
+                            <th>{{ t('device') }}</th>
+                            <th>{{ t('created') }}</th>
+                            <th>{{ t('last_activity') }}</th>
+                            <th>{{ t('expires') }}</th>
+                            <th>{{ t('actions') }}</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sessionsTableBody">
+                        <tr>
+                            <td colspan="7" style="text-align: center; color: var(--text-muted);">
+                                <i class="fa-solid fa-spinner fa-spin"></i> {{ t('loading') }}...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Security Tab -->
+    <div class="tab-content" id="tab-security">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+            <!-- Security Settings -->
+            <div class="card">
+                <h3 style="margin: 0 0 1rem 0; color: var(--text-primary);"><i class="fa-solid fa-gear"></i> {{ t('security_settings') }}</h3>
+                <form id="securitySettingsForm">
+                    <div style="margin-bottom: 1rem;">
+                        <label style="display: block; margin-bottom: 0.25rem; color: var(--text-secondary); font-size: 0.875rem;">{{ t('max_login_attempts') }}</label>
+                        <input type="number" class="form-control" name="max_login_attempts" value="5" min="1" max="20">
+                    </div>
+                    <div style="margin-bottom: 1rem;">
+                        <label style="display: block; margin-bottom: 0.25rem; color: var(--text-secondary); font-size: 0.875rem;">{{ t('account_lockout_minutes') }}</label>
+                        <input type="number" class="form-control" name="account_lockout_minutes" value="30" min="1" max="1440">
+                    </div>
+                    <div style="margin-bottom: 1rem;">
+                        <label style="display: block; margin-bottom: 0.25rem; color: var(--text-secondary); font-size: 0.875rem;">{{ t('session_timeout_minutes') }}</label>
+                        <input type="number" class="form-control" name="session_timeout_minutes" value="60" min="5" max="1440">
+                    </div>
+                    <div style="margin-bottom: 1rem;">
+                        <label style="display: block; margin-bottom: 0.25rem; color: var(--text-secondary); font-size: 0.875rem;">{{ t('ip_block_duration_minutes') }}</label>
+                        <input type="number" class="form-control" name="ip_block_duration_minutes" value="60" min="1" max="10080">
+                    </div>
+                    <div style="margin-bottom: 1rem;">
+                        <label style="display: block; margin-bottom: 0.25rem; color: var(--text-secondary); font-size: 0.875rem;">{{ t('min_password_length') }}</label>
+                        <input type="number" class="form-control" name="min_password_length" value="8" min="6" max="32">
+                    </div>
+                    <div class="form-check">
+                        <input type="checkbox" class="form-check-input" id="requireUppercase" name="require_password_uppercase">
+                        <label class="form-check-label" for="requireUppercase">{{ t('require_uppercase') }}</label>
+                    </div>
+                    <div class="form-check">
+                        <input type="checkbox" class="form-check-input" id="requireNumbers" name="require_password_numbers">
+                        <label class="form-check-label" for="requireNumbers">{{ t('require_numbers') }}</label>
+                    </div>
+                    <div class="form-check">
+                        <input type="checkbox" class="form-check-input" id="requireSpecial" name="require_password_special">
+                        <label class="form-check-label" for="requireSpecial">{{ t('require_special_chars') }}</label>
+                    </div>
+                    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-floppy-disk"></i> {{ t('save') }}</button>
+                </form>
+            </div>
+
+            <!-- IP Blacklist & Security Events -->
+            <div class="card">
+                <h3 style="margin: 0 0 1rem 0; color: var(--text-primary);"><i class="fa-solid fa-ban"></i> {{ t('ip_blacklist') }}</h3>
+                <div style="display: flex; justify-content: flex-end; margin-bottom: 0.5rem;">
+                    <button class="btn btn-danger btn-sm" onclick="showBlockIpModal()"><i class="fa-solid fa-plus"></i> {{ t('add') }}</button>
+                </div>
+                <div class="table-responsive" style="max-height: 200px; overflow-y: auto; margin-bottom: 1.5rem;">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>IP</th>
+                                <th>{{ t('reason') }}</th>
+                                <th>{{ t('expires') }}</th>
+                                <th>{{ t('actions') }}</th>
+                            </tr>
+                        </thead>
+                        <tbody id="blacklistTableBody">
+                            <tr>
+                                <td colspan="4" style="text-align: center; color: var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> {{ t('loading') }}...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <h3 style="margin: 0 0 1rem 0; color: var(--text-primary);"><i class="fa-solid fa-file-lines"></i> {{ t('security_events') }}</h3>
+                <div style="display: flex; justify-content: flex-end; margin-bottom: 0.5rem;">
+                    <button class="btn btn-secondary btn-sm" onclick="loadSecurityEvents()"><i class="fa-solid fa-rotate"></i></button>
+                </div>
+                <div class="table-responsive" style="max-height: 200px; overflow-y: auto;">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>{{ t('time') }}</th>
+                                <th>{{ t('event') }}</th>
+                                <th>IP</th>
+                                <th>{{ t('user') }}</th>
+                            </tr>
+                        </thead>
+                        <tbody id="eventsTableBody">
+                            <tr>
+                                <td colspan="4" style="text-align: center; color: var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> {{ t('loading') }}...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add User Modal -->
+<div id="addUserModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 2000; align-items: center; justify-content: center;">
+    <div class="card" style="max-width: 500px; width: 95%; max-height: 90vh; overflow-y: auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+            <h3 style="margin: 0; color: var(--text-primary);"><i class="fa-solid fa-plus"></i> {{ t('add_user') }}</h3>
+            <button onclick="closeModal('addUserModal')" style="background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer;">&times;</button>
+        </div>
+        <form id="addUserForm">
+            <div style="margin-bottom: 1rem;">
+                <label style="display: block; margin-bottom: 0.25rem; color: var(--text-secondary); font-size: 0.875rem;">{{ t('username') }} *</label>
+                <input type="text" class="form-control" name="username" required minlength="3">
+            </div>
+            <div style="margin-bottom: 1rem;">
+                <label style="display: block; margin-bottom: 0.25rem; color: var(--text-secondary); font-size: 0.875rem;">Email *</label>
+                <input type="email" class="form-control" name="email" required>
+            </div>
+            <div style="margin-bottom: 1rem;">
+                <label style="display: block; margin-bottom: 0.25rem; color: var(--text-secondary); font-size: 0.875rem;">{{ t('full_name') }}</label>
+                <input type="text" class="form-control" name="full_name">
+            </div>
+            <div style="margin-bottom: 1rem;">
+                <label style="display: block; margin-bottom: 0.25rem; color: var(--text-secondary); font-size: 0.875rem;">{{ t('password') }} *</label>
+                <input type="password" class="form-control" name="password" required minlength="8">
+            </div>
+            <div style="margin-bottom: 1rem;">
+                <label style="display: block; margin-bottom: 0.25rem; color: var(--text-secondary); font-size: 0.875rem;">{{ t('role') }}</label>
+                <select class="form-control" name="role_id" id="userRoleSelect">
+                    <option value="">-- {{ t('no_role') }} --</option>
+                </select>
+                    </div>
+            <div class="form-check">
+                <input type="checkbox" class="form-check-input" name="is_admin" id="newUserIsAdmin">
+                <label class="form-check-label" for="newUserIsAdmin">{{ t('administrator') }}</label>
+            </div>
+            <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1.5rem;">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('addUserModal')">{{ t('cancel') }}</button>
+                <button type="submit" class="btn btn-success">{{ t('create') }}</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Edit User Modal -->
+<div id="editUserModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 2000; align-items: center; justify-content: center;">
+    <div class="card" style="max-width: 500px; width: 95%; max-height: 90vh; overflow-y: auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+            <h3 style="margin: 0; color: var(--text-primary);"><i class="fa-solid fa-pen"></i> {{ t('edit_user') }}</h3>
+            <button onclick="closeModal('editUserModal')" style="background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer;">&times;</button>
+        </div>
+        <form id="editUserForm" onsubmit="updateUser(event)">
+            <input type="hidden" name="user_id" id="editUserId">
+            <div style="margin-bottom: 1rem;">
+                <label style="display: block; margin-bottom: 0.25rem; color: var(--text-secondary); font-size: 0.875rem;">{{ t('username') }}</label>
+                <input type="text" class="form-control" name="username" id="editUsername" disabled>
+            </div>
+            <div style="margin-bottom: 1rem;">
+                <label style="display: block; margin-bottom: 0.25rem; color: var(--text-secondary); font-size: 0.875rem;">Email</label>
+                <input type="email" class="form-control" name="email" id="editEmail">
+            </div>
+            <div style="margin-bottom: 1rem;">
+                <label style="display: block; margin-bottom: 0.25rem; color: var(--text-secondary); font-size: 0.875rem;">{{ t('full_name') }}</label>
+                <input type="text" class="form-control" name="full_name" id="editFullName">
+            </div>
+            <div style="margin-bottom: 1rem;">
+                <label style="display: block; margin-bottom: 0.25rem; color: var(--text-secondary); font-size: 0.875rem;">{{ t('new_password') }} ({{ t('leave_empty_to_keep') }})</label>
+                <input type="password" class="form-control" name="password" id="editPassword">
+            </div>
+            <div style="margin-bottom: 1rem;">
+                <label style="display: block; margin-bottom: 0.25rem; color: var(--text-secondary); font-size: 0.875rem;">{{ t('role') }}</label>
+                <select class="form-control" name="role_id" id="editRoleSelect">
+                    <option value="">-- {{ t('no_role') }} --</option>
+                </select>
+            </div>
+            <div class="form-check">
+                <input type="checkbox" class="form-check-input" name="is_admin" id="editIsAdmin">
+                <label class="form-check-label" for="editIsAdmin">{{ t('administrator') }}</label>
+            </div>
+            <div class="form-check">
+                <input type="checkbox" class="form-check-input" name="is_active" id="editIsActive">
+                <label class="form-check-label" for="editIsActive">{{ t('active') }}</label>
+            </div>
+            <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1.5rem;">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('editUserModal')">{{ t('cancel') }}</button>
+                <button type="submit" class="btn btn-success">{{ t('save') }}</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Add Role Modal -->
+<div id="addRoleModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 2000; align-items: center; justify-content: center;">
+    <div class="card" style="max-width: 700px; width: 95%; max-height: 90vh; overflow-y: auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+            <h3 style="margin: 0; color: var(--text-primary);"><i class="fa-solid fa-tag"></i> {{ t('add_role') }}</h3>
+            <button onclick="closeModal('addRoleModal')" style="background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer;">&times;</button>
+        </div>
+        <form id="addRoleForm" onsubmit="createRole(event)">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+                <div>
+                    <div style="margin-bottom: 1rem;">
+                        <label style="display: block; margin-bottom: 0.25rem; color: var(--text-secondary); font-size: 0.875rem;">{{ t('role_name') }} *</label>
+                        <input type="text" class="form-control" name="name" required pattern="[a-z0-9_]+" placeholder="e.g. operator">
+                        <small style="color: var(--text-muted); font-size: 0.75rem;">{{ t('role_name_hint') }}</small>
+                    </div>
+                    <div style="margin-bottom: 1rem;">
+                        <label style="display: block; margin-bottom: 0.25rem; color: var(--text-secondary); font-size: 0.875rem;">{{ t('display_name') }} *</label>
+                        <input type="text" class="form-control" name="display_name" required placeholder="e.g. Operator">
+                    </div>
+                    <div style="margin-bottom: 1rem;">
+                        <label style="display: block; margin-bottom: 0.25rem; color: var(--text-secondary); font-size: 0.875rem;">{{ t('description') }}</label>
+                        <textarea class="form-control" name="description" rows="2"></textarea>
+                    </div>
+                </div>
+                <div>
+                    <label style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary); font-size: 0.875rem;">{{ t('permissions') }}</label>
+                    <div class="permissions-list" id="newRolePermissions" style="max-height: 300px; overflow-y: auto; background: var(--bg-tertiary); padding: 0.75rem; border-radius: 8px;">
+                        <!-- Permissions will be loaded here -->
+                    </div>
+                </div>
+            </div>
+            <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1.5rem;">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('addRoleModal')">{{ t('cancel') }}</button>
+                <button type="submit" class="btn btn-success">{{ t('create') }}</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Block IP Modal -->
+<div id="blockIpModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 2000; align-items: center; justify-content: center;">
+    <div class="card" style="max-width: 500px; width: 95%; max-height: 90vh; overflow-y: auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+            <h3 style="margin: 0; color: var(--text-primary);"><i class="fa-solid fa-ban"></i> {{ t('block_ip') }}</h3>
+            <button onclick="closeModal('blockIpModal')" style="background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer;">&times;</button>
+        </div>
+        <form id="blockIpForm" onsubmit="blockIp(event)">
+            <div style="margin-bottom: 1rem;">
+                <label style="display: block; margin-bottom: 0.25rem; color: var(--text-secondary); font-size: 0.875rem;">IP {{ t('address') }} *</label>
+                <input type="text" class="form-control" name="ip_address" required 
+                       pattern="^(\d{1,3}\.){3}\d{1,3}$" placeholder="192.168.1.100">
+            </div>
+            <div style="margin-bottom: 1rem;">
+                <label style="display: block; margin-bottom: 0.25rem; color: var(--text-secondary); font-size: 0.875rem;">{{ t('reason') }} *</label>
+                <input type="text" class="form-control" name="reason" required placeholder="{{ t('block_reason') }}">
+            </div>
+            <div style="margin-bottom: 1rem;">
+                <label style="display: block; margin-bottom: 0.25rem; color: var(--text-secondary); font-size: 0.875rem;">{{ t('duration_minutes') }}</label>
+                <input type="number" class="form-control" name="duration_minutes" value="1440" min="1">
+                <small style="color: var(--text-muted); font-size: 0.75rem;">{{ t('leave_empty_permanent') }}</small>
+            </div>
+            <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1.5rem;">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('blockIpModal')">{{ t('cancel') }}</button>
+                <button type="submit" class="btn btn-danger">{{ t('block') }}</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<style>
+.permissions-list {
+    max-height: 300px;
+    overflow-y: auto;
+    border: 1px solid var(--border-color);
+    border-radius: 0.25rem;
+    padding: 0.5rem;
+}
+.permission-category {
+    margin-bottom: 1rem;
+}
+.permission-category-header {
+    font-weight: 600;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 0.5rem;
+    font-size: 0.9rem;
+    color: var(--text-primary);
+}
+.permission-category .form-check {
+    padding-left: 1.75rem;
+    margin-bottom: 0.35rem;
+    min-height: 1.5rem;
+    display: flex;
+    align-items: center;
+}
+.permission-category .form-check-input {
+    margin-left: -1.75rem;
+    margin-top: 0;
+    width: 1rem;
+    height: 1rem;
+    flex-shrink: 0;
+}
+.permission-category .form-check-label {
+    padding-left: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+</style>
+
+<script>
+const API_TOKEN = localStorage.getItem('access_token');
+
+// Tab switching function
+function switchTab(tabName) {
+    // Update tab buttons
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tab === tabName);
+    });
+    
+    // Update tab content
+    document.querySelectorAll('.tab-content').forEach(content => {
+        content.classList.toggle('active', content.id === 'tab-' + tabName);
+    });
+    
+    // Load data for specific tabs
+    if (tabName === 'sessions') loadSessions();
+    if (tabName === 'security') {
+        loadSecurityEvents();
+        loadBlacklist();
+    }
+}
+
+// Show modals
+function showAddUserModal() {
+    document.getElementById('addUserModal').style.display = 'flex';
+    loadRolesForSelect('userRoleSelect');
+}
+
+function showAddRoleModal() {
+    document.getElementById('addRoleModal').style.display = 'flex';
+}
+
+function showBlockIpModal() {
+    document.getElementById('blockIpModal').style.display = 'flex';
+}
+
+// Close modals
+function closeModal(modalId) {
+    document.getElementById(modalId).style.display = 'none';
+}
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', function() {
+    // Wait for permissions to be loaded before initializing
+    function initPage() {
+        loadUsers();
+        loadRoles();
+        loadSessions();
+        loadSecurityEvents();
+        loadBlacklist();
+        loadSecuritySettings();
+        loadPermissionsList();
+    }
+    
+    // Check if permissions are already loaded
+    if (window.isAdmin !== undefined && (window.isAdmin || Object.keys(window.userPermissions || {}).length > 0)) {
+        initPage();
+    } else {
+        // Wait for permissions to load
+        window.addEventListener('permissionsLoaded', function() {
+            initPage();
+        }, { once: true });
+        
+        // Fallback timeout in case event is missed
+        setTimeout(() => {
+            if (!document.getElementById('usersTableBody').innerHTML.trim()) {
+                initPage();
+            }
+        }, 1500);
+    }
+});
+
+// Load users
+async function loadUsers() {
+    try {
+        const response = await fetch('/admin/api/users', {
+            headers: { 'Authorization': `Bearer ${API_TOKEN}` }
+        });
+        const users = await response.json();
+        
+        const canEdit = window.hasPermission('users.edit');
+        const canDelete = window.hasPermission('users.delete');
+        
+        const tbody = document.getElementById('usersTableBody');
+        tbody.innerHTML = users.map(user => `
+            <tr>
+                <td style="color: var(--text-primary);">${user.id}</td>
+                <td style="color: var(--text-primary);">
+                    <strong>${user.username}</strong>
+                    ${user.is_admin ? '<span class="badge bg-danger ms-1">Admin</span>' : ''}
+                </td>
+                <td style="color: var(--text-primary);">${user.full_name || '-'}</td>
+                <td style="color: var(--text-primary);">${user.email}</td>
+                <td>
+                    ${user.role ? `<span class="badge bg-primary">${user.role.display_name}</span>` : '-'}
+                </td>
+                <td>
+                    ${user.is_active 
+                        ? '<span class="badge bg-success">{{ _("active") }}</span>' 
+                        : '<span class="badge bg-secondary">{{ _("inactive") }}</span>'}
+                    ${user.locked_until ? '<span class="badge bg-warning ms-1">{{ _("locked") }}</span>' : ''}
+                </td>
+                <td style="color: var(--text-primary);">${user.last_login ? formatDate(user.last_login) : '-'}</td>
+                <td>
+                    ${canEdit ? `<button class="btn btn-sm btn-outline-primary me-1" onclick="editUser(${user.id})" style="color: var(--text-primary);">
+                        <i class="fas fa-edit"></i>
+                    </button>` : ''}
+                    ${canDelete ? `<button class="btn btn-sm btn-outline-danger" onclick="deleteUser(${user.id}, '${user.username}')" 
+                            ${user.id === currentUserId ? 'disabled' : ''}>
+                        <i class="fas fa-trash"></i>
+                    </button>` : ''}
+                </td>
+            </tr>
+        `).join('');
+    } catch (error) {
+        console.error('Error loading users:', error);
+        showToast('{{ _("error_loading_users") }}', 'danger');
+    }
+}
+
+// Load roles
+async function loadRoles() {
+    try {
+        const response = await fetch('/admin/api/roles', {
+            headers: { 'Authorization': `Bearer ${API_TOKEN}` }
+        });
+        const roles = await response.json();
+        
+        // Update roles list
+        const rolesList = document.getElementById('rolesList');
+        rolesList.innerHTML = roles.map(role => `
+            <a href="#" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" 
+               onclick="selectRole(${role.id})" data-role-id="${role.id}"
+               style="background: var(--bg-surface); color: var(--text-primary); border-color: var(--border-color);">
+                <div>
+                    <strong style="color: var(--text-primary);">${role.display_name}</strong>
+                    <br><small style="color: var(--text-muted);">${role.name}</small>
+                </div>
+                <span style="background: var(--bg-tertiary); color: var(--text-secondary); padding: 0.25rem 0.5rem; border-radius: 0.25rem; font-size: 0.75rem;">${role.user_count || 0}</span>
+            </a>
+        `).join('');
+        
+        // Update select dropdowns
+        const roleOptions = roles.map(r => `<option value="${r.id}">${r.display_name}</option>`).join('');
+        document.getElementById('userRoleSelect').innerHTML = `<option value="">-- {{ t('no_role') }} --</option>` + roleOptions;
+        document.getElementById('editRoleSelect').innerHTML = `<option value="">-- {{ t('no_role') }} --</option>` + roleOptions;
+        
+        window.rolesData = roles;
+    } catch (error) {
+        console.error('Error loading roles:', error);
+    }
+}
+
+// Select role for editing
+async function selectRole(roleId) {
+    const role = window.rolesData.find(r => r.id === roleId);
+    if (!role) return;
+    
+    // Highlight selected role
+    document.querySelectorAll('#rolesList .list-group-item').forEach(item => {
+        item.classList.remove('active');
+        if (item.dataset.roleId == roleId) item.classList.add('active');
+    });
+    
+    // Load permissions panel
+    const panel = document.getElementById('permissionsPanel');
+    const allPermissions = await loadAllPermissions();
+    
+    let html = `
+        <form id="editRoleForm" data-role-id="${role.id}">
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <label class="form-label">{{ t('display_name') }}</label>
+                    <input type="text" class="form-control" name="display_name" value="${role.display_name}">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">{{ t('description') }}</label>
+                    <input type="text" class="form-control" name="description" value="${role.description || ''}">
+                </div>
+            </div>
+            <hr>
+            <label class="form-label">{{ t('permissions') }}</label>
+            <div class="row">
+    `;
+    
+    for (const [category, perms] of Object.entries(allPermissions)) {
+        html += `<div class="col-md-4 mb-3">
+            <div class="permission-category">
+                <div class="permission-category-header">${category}</div>
+        `;
+        for (const [perm, permDescription] of Object.entries(perms)) {
+            const checked = role.permissions && role.permissions[perm] ? 'checked' : '';
+            const permLabel = permDescription || perm.split('.').pop();
+            html += `
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" name="permission_${perm}" id="perm_${perm.replace(/\./g, '_')}" ${checked}>
+                    <label class="form-check-label" for="perm_${perm.replace(/\./g, '_')}">${permLabel}</label>
+                </div>
+            `;
+        }
+        html += `</div></div>`;
+    }
+    
+    html += `
+            </div>
+            <hr>
+            <div class="d-flex justify-content-between">
+                <button type="button" class="btn btn-danger" onclick="deleteRole(${role.id}, '${role.name}')" 
+                        ${role.is_system ? 'disabled title="{{ _("system_role_cannot_delete") }}"' : ''}>
+                    <i class="fas fa-trash me-1"></i>{{ t('delete') }}
+                </button>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save me-1"></i>{{ t('save') }}
+                </button>
+            </div>
+        </form>
+    `;
+    
+    panel.innerHTML = html;
+    
+    // Add submit handler
+    document.getElementById('editRoleForm').addEventListener('submit', saveRole);
+}
+
+// Load all permissions
+async function loadAllPermissions() {
+    try {
+        const response = await fetch('/admin/api/permissions', {
+            headers: { 'Authorization': `Bearer ${API_TOKEN}` }
+        });
+        return await response.json();
+    } catch (error) {
+        console.error('Error loading permissions:', error);
+        return {};
+    }
+}
+
+// Load permissions list for new role modal
+async function loadPermissionsList() {
+    const allPermissions = await loadAllPermissions();
+    const container = document.getElementById('newRolePermissions');
+    
+    let html = '';
+    for (const [category, perms] of Object.entries(allPermissions)) {
+        html += `<div class="permission-category">
+            <div class="permission-category-header">${category}</div>
+        `;
+        for (const [perm, permDescription] of Object.entries(perms)) {
+            const permLabel = permDescription || perm.split('.').pop();
+            html += `
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" name="permission_${perm}" id="new_perm_${perm.replace(/\./g, '_')}">
+                    <label class="form-check-label" for="new_perm_${perm.replace(/\./g, '_')}">${permLabel}</label>
+                </div>
+            `;
+        }
+        html += `</div>`;
+    }
+    container.innerHTML = html;
+}
+
+// Save role
+async function saveRole(e) {
+    e.preventDefault();
+    const form = e.target;
+    const roleId = form.dataset.roleId;
+    
+    // Collect permissions
+    const permissions = {};
+    form.querySelectorAll('input[type="checkbox"][name^="permission_"]').forEach(cb => {
+        const perm = cb.name.replace('permission_', '');
+        permissions[perm] = cb.checked;
+    });
+    
+    try {
+        const response = await fetch(`/admin/api/roles/${roleId}`, {
+            method: 'PUT',
+            headers: {
+                'Authorization': `Bearer ${API_TOKEN}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                display_name: form.display_name.value,
+                description: form.description.value,
+                permissions: permissions
+            })
+        });
+        
+        if (response.ok) {
+            showToast('{{ _("role_saved") }}', 'success');
+            loadRoles();
+        } else {
+            const error = await response.json();
+            showToast(error.detail || '{{ _("error") }}', 'danger');
+        }
+    } catch (error) {
+        console.error('Error saving role:', error);
+        showToast('{{ _("error") }}', 'danger');
+    }
+}
+
+// Delete role
+async function deleteRole(roleId, roleName) {
+    const confirmed = await showDeleteConfirm(
+        '{{ _("delete_role") }}',
+        `{{ t('confirm_delete_role') }} "${roleName}"?`
+    );
+    
+    if (!confirmed) return;
+    
+    try {
+        const response = await fetch(`/admin/api/roles/${roleId}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${API_TOKEN}` }
+        });
+        
+        if (response.ok) {
+            showToast('success', '{{ _("success") }}', '{{ _("role_deleted") }}');
+            loadRoles();
+            document.getElementById('permissionsPanel').innerHTML = '<div class="text-muted text-center py-4">{{ _("select_role_to_edit") }}</div>';
+        } else {
+            const error = await response.json();
+            showToast('error', '{{ _("error") }}', error.detail || '{{ _("error") }}');
+        }
+    } catch (error) {
+        console.error('Error deleting role:', error);
+        showToast('error', '{{ _("error") }}', '{{ _("error") }}');
+    }
+}
+
+// Load sessions
+async function loadSessions() {
+    try {
+        const response = await fetch('/admin/api/sessions', {
+            headers: { 'Authorization': `Bearer ${API_TOKEN}` }
+        });
+        const sessions = await response.json();
+        
+        const tbody = document.getElementById('sessionsTableBody');
+        if (sessions.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">{{ _("no_active_sessions") }}</td></tr>';
+            return;
+        }
+        
+        tbody.innerHTML = sessions.map(session => `
+            <tr>
+                <td style="color: var(--text-primary);"><strong>${session.username}</strong></td>
+                <td style="color: var(--text-primary);"><code>${session.ip_address}</code></td>
+                <td style="color: var(--text-secondary);"><small>${session.device_info || '-'}</small></td>
+                <td style="color: var(--text-primary);">${formatDate(session.created_at)}</td>
+                <td style="color: var(--text-primary);">${formatDate(session.last_activity)}</td>
+                <td style="color: var(--text-primary);">${formatDate(session.expires_at)}</td>
+                <td>
+                    <button class="btn btn-sm btn-outline-danger" onclick="terminateSession(${session.id})">
+                        <i class="fas fa-sign-out-alt"></i>
+                    </button>
+                </td>
+            </tr>
+        `).join('');
+    } catch (error) {
+        console.error('Error loading sessions:', error);
+    }
+}
+
+// Terminate session
+async function terminateSession(sessionId) {
+    try {
+        const response = await fetch(`/admin/api/sessions/${sessionId}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${API_TOKEN}` }
+        });
+        
+        if (response.ok) {
+            showToast('{{ _("session_terminated") }}', 'success');
+            loadSessions();
+        }
+    } catch (error) {
+        console.error('Error terminating session:', error);
+    }
+}
+
+// Terminate all sessions
+async function terminateAllSessions() {
+    const confirmed = await showConfirm(
+        '{{ _("terminate_sessions") }}',
+        '{{ _("confirm_terminate_all") }}',
+        { type: 'warning', confirmText: '{{ _("terminate") }}' }
+    );
+    
+    if (!confirmed) return;
+    
+    try {
+        const response = await fetch('/admin/api/sessions/terminate-all', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${API_TOKEN}` }
+        });
+        
+        if (response.ok) {
+            showToast('success', '{{ _("success") }}', '{{ _("all_sessions_terminated") }}');
+            loadSessions();
+        }
+    } catch (error) {
+        console.error('Error:', error);
+    }
+}
+
+// Load security events
+async function loadSecurityEvents() {
+    try {
+        const response = await fetch('/admin/api/security/events?limit=50', {
+            headers: { 'Authorization': `Bearer ${API_TOKEN}` }
+        });
+        const events = await response.json();
+        
+        const tbody = document.getElementById('eventsTableBody');
+        if (events.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">{{ _("no_events") }}</td></tr>';
+            return;
+        }
+        
+        tbody.innerHTML = events.map(event => {
+            const eventClass = event.event_type.includes('fail') || event.event_type.includes('block') ? 'text-danger' : 
+                               event.event_type.includes('success') ? 'text-success' : '';
+            return `
+                <tr>
+                    <td style="color: var(--text-secondary);"><small>${formatDate(event.created_at)}</small></td>
+                    <td><span class="${eventClass}" style="color: ${eventClass ? '' : 'var(--text-primary)'};">${event.event_type}</span></td>
+                    <td style="color: var(--text-primary);"><code>${event.ip_address || '-'}</code></td>
+                    <td style="color: var(--text-primary);">${event.username || '-'}</td>
+                </tr>
+            `;
+        }).join('');
+    } catch (error) {
+        console.error('Error loading security events:', error);
+    }
+}
+
+// Load blacklist
+async function loadBlacklist() {
+    try {
+        const response = await fetch('/admin/api/security/blocked-ips', {
+            headers: { 'Authorization': `Bearer ${API_TOKEN}` }
+        });
+        const blacklist = await response.json();
+        
+        const tbody = document.getElementById('blacklistTableBody');
+        if (blacklist.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">{{ _("no_blocked_ips") }}</td></tr>';
+            return;
+        }
+        
+        tbody.innerHTML = blacklist.map(item => `
+            <tr>
+                <td style="color: var(--text-primary);"><code>${item.ip_address}</code></td>
+                <td style="color: var(--text-secondary);"><small>${item.reason}</small></td>
+                <td style="color: var(--text-primary);">${item.expires_at ? formatDate(item.expires_at) : '{{ _("permanent") }}'}</td>
+                <td>
+                    <button class="btn btn-sm btn-outline-success" onclick="unblockIp(${item.id})">
+                        <i class="fas fa-unlock"></i>
+                    </button>
+                </td>
+            </tr>
+        `).join('');
+    } catch (error) {
+        console.error('Error loading blacklist:', error);
+    }
+}
+
+// Unblock IP
+async function unblockIp(id) {
+    try {
+        const response = await fetch(`/admin/api/security/blocked-ips/${id}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${API_TOKEN}` }
+        });
+        
+        if (response.ok) {
+            showToast('{{ _("ip_unblocked") }}', 'success');
+            loadBlacklist();
+        }
+    } catch (error) {
+        console.error('Error:', error);
+    }
+}
+
+// Load security settings
+async function loadSecuritySettings() {
+    try {
+        const response = await fetch('/admin/api/security/settings', {
+            headers: { 'Authorization': `Bearer ${API_TOKEN}` }
+        });
+        const settings = await response.json();
+        
+        const form = document.getElementById('securitySettingsForm');
+        if (settings.max_login_attempts) form.max_login_attempts.value = settings.max_login_attempts;
+        if (settings.lockout_duration_minutes) form.account_lockout_minutes.value = settings.lockout_duration_minutes;
+        if (settings.session_timeout_minutes) form.session_timeout_minutes.value = settings.session_timeout_minutes;
+        if (settings.ip_block_duration_minutes) form.ip_block_duration_minutes.value = settings.ip_block_duration_minutes;
+        if (settings.password_min_length) form.min_password_length.value = settings.password_min_length;
+        form.require_password_uppercase.checked = settings.password_require_uppercase === true || settings.password_require_uppercase === 'true';
+        form.require_password_numbers.checked = settings.password_require_numbers === true || settings.password_require_numbers === 'true';
+        form.require_password_special.checked = settings.password_require_special === true || settings.password_require_special === 'true';
+    } catch (error) {
+        console.error('Error loading security settings:', error);
+    }
+}
+
+// Edit user
+async function editUser(userId) {
+    try {
+        const response = await fetch(`/admin/api/users/${userId}`, {
+            headers: { 'Authorization': `Bearer ${API_TOKEN}` }
+        });
+        const user = await response.json();
+        
+        document.getElementById('editUserId').value = user.id;
+        document.getElementById('editUsername').value = user.username;
+        document.getElementById('editEmail').value = user.email;
+        document.getElementById('editFullName').value = user.full_name || '';
+        document.getElementById('editPassword').value = '';
+        document.getElementById('editRoleSelect').value = user.role_id || '';
+        document.getElementById('editIsAdmin').checked = user.is_admin;
+        document.getElementById('editIsActive').checked = user.is_active;
+        
+        document.getElementById('editUserModal').style.display = 'flex';
+    } catch (error) {
+        console.error('Error:', error);
+        showToast('{{ _("error") }}', 'danger');
+    }
+}
+
+// Delete user
+async function deleteUser(userId, username) {
+    const confirmed = await showDeleteConfirm(
+        '{{ _("delete_user") }}',
+        `{{ t('confirm_delete_user') }} "${username}"?`
+    );
+    
+    if (!confirmed) return;
+    
+    try {
+        const response = await fetch(`/admin/api/users/${userId}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${API_TOKEN}` }
+        });
+        
+        if (response.ok) {
+            showToast('success', '{{ _("success") }}', '{{ _("user_deleted") }}');
+            loadUsers();
+        } else {
+            const error = await response.json();
+            showToast('error', '{{ _("error") }}', error.detail || '{{ _("error") }}');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        showToast('error', '{{ _("error") }}', '{{ _("error") }}');
+    }
+}
+
+// Form handlers
+document.getElementById('addUserForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const formData = new FormData(this);
+    
+    try {
+        const response = await fetch('/admin/api/users', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${API_TOKEN}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                username: formData.get('username'),
+                email: formData.get('email'),
+                full_name: formData.get('full_name'),
+                password: formData.get('password'),
+                role_id: formData.get('role_id') ? parseInt(formData.get('role_id')) : null,
+                is_admin: formData.get('is_admin') === 'on'
+            })
+        });
+        
+        if (response.ok) {
+            closeModal('addUserModal');
+            showToast('{{ _("user_created") }}', 'success');
+            loadUsers();
+            this.reset();
+        } else {
+            const error = await response.json();
+            showToast(error.detail || '{{ _("error") }}', 'danger');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        showToast('{{ _("error") }}', 'danger');
+    }
+});
+
+document.getElementById('editUserForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const userId = document.getElementById('editUserId').value;
+    const formData = new FormData(this);
+    
+    const data = {
+        email: formData.get('email'),
+        full_name: formData.get('full_name'),
+        role_id: formData.get('role_id') ? parseInt(formData.get('role_id')) : null,
+        is_admin: formData.get('is_admin') === 'on',
+        is_active: formData.get('is_active') === 'on'
+    };
+    
+    const password = formData.get('password');
+    if (password) data.password = password;
+    
+    try {
+        const response = await fetch(`/admin/api/users/${userId}`, {
+            method: 'PUT',
+            headers: {
+                'Authorization': `Bearer ${API_TOKEN}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(data)
+        });
+        
+        if (response.ok) {
+            closeModal('editUserModal');
+            showToast('{{ _("user_updated") }}', 'success');
+            loadUsers();
+        } else {
+            const error = await response.json();
+            showToast(error.detail || '{{ _("error") }}', 'danger');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        showToast('{{ _("error") }}', 'danger');
+    }
+});
+
+document.getElementById('addRoleForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const formData = new FormData(this);
+    
+    // Collect permissions
+    const permissions = {};
+    this.querySelectorAll('input[type="checkbox"][name^="permission_"]').forEach(cb => {
+        const perm = cb.name.replace('permission_', '');
+        permissions[perm] = cb.checked;
+    });
+    
+    try {
+        const response = await fetch('/admin/api/roles', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${API_TOKEN}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                name: formData.get('name'),
+                display_name: formData.get('display_name'),
+                description: formData.get('description'),
+                permissions: permissions
+            })
+        });
+        
+        if (response.ok) {
+            closeModal('addRoleModal');
+            showToast('{{ _("role_created") }}', 'success');
+            loadRoles();
+            this.reset();
+        } else {
+            const error = await response.json();
+            showToast(error.detail || '{{ _("error") }}', 'danger');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        showToast('{{ _("error") }}', 'danger');
+    }
+});
+
+document.getElementById('securitySettingsForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const formData = new FormData(this);
+    
+    const settings = {
+        max_login_attempts: parseInt(formData.get('max_login_attempts')),
+        lockout_duration_minutes: parseInt(formData.get('account_lockout_minutes')),
+        session_timeout_minutes: parseInt(formData.get('session_timeout_minutes')),
+        ip_block_duration_minutes: parseInt(formData.get('ip_block_duration_minutes')),
+        password_min_length: parseInt(formData.get('min_password_length')),
+        password_require_uppercase: formData.get('require_password_uppercase') === 'on',
+        password_require_numbers: formData.get('require_password_numbers') === 'on',
+        password_require_special: formData.get('require_password_special') === 'on'
+    };
+    
+    try {
+        const response = await fetch('/admin/api/security/settings', {
+            method: 'PUT',
+            headers: {
+                'Authorization': `Bearer ${API_TOKEN}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(settings)
+        });
+        
+        if (response.ok) {
+            showToast('{{ _("settings_saved") }}', 'success');
+        } else {
+            const error = await response.json();
+            showToast(error.detail || '{{ _("error") }}', 'danger');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        showToast('{{ _("error") }}', 'danger');
+    }
+});
+
+document.getElementById('blockIpForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const formData = new FormData(this);
+    
+    try {
+        const response = await fetch('/admin/api/security/blocked-ips', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${API_TOKEN}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                ip_address: formData.get('ip_address'),
+                reason: formData.get('reason'),
+                duration_minutes: parseInt(formData.get('duration_minutes')) || null
+            })
+        });
+        
+        if (response.ok) {
+            closeModal('blockIpModal');
+            showToast('{{ _("ip_blocked") }}', 'success');
+            loadBlacklist();
+            this.reset();
+        } else {
+            const error = await response.json();
+            showToast(error.detail || '{{ _("error") }}', 'danger');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        showToast('{{ _("error") }}', 'danger');
+    }
+});
+
+// Utility functions
+function formatDate(dateStr) {
+    if (!dateStr) return '-';
+    const date = new Date(dateStr);
+    return date.toLocaleString();
+}
+
+// Get current user ID (for disabling delete on self)
+let currentUserId = null;
+fetch('/api/auth/me', { headers: { 'Authorization': `Bearer ${API_TOKEN}` }})
+    .then(r => r.json())
+    .then(user => { currentUserId = user.id; });
+</script>
+{% endblock %}

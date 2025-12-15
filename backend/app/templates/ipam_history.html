@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block title %}{{ t('ipam_history') }}{% endblock %}
+
+{% block content %}
+<div class="page-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+    <div>
+        <h1 style="font-size: 1.75rem; font-weight: 600; margin: 0;"><i class="fa-solid fa-file-lines"></i> {{ t('ipam_history') }}</h1>
+        <p style="color: var(--text-secondary); margin-top: 0.25rem;">{{ t('all_changes_log') }}</p>
+    </div>
+    <div style="display: flex; gap: 0.75rem;">
+        <a href="/ipam" class="btn" style="background: var(--bg-tertiary); color: var(--text-primary);">← {{ t('back') }}</a>
+        <button onclick="loadHistory()" class="btn" style="background: var(--bg-tertiary); color: var(--text-primary);"><i class="fa-solid fa-rotate"></i> {{ t('refresh') }}</button>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card" style="margin-bottom: 1rem;">
+    <div style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: center;">
+        <div>
+            <label style="color: var(--text-secondary); font-size: 0.875rem;">{{ t('action_filter') }}</label>
+            <select id="filterAction" onchange="loadHistory()" style="padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                <option value="">{{ t('all') }}</option>
+                <option value="allocate">{{ t('allocation') }}</option>
+                <option value="release">{{ t('release') }}</option>
+                <option value="reserve">{{ t('reservation') }}</option>
+                <option value="update">{{ t('update') }}</option>
+            </select>
+        </div>
+        <div>
+            <label style="color: var(--text-secondary); font-size: 0.875rem;">{{ t('period_filter') }}</label>
+            <select id="filterPeriod" onchange="loadHistory()" style="padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                <option value="7">{{ t('days_7') }}</option>
+                <option value="30" selected>{{ t('days_30') }}</option>
+                <option value="90">{{ t('days_90') }}</option>
+                <option value="">{{ t('all_time') }}</option>
+            </select>
+        </div>
+    </div>
+</div>
+
+<!-- History List -->
+<div class="card">
+    <div id="historyContainer">
+        <div style="text-align: center; padding: 2rem; color: var(--text-muted);">
+            <i class="fa-solid fa-spinner fa-spin"></i> {{ t('loading_ellipsis') }}
+        </div>
+    </div>
+</div>
+
+<script>
+// URL params helper functions
+function getUrlParams() {
+    return new URLSearchParams(window.location.search);
+}
+
+function updateUrlParams(params) {
+    const url = new URL(window.location);
+    Object.entries(params).forEach(([key, value]) => {
+        if (value) {
+            url.searchParams.set(key, value);
+        } else {
+            url.searchParams.delete(key);
+        }
+    });
+    window.history.replaceState({}, '', url);
+}
+
+function restoreFiltersFromUrl() {
+    const params = getUrlParams();
+    
+    const action = params.get('action') || '';
+    document.getElementById('filterAction').value = action;
+    
+    const period = params.get('period') || '30';
+    document.getElementById('filterPeriod').value = period;
+}
+
+async function loadHistory() {
+    try {
+        const action = document.getElementById('filterAction').value;
+        const period = document.getElementById('filterPeriod').value;
+        
+        // Save filters to URL
+        updateUrlParams({ action: action, period: period });
+        
+        let url = '/ipam/api/history?limit=100';
+        if (action) url += `&action=${action}`;
+        if (period) {
+            const date = new Date();
+            date.setDate(date.getDate() - parseInt(period));
+            url += `&from_date=${date.toISOString()}`;
+        }
+        
+        const response = await fetchWithAuth(url);
+        const container = document.getElementById('historyContainer');
+        
+        if (response.ok) {
+            const history = await response.json();
+            renderHistory(history);
+        } else {
+            container.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--danger);"><i class="fa-solid fa-circle-xmark"></i> ' + t('error_loading') + '</div>';
+        }
+    } catch (error) {
+        console.error('Error loading history:', error);
+        document.getElementById('historyContainer').innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--danger);"><i class="fa-solid fa-circle-xmark"></i> ' + t('error_loading') + '</div>';
+    }
+}
+
+function renderHistory(history) {
+    const container = document.getElementById('historyContainer');
+    
+    if (history.length === 0) {
+        container.innerHTML = `
+            <div style="text-align: center; padding: 3rem;">
+                <div style="font-size: 3rem; margin-bottom: 1rem;"><i class="fa-solid fa-scroll"></i></div>
+                <h3 style="color: var(--text-primary); margin-bottom: 0.5rem;">${t('history_empty')}</h3>
+                <p style="color: var(--text-secondary);">${t('no_records_for_period')}</p>
+            </div>
+        `;
+        return;
+    }
+    
+    const actionIcons = {
+        'allocate': '<i class="fa-solid fa-plus"></i>',
+        'release': '<i class="fa-solid fa-minus"></i>',
+        'reserve': '<i class="fa-solid fa-lock"></i>',
+        'update': '<i class="fa-solid fa-pen"></i>',
+        'create': '<i class="fa-solid fa-plus-circle"></i>',
+        'delete': '<i class="fa-solid fa-trash"></i>'
+    };
+    
+    const actionColors = {
+        'allocate': '#22c55e',
+        'release': '#ef4444',
+        'reserve': '#4f46e5',
+        'update': '#3b82f6',
+        'create': '#22c55e',
+        'delete': '#ef4444'
+    };
+    
+    container.innerHTML = `
+        <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+            ${history.map(h => `
+                <div style="display: flex; align-items: flex-start; gap: 1rem; padding: 1rem; border-radius: 8px; background: var(--bg-secondary); border-left: 3px solid ${actionColors[h.action] || 'var(--border-color)'};">
+                    <div style="font-size: 1.5rem;">${actionIcons[h.action] || '<i class="fa-solid fa-file-lines"></i>'}</div>
+                    <div style="flex: 1;">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                            <div>
+                                <span style="font-family: monospace; background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-weight: 500; color: var(--text-primary);">${h.ip_address}</span>
+                                <span style="color: var(--text-secondary); margin-left: 0.5rem;">${h.network_name || ''}</span>
+                            </div>
+                            <span style="color: var(--text-muted); font-size: 0.875rem;">${new Date(h.created_at).toLocaleString('ru-RU')}</span>
+                        </div>
+                        <div style="margin-top: 0.5rem; color: var(--text-secondary);">
+                            ${h.details || getActionDescription(h.action)}
+                        </div>
+                        ${h.performed_by ? `<div style="margin-top: 0.25rem; color: var(--text-muted); font-size: 0.75rem;"><i class="fa-solid fa-user"></i> ${h.performed_by}</div>` : ''}
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+function getActionDescription(action) {
+    const descriptions = {
+        'allocate': t('ip_allocated'),
+        'release': t('ip_released'),
+        'reserve': t('ip_reserved'),
+        'update': t('record_updated'),
+        'create': t('record_created'),
+        'delete': t('record_deleted')
+    };
+    return descriptions[action] || action;
+}
+
+// Initial load after DOM ready
+window.addEventListener('DOMContentLoaded', () => {
+    restoreFiltersFromUrl();
+    setTimeout(loadHistory, 100);
+});
+</script>
+{% endblock %}

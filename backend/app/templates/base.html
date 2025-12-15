@@ -1,0 +1,1298 @@
+<!doctype html>
+<html lang="{{ lang }}" data-theme="dark">
+<head>
+    <meta charset="utf-8">
+    <title>{{ title or t('app_name') }}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+    
+    <!-- Google Fonts - Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-T3c6CoIi6uLrA9TneNEoa7RxnatzjcDSCmG1MXxSR1GAsXEV/Dwwykc2MPK8M2HN" crossorigin="anonymous">
+    
+    <!-- Custom Theme CSS -->
+    <link rel="stylesheet" href="/static/css/theme.css">
+    
+    <!-- Theme Switcher (loads early to prevent flash) -->
+    <script src="/static/js/theme.js"></script>
+    
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    
+    <!-- noVNC for VNC console - ES6 module from esm.sh -->
+    <script type="module">
+        try {
+            // Import from esm.sh which handles ES6 modules properly
+            const { default: RFB } = await import('https://esm.sh/@novnc/novnc@1.4.0/lib/rfb.js');
+            window.RFB = RFB;
+            window.RFBReady = true;
+            window.dispatchEvent(new CustomEvent('RFBReady', { detail: RFB }));
+        } catch (err) {
+            console.error('Failed to load noVNC:', err);
+        }
+    </script>
+    
+    <!-- xterm.js for Terminal console -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.min.js"></script>
+    <script>
+        window.xtermReady = true;
+    </script>
+    <script>
+        // Helper function to wait for RFB to be ready
+        window.waitForRFB = function() {
+            return new Promise(function(resolve) {
+                if (window.RFBReady && window.RFB) {
+                    resolve(window.RFB);
+                } else {
+                    window.addEventListener('RFBReady', function(e) {
+                        resolve(e.detail);
+                    }, { once: true });
+                }
+            });
+        };
+        
+        // Debug mode flag - set to true to enable console.log messages
+        window.DEBUG_MODE = false;
+        
+        // Debug logger - only logs if DEBUG_MODE is true
+        window.debugLog = function() {
+            if (window.DEBUG_MODE) {
+                console.log.apply(console, arguments);
+            }
+        };
+        
+        // Global translations object - available immediately for all scripts
+        window.translations = {{ translations | tojson | safe }};
+        
+        // Global timezone from server
+        window.serverTimezone = '{{ timezone | default("UTC") }}';
+        
+        // Translation helper function - available globally
+        window.t = function(key) {
+            return window.translations[key] || key;
+        };
+        
+        // Date formatting helper with server timezone
+        window.formatDateTime = function(dateStr) {
+            if (!dateStr) return '-';
+            try {
+                const date = new Date(dateStr);
+                return date.toLocaleString(window.currentLang === 'en' ? 'en-US' : 'ru-RU', {
+                    timeZone: window.serverTimezone,
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit'
+                });
+            } catch (e) {
+                return dateStr;
+            }
+        };
+        
+        window.formatDate = function(dateStr) {
+            if (!dateStr) return '-';
+            try {
+                const date = new Date(dateStr);
+                return date.toLocaleDateString(window.currentLang === 'en' ? 'en-US' : 'ru-RU', {
+                    timeZone: window.serverTimezone
+                });
+            } catch (e) {
+                return dateStr;
+            }
+        };
+        
+        // Global fetchWithAuth function - available to all scripts
+        // Options:
+        //   hideOnForbidden: if true, returns null instead of throwing on 403 (for graceful UI hiding)
+        window.fetchWithAuth = async function(url, options = {}) {
+            const token = localStorage.getItem('access_token');
+            
+            if (!token) {
+                const currentUrl = encodeURIComponent(window.location.pathname + window.location.search);
+                window.location.href = `/login?returnUrl=${currentUrl}`;
+                throw new Error('No authentication token');
+            }
+
+            const headers = {
+                'Authorization': `Bearer ${token}`,
+                ...options.headers
+            };
+            
+            // Set default Content-Type only if not specified
+            if (!headers['Content-Type'] && !headers['content-type']) {
+                headers['Content-Type'] = 'application/json';
+            }
+
+            try {
+                const response = await fetch(url, { ...options, headers });
+
+                if (response.status === 401) {
+                    localStorage.removeItem('access_token');
+                    const currentUrl = encodeURIComponent(window.location.pathname + window.location.search);
+                    window.location.href = `/login?returnUrl=${currentUrl}`;
+                    throw new Error('Unauthorized');
+                }
+                
+                // Handle 403 Forbidden - permission denied
+                if (response.status === 403) {
+                    if (options.hideOnForbidden) {
+                        // Return special response to allow caller to hide UI
+                        return { ok: false, status: 403, forbidden: true };
+                    }
+                    // Don't throw, just return response for caller to handle
+                    return response;
+                }
+
+                return response;
+            } catch (error) {
+                console.error('Fetch error:', error.message);
+                throw error;
+            }
+        };
+        
+        // Also define as local function for scripts that don't use window prefix
+        var fetchWithAuth = window.fetchWithAuth;
+        
+        // Global ESC handler for closing modals
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                // Find all visible modals and close the topmost one
+                const modals = document.querySelectorAll('[id$="Modal"], [id$="modal"]');
+                let closedAny = false;
+                let highestZIndex = 0;
+                let topModal = null;
+                
+                modals.forEach(function(modal) {
+                    const style = window.getComputedStyle(modal);
+                    if (style.display !== 'none' && style.visibility !== 'hidden') {
+                        const zIndex = parseInt(style.zIndex) || 0;
+                        if (zIndex >= highestZIndex) {
+                            highestZIndex = zIndex;
+                            topModal = modal;
+                        }
+                    }
+                });
+                
+                if (topModal) {
+                    // Try to find and click the close button
+                    const closeBtn = topModal.querySelector('button[onclick*="close"], button[onclick*="Close"]');
+                    if (closeBtn) {
+                        closeBtn.click();
+                        closedAny = true;
+                    } else {
+                        // If no close button, just hide the modal
+                        topModal.style.display = 'none';
+                        closedAny = true;
+                    }
+                }
+                
+                if (closedAny) {
+                    event.preventDefault();
+                }
+            }
+        });
+    </script>
+
+    <style>
+        /* Minimal overrides - main styles in /static/css/theme.css */
+        
+        /* Tab pane fix for Bootstrap */
+        .tab-pane {
+            display: none;
+        }
+        .tab-pane.show.active {
+            display: block;
+        }
+        
+        /* Material icons sizing */
+        .material-icon {
+            width: 20px;
+            height: 20px;
+            fill: currentColor;
+            stroke: none;
+            display: inline-block;
+            vertical-align: middle;
+            flex-shrink: 0;
+        }
+        
+        .material-icon-lg {
+            width: 24px;
+            height: 24px;
+        }
+        
+        /* Legacy variable mappings for compatibility */
+        :root {
+            --bg-primary: var(--bg-body);
+            --bg-secondary: var(--bg-surface);
+            --bg-tertiary: var(--bg-surface-elevated);
+            --bg-card: var(--bg-surface);
+            --bg-hover: var(--bg-surface-hover);
+            --border-color: var(--border-default);
+            --accent: var(--primary);
+            --accent-gradient: linear-gradient(135deg, #0066FF 0%, #0052CC 100%);
+            --success-gradient: linear-gradient(135deg, #00C853 0%, #00A844 100%);
+            --warning-gradient: linear-gradient(135deg, #FF9800 0%, #F57C00 100%);
+            --transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            --transition-slow: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        /* Custom Dialog Styles */
+        .custom-dialog-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(4px);
+            z-index: 10000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.2s ease;
+        }
+        
+        .custom-dialog-overlay.show {
+            opacity: 1;
+            visibility: visible;
+        }
+        
+        .custom-dialog {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-default);
+            border-radius: 20px;
+            padding: 32px 28px;
+            max-width: 440px;
+            width: 90%;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            transform: scale(0.9) translateY(-20px);
+            transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        
+        .custom-dialog-overlay.show .custom-dialog {
+            transform: scale(1) translateY(0);
+        }
+        
+        .custom-dialog-icon {
+            width: 64px;
+            height: 64px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 20px;
+            font-size: 28px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+        
+        .custom-dialog-icon.info {
+            background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+        }
+        
+        .custom-dialog-icon.success {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        }
+        
+        .custom-dialog-icon.warning {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+        }
+        
+        .custom-dialog-icon.danger {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+        }
+        
+        .custom-dialog-icon.question {
+            background: linear-gradient(135deg, #667eea 0%, #4f46e5 100%);
+        }
+        
+        .custom-dialog-title {
+            font-size: 1.35rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            text-align: center;
+            margin-bottom: 12px;
+            line-height: 1.4;
+        }
+        
+        .custom-dialog-message {
+            font-size: 1rem;
+            color: var(--text-secondary);
+            text-align: center;
+            margin-bottom: 28px;
+            line-height: 1.6;
+        }
+        
+        .custom-dialog-input-container {
+            margin-bottom: 20px;
+        }
+        
+        .custom-dialog-input {
+            width: 100%;
+            padding: 12px 16px;
+            border-radius: 8px;
+            border: 2px solid var(--border-color);
+            background: var(--bg-input);
+            color: var(--text-primary);
+            font-size: 1rem;
+            text-align: center;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+        
+        .custom-dialog-input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+        }
+        
+        .custom-dialog-input.error {
+            border-color: var(--danger);
+            animation: shake 0.3s ease-in-out;
+        }
+        
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            75% { transform: translateX(5px); }
+        }
+        
+        .custom-dialog-buttons {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+        }
+        
+        .custom-dialog-btn {
+            padding: 12px 28px;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border: none;
+            min-width: 110px;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+        }
+        
+        .custom-dialog-btn.primary {
+            background: linear-gradient(135deg, #667eea 0%, #4f46e5 100%);
+            color: #ffffff !important;
+            box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+        }
+        
+        .custom-dialog-btn.primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(99, 102, 241, 0.5);
+        }
+        
+        .custom-dialog-btn.secondary {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1.5px solid var(--border-default);
+            text-shadow: none;
+        }
+        
+        .custom-dialog-btn.secondary:hover {
+            background: var(--bg-hover);
+            border-color: var(--border-color);
+        }
+        
+        .custom-dialog-btn.danger {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            color: white;
+        }
+        
+        .custom-dialog-btn.danger:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+        }
+        
+        .custom-dialog-btn.success {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+        }
+        
+        .custom-dialog-btn.success:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+        }
+    </style>
+</head>
+<body>
+<!-- Update Banner (shown during system update) -->
+<div id="update-banner" class="update-banner" style="display: none;">
+    <div class="update-banner-content">
+        <i class="fas fa-sync fa-spin"></i>
+        <span id="update-banner-text">Обновление системы...</span>
+    </div>
+</div>
+
+<style>
+.update-banner {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 10000;
+    background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+    color: white;
+    padding: 12px 20px;
+    text-align: center;
+    font-weight: 600;
+    box-shadow: 0 4px 20px rgba(249, 115, 22, 0.4);
+    animation: pulse-banner 2s infinite;
+}
+
+@keyframes pulse-banner {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.85; }
+}
+
+.update-banner-content {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+}
+
+.update-banner i {
+    font-size: 1.1rem;
+}
+
+/* Offset content when banner is shown */
+body.update-in-progress .layout {
+    margin-top: 50px;
+}
+</style>
+
+<script>
+// Check for update in progress on page load
+(function() {
+    const updateInProgress = localStorage.getItem('pve_update_in_progress');
+    const updateStarted = localStorage.getItem('pve_update_started');
+    
+    if (updateInProgress === 'true') {
+        // Check if update has been running for more than 5 minutes (timeout)
+        const startTime = parseInt(updateStarted || '0');
+        const now = Date.now();
+        const fiveMinutes = 5 * 60 * 1000;
+        
+        if (now - startTime > fiveMinutes) {
+            // Update timeout, clear the flag
+            localStorage.removeItem('pve_update_in_progress');
+            localStorage.removeItem('pve_update_started');
+        } else {
+            // Show update banner
+            document.body.classList.add('update-in-progress');
+            const banner = document.getElementById('update-banner');
+            if (banner) {
+                banner.style.display = 'block';
+                
+                // Poll for server to come back
+                pollServerRestart();
+            }
+        }
+    }
+    
+    function pollServerRestart() {
+        fetch('/settings/api/version', { method: 'GET', cache: 'no-cache' })
+            .then(response => {
+                if (response.ok) {
+                    // Server is back, reload!
+                    localStorage.removeItem('pve_update_in_progress');
+                    localStorage.removeItem('pve_update_started');
+                    window.location.reload();
+                } else {
+                    setTimeout(pollServerRestart, 2000);
+                }
+            })
+            .catch(() => {
+                // Still updating, check again
+                setTimeout(pollServerRestart, 2000);
+            });
+    }
+})();
+</script>
+
+<div class="layout">
+    <!-- Sidebar Overlay for Mobile -->
+    <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
+    
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            {% if custom_logo_exists %}
+            <img src="/settings/api/logo.png" alt="{{ panel_name }}" class="sidebar-logo-img" style="height: 105px; width: auto; object-fit: contain;">
+            {% else %}
+            <span style="font-size: 2rem;"><i class="fa-solid fa-cloud"></i></span>
+            {% endif %}
+        </div>
+        <nav>
+            <ul class="sidebar-nav">
+                <li><a href="/" class="{{ 'active' if request.path == '/' or request.path == '/dashboard' else '' }}" title="{{ t('nav_dashboard') }}">
+                    <svg class="material-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+                    <span>{{ t('nav_dashboard') }}</span>
+                </a></li>
+                <li><a href="/virtual-machines" class="{{ 'active' if request.path.startswith('/virtual-machines') or request.path.startswith('/proxmox/server') else '' }}" title="{{ t('nav_vms') }}">
+                    <svg class="material-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+                    <span>{{ t('nav_vms') }}</span>
+                </a></li>
+                <li><a href="/vms" class="{{ 'active' if request.path == '/vms' or (request.path.startswith('/vms/') or (request.path.startswith('/proxmox/') and not request.path.startswith('/proxmox/server'))) else '' }}" title="{{ t('nav_proxmox') }}">
+                    <svg class="material-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg>
+                    <span>{{ t('nav_proxmox') }}</span>
+                </a></li>
+                <li><a href="/templates" class="{{ 'active' if request.path.startswith('/templates') else '' }}" title="{{ t('nav_templates') }}">
+                    <svg class="material-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                    <span>{{ t('nav_templates') }}</span>
+                </a></li>
+                <li><a href="/ipam" class="{{ 'active' if request.path.startswith('/ipam') else '' }}" title="{{ t('nav_ipam') }}">
+                    <svg class="material-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+                    <span>{{ t('nav_ipam') }}</span>
+                </a></li>
+                <li><a href="/containers" class="{{ 'active' if request.path.startswith('/containers') else '' }}" title="{{ t('nav_docker') }}">
+                    <i class="fa-brands fa-docker" style="font-size: 1.25rem; width: 24px; text-align: center;"></i>
+                    <span>{{ t('nav_docker') }}</span>
+                </a></li>
+                <li><a href="/logs" class="{{ 'active' if request.path.startswith('/logs') else '' }}" title="{{ t('nav_logs') }}">
+                    <svg class="material-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><line x1="10" y1="9" x2="8" y2="9"></line></svg>
+                    <span>{{ t('nav_logs') }}</span>
+                </a></li>
+                <li><a href="/settings" class="{{ 'active' if request.path.startswith('/settings') else '' }}" title="{{ t('nav_settings') }}">
+                    <svg class="material-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                    <span>{{ t('nav_settings') }}</span>
+                </a></li>
+                <li><a href="/admin/users" class="{{ 'active' if request.path.startswith('/admin/users') else '' }}" title="{{ t('nav_users') }}">
+                    <svg class="material-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+                    <span>{{ t('nav_users') }}</span>
+                </a></li>
+                <li style="margin-top: auto; border-top: 1px solid rgba(100, 100, 150, 0.2); padding-top: 1rem;">
+                    <a href="#" onclick="logout(event)" title="{{ t('nav_logout') }}">
+                        <svg class="material-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+                        <span>{{ t('nav_logout') }}</span>
+                    </a>
+                </li>
+            </ul>
+        </nav>
+        <div class="sidebar-footer">
+            <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebarCollapse()" title="{{ t('collapse_sidebar') }}">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="15 18 9 12 15 6"></polyline>
+                </svg>
+                <span>{{ t('collapse_sidebar') }}</span>
+            </button>
+        </div>
+    </aside>
+    <div class="content-wrapper">
+        <header>
+            <!-- Mobile Menu Toggle -->
+            <button class="menu-toggle" id="menuToggle" onclick="toggleSidebar()">
+                <svg viewBox="0 0 24 24">
+                    <line x1="3" y1="6" x2="21" y2="6"></line>
+                    <line x1="3" y1="12" x2="21" y2="12"></line>
+                    <line x1="3" y1="18" x2="21" y2="18"></line>
+                </svg>
+            </button>
+            <h2>{{ page_title or title or t('nav_dashboard') }}</h2>
+            <div class="header-actions">
+                <!-- Theme Toggle Button -->
+                <button id="themeToggle" class="theme-toggle" title="{{ t('theme') }}">
+                    <svg class="icon-sun" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="5"></circle>
+                        <line x1="12" y1="1" x2="12" y2="3"></line>
+                        <line x1="12" y1="21" x2="12" y2="23"></line>
+                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                        <line x1="1" y1="12" x2="3" y2="12"></line>
+                        <line x1="21" y1="12" x2="23" y2="12"></line>
+                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                    </svg>
+                    <svg class="icon-moon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: none;">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                    </svg>
+                </button>
+                
+                <!-- Notification Bell -->
+                <button id="notificationBell" class="notification-bell" onclick="toggleNotificationCenter()">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                        <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+                    </svg>
+                    <span id="notificationBadge" class="notification-badge" style="display: none;">0</span>
+                </button>
+            </div>
+        </header>
+        <main>
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+    
+    <!-- Notification Center Dropdown -->
+    <div id="notificationCenter" class="notification-center" style="display: none;">
+        <div class="notification-center-header">
+            <h3>{{ t('notifications') }}</h3>
+            <div class="notification-filters">
+                <button class="filter-btn active" data-filter="all">{{ t('all') }}</button>
+                <button class="filter-btn" data-filter="unread">{{ t('unread') }}</button>
+                <button class="filter-btn" data-filter="critical">{{ t('critical') }}</button>
+            </div>
+        </div>
+        <div id="notificationList" class="notification-list">
+            <div class="notification-empty">{{ t('no_notifications') }}</div>
+        </div>
+        <div class="notification-center-footer">
+            <button onclick="markAllAsRead()" class="notification-action-btn">{{ t('mark_all_read') }}</button>
+            <button onclick="clearAllRead()" class="notification-action-btn">{{ t('clear_all') }}</button>
+        </div>
+    </div>
+    
+    <!-- Custom Dialog Container -->
+    <div id="customDialogOverlay" class="custom-dialog-overlay">
+        <div class="custom-dialog">
+            <div id="customDialogIcon" class="custom-dialog-icon info">
+                <span id="customDialogIconEmoji"><i class="fa-solid fa-circle-info"></i></span>
+            </div>
+            <div id="customDialogTitle" class="custom-dialog-title">Title</div>
+            <div id="customDialogMessage" class="custom-dialog-message">Message</div>
+            <div id="customDialogInputContainer" class="custom-dialog-input-container" style="display: none;">
+                <input type="text" id="customDialogInput" class="custom-dialog-input" placeholder="">
+            </div>
+            <div id="customDialogButtons" class="custom-dialog-buttons">
+                <button class="custom-dialog-btn primary" onclick="closeCustomDialog(true)">OK</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Language setting
+    const currentLang = "{{ lang }}";
+    
+    // Sidebar collapse toggle function
+    function toggleSidebarCollapse() {
+        const sidebar = document.getElementById('sidebar');
+        const isCollapsed = sidebar.classList.toggle('collapsed');
+        document.body.classList.toggle('sidebar-collapsed', isCollapsed);
+        localStorage.setItem('sidebarCollapsed', isCollapsed);
+    }
+    
+    // Restore sidebar state from localStorage
+    (function() {
+        const isCollapsed = localStorage.getItem('sidebarCollapsed') === 'true';
+        if (isCollapsed) {
+            document.getElementById('sidebar')?.classList.add('collapsed');
+            document.body.classList.add('sidebar-collapsed');
+        }
+    })();
+    
+    // Logout function
+    function logout(event) {
+        event.preventDefault();
+        localStorage.removeItem('access_token');
+        window.location.href = '/login';
+    }
+
+    // Global user permissions object
+    window.userPermissions = {};
+    window.isAdmin = false;
+    
+    // Permission checking helper function
+    window.hasPermission = function(permission) {
+        if (window.isAdmin) return true;
+        if (!permission) return true;
+        return window.userPermissions[permission] === true;
+    };
+    
+    // Hide elements based on permission
+    window.hideIfNoPermission = function(elementOrSelector, permission) {
+        const el = typeof elementOrSelector === 'string' 
+            ? document.querySelector(elementOrSelector) 
+            : elementOrSelector;
+        if (el && !window.hasPermission(permission)) {
+            el.style.display = 'none';
+        }
+    };
+    
+    // Apply permissions to all elements with data-permission attribute
+    window.applyPermissions = function() {
+        document.querySelectorAll('[data-permission]').forEach(el => {
+            const permission = el.getAttribute('data-permission');
+            if (!window.hasPermission(permission)) {
+                el.style.display = 'none';
+            }
+        });
+    };
+
+    // Check authentication on page load
+    window.addEventListener('DOMContentLoaded', async () => {
+        // Skip check on login page
+        if (window.location.pathname === '/login') {
+            return;
+        }
+
+        const token = localStorage.getItem('access_token');
+        if (!token) {
+            // Save current URL as query parameter
+            const currentUrl = encodeURIComponent(window.location.pathname + window.location.search);
+            window.location.href = `/login?returnUrl=${currentUrl}`;
+            return;
+        }
+
+        // Verify token with backend and load permissions
+        try {
+            const response = await fetch('/api/auth/me', {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            if (!response.ok) {
+                // Token invalid or expired
+                localStorage.removeItem('access_token');
+                // Save current URL as query parameter
+                const currentUrl = encodeURIComponent(window.location.pathname + window.location.search);
+                window.location.href = `/login?returnUrl=${currentUrl}`;
+                return;
+            }
+            
+            // Load user permissions
+            const userData = await response.json();
+            window.userPermissions = userData.permissions || {};
+            window.isAdmin = userData.is_admin === true;
+            window.currentUserId = userData.id;
+            
+            // Apply permissions to UI elements
+            applyPermissionsToUI();
+            
+            // Dispatch event for pages that need to react to permissions loaded
+            window.dispatchEvent(new CustomEvent('permissionsLoaded', { detail: { permissions: window.userPermissions, isAdmin: window.isAdmin } }));
+            
+        } catch (error) {
+            // On network error, allow staying (offline mode)
+        }
+    });
+    
+    // Apply permissions to sidebar menu and other UI elements
+    function applyPermissionsToUI() {
+        const navLinks = document.querySelectorAll('.sidebar-nav a[href]');
+        
+        navLinks.forEach(link => {
+            const href = link.getAttribute('href');
+            let requiredPermission = null;
+            
+            // Map routes to required permissions
+            if (href === '/vms' || href.startsWith('/proxmox')) {
+                requiredPermission = 'proxmox.view';
+            } else if (href === '/templates' || href.startsWith('/templates')) {
+                requiredPermission = 'templates.view';
+            } else if (href === '/ipam' || href.startsWith('/ipam')) {
+                requiredPermission = 'ipam.view';
+            } else if (href === '/logs' || href.startsWith('/logs')) {
+                requiredPermission = 'logs.view';
+            } else if (href === '/settings' || href.startsWith('/settings')) {
+                requiredPermission = 'settings.view';
+            } else if (href === '/admin/users' || href.startsWith('/admin/users')) {
+                requiredPermission = 'users.view';
+            }
+            
+            // Hide menu item if no permission
+            if (requiredPermission && !window.hasPermission(requiredPermission)) {
+                const li = link.closest('li');
+                if (li) {
+                    li.style.display = 'none';
+                }
+            }
+        });
+        
+        // Apply permissions to elements with data-permission attribute
+        window.applyPermissions();
+    }
+
+    // Notification System
+    let notificationCenterOpen = false;
+    let currentFilter = 'all';
+
+    // Toggle notification center
+    function toggleNotificationCenter() {
+        const center = document.getElementById('notificationCenter');
+        notificationCenterOpen = !notificationCenterOpen;
+        
+        if (notificationCenterOpen) {
+            center.style.display = 'flex';
+            loadNotifications();
+        } else {
+            center.style.display = 'none';
+        }
+    }
+
+    // Close notification center when clicking outside
+    document.addEventListener('click', (e) => {
+        const bell = document.getElementById('notificationBell');
+        const center = document.getElementById('notificationCenter');
+        
+        if (notificationCenterOpen && !bell.contains(e.target) && !center.contains(e.target)) {
+            toggleNotificationCenter();
+        }
+    });
+
+    // Load unread notification count
+    async function loadNotificationCount() {
+        try {
+            const response = await fetchWithAuth('/api/notifications/unread-count');
+            if (response && response.ok) {
+                const data = await response.json();
+                const badge = document.getElementById('notificationBadge');
+                
+                if (data.count > 0) {
+                    badge.textContent = data.count > 99 ? '99+' : data.count;
+                    badge.style.display = 'block';
+                } else {
+                    badge.style.display = 'none';
+                }
+            }
+        } catch (error) {
+            console.error('Failed to load notification count:', error);
+        }
+    }
+
+    // Load notifications with filter
+    async function loadNotifications() {
+        try {
+            let url = '/api/notifications/?limit=20';
+            
+            if (currentFilter === 'unread') {
+                url += '&unread_only=true';
+            } else if (currentFilter === 'critical') {
+                url += '&level=critical';
+            }
+            
+            const response = await fetchWithAuth(url);
+            if (response && response.ok) {
+                const data = await response.json();
+                displayNotifications(data.notifications || []);
+            }
+        } catch (error) {
+            console.error('Failed to load notifications:', error);
+        }
+    }
+
+    // Display notifications in the list
+    function displayNotifications(notifications) {
+        const list = document.getElementById('notificationList');
+        
+        if (notifications.length === 0) {
+            list.innerHTML = `<div class="notification-empty">${t('no_notifications')}</div>`;
+            return;
+        }
+        
+        list.innerHTML = notifications.map(n => {
+            const timeAgo = formatTimeAgo(new Date(n.created_at));
+            const isRead = n.read || n.is_read;
+            return `
+                <div class="notification-item ${isRead ? '' : 'unread'}" onclick="markAsRead(${n.id})">
+                    <div class="notification-header">
+                        <span class="notification-title">${escapeHtml(n.title)}</span>
+                        <span class="notification-level ${n.level}">${n.level}</span>
+                    </div>
+                    <div class="notification-message">${escapeHtml(n.message)}</div>
+                    <div class="notification-time">${timeAgo}</div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    // Format time ago
+    function formatTimeAgo(date) {
+        const seconds = Math.floor((new Date() - date) / 1000);
+        
+        // Get translations for time units
+        const timeUnits = {
+            year: { single: t('year'), few: t('years_few'), many: t('years_many'), seconds: 31536000 },
+            month: { single: t('month'), few: t('months_few'), many: t('months_many'), seconds: 2592000 },
+            day: { single: t('day'), few: t('days_few'), many: t('days_many'), seconds: 86400 },
+            hour: { single: t('hour'), few: t('hours_few'), many: t('hours_many'), seconds: 3600 },
+            minute: { single: t('minute'), few: t('minutes_few'), many: t('minutes_many'), seconds: 60 }
+        };
+        
+        for (const [key, unit] of Object.entries(timeUnits)) {
+            const interval = Math.floor(seconds / unit.seconds);
+            
+            if (interval >= 1) {
+                // Russian plural forms: 1 час, 2-4 часа, 5-20 часов
+                let form;
+                const lastDigit = interval % 10;
+                const lastTwoDigits = interval % 100;
+                
+                if (lastTwoDigits >= 11 && lastTwoDigits <= 14) {
+                    form = unit.many;
+                } else if (lastDigit === 1) {
+                    form = unit.single;
+                } else if (lastDigit >= 2 && lastDigit <= 4) {
+                    form = unit.few;
+                } else {
+                    form = unit.many;
+                }
+                
+                return `${interval} ${form} ${t('ago')}`;
+            }
+        }
+        
+        return t('just_now');
+    }
+
+    // Escape HTML to prevent XSS
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    // Mark notification as read
+    async function markAsRead(id) {
+        try {
+            const response = await fetchWithAuth(`/api/notifications/${id}/read`, {
+                method: 'PATCH'
+            });
+            
+            if (response && response.ok) {
+                loadNotifications();
+                loadNotificationCount();
+            }
+        } catch (error) {
+            console.error('Failed to mark notification as read:', error);
+        }
+    }
+
+    // Mark all notifications as read
+    async function markAllAsRead() {
+        try {
+            const response = await fetchWithAuth('/api/notifications/mark-all-read', {
+                method: 'POST'
+            });
+            
+            if (response && response.ok) {
+                loadNotifications();
+                loadNotificationCount();
+                showToast('success', t('success'), t('all_notifications_marked_read'));
+            }
+        } catch (error) {
+            console.error('Failed to mark all as read:', error);
+        }
+    }
+
+    // Clear all read notifications
+    async function clearAllRead() {
+        try {
+            const response = await fetchWithAuth('/api/notifications/read/all', {
+                method: 'DELETE'
+            });
+            
+            if (response && response.ok) {
+                const data = await response.json();
+                loadNotifications();
+                loadNotificationCount();
+                showToast('success', t('success'), `${t('notifications_deleted')}: ${data.deleted_count}`);
+            }
+        } catch (error) {
+            console.error('Failed to clear notifications:', error);
+        }
+    }
+
+    // Show toast notification
+    // Supports both old format: showToast(message, type) and new format: showToast(level, title, message)
+    window.showToast = function(levelOrMessage, titleOrType, message, duration = 5000) {
+        const oldTypes = ['success', 'danger', 'info', 'warning', 'error'];
+        let level, title, msg;
+        
+        if (oldTypes.includes(titleOrType) && !message) {
+            msg = levelOrMessage;
+            level = titleOrType === 'danger' ? 'error' : titleOrType;
+            title = level === 'success' ? '{{ _("success") }}' : 
+                    level === 'error' ? '{{ _("error") }}' : 
+                    level === 'warning' ? '{{ _("warning") }}' : '{{ _("info") }}';
+        } else {
+            level = levelOrMessage;
+            title = titleOrType;
+            msg = message;
+        }
+        
+        const colors = { success: '#10b981', error: '#ef4444', warning: '#f59e0b', info: '#3b82f6' };
+        const borderColor = colors[level] || colors.info;
+        
+        const toast = document.createElement('div');
+        toast.style.cssText = `
+            position: fixed; top: 20px; right: 20px; min-width: 300px; max-width: 400px;
+            padding: 16px 20px; background: rgba(30, 30, 40, 0.95); border: 1px solid rgba(255,255,255,0.1);
+            border-left: 4px solid ${borderColor}; border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+            z-index: 99999; animation: toastSlide 0.3s ease-out;
+        `;
+        toast.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                <span style="font-weight: 600; color: #fff;">${title}</span>
+                <button onclick="this.parentElement.parentElement.remove()" style="background: none; border: none; color: #888; cursor: pointer; font-size: 18px;">&times;</button>
+            </div>
+            <div style="color: #aaa; font-size: 14px;">${msg || ''}</div>
+        `;
+        document.body.appendChild(toast);
+        
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            toast.style.transform = 'translateX(100%)';
+            toast.style.transition = 'all 0.3s ease';
+            setTimeout(() => toast.remove(), 300);
+        }, duration);
+    };
+    
+    // Local alias for backward compatibility
+    var showToast = window.showToast;
+
+    // ==================== Custom Dialog System ====================
+    let dialogResolve = null;
+    
+    // Show custom dialog (replacement for native alert/confirm)
+    window.showDialog = function(options) {
+        return new Promise((resolve) => {
+            dialogResolve = resolve;
+            
+            const overlay = document.getElementById('customDialogOverlay');
+            const icon = document.getElementById('customDialogIcon');
+            const iconEmoji = document.getElementById('customDialogIconEmoji');
+            const title = document.getElementById('customDialogTitle');
+            const message = document.getElementById('customDialogMessage');
+            const buttons = document.getElementById('customDialogButtons');
+            
+            // Set icon type
+            const type = options.type || 'info';
+            icon.className = 'custom-dialog-icon ' + type;
+            
+            const icons = {
+                info: '<i class="fa-solid fa-circle-info"></i>',
+                success: '<i class="fa-solid fa-check"></i>',
+                warning: '<i class="fa-solid fa-triangle-exclamation"></i>',
+                danger: '<i class="fa-solid fa-trash"></i>',
+                question: '<i class="fa-solid fa-question"></i>',
+                error: '<i class="fa-solid fa-circle-xmark"></i>'
+            };
+            iconEmoji.innerHTML = options.icon || icons[type] || '<i class="fa-solid fa-circle-info"></i>';
+            
+            // Set content
+            title.textContent = options.title || t('notification');
+            message.innerHTML = options.message || '';
+            
+            // Handle input field for prompt dialogs
+            const inputContainer = document.getElementById('customDialogInputContainer');
+            const inputField = document.getElementById('customDialogInput');
+            
+            if (options.prompt) {
+                inputContainer.style.display = 'block';
+                inputField.value = options.defaultValue || '';
+                inputField.placeholder = options.placeholder || '';
+                inputField.type = options.inputType || 'text';
+                inputField.classList.remove('error');
+                
+                // Focus input after dialog is shown
+                setTimeout(() => inputField.focus(), 100);
+                
+                // Handle Enter key in input
+                inputField.onkeydown = function(e) {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        closeCustomDialog(inputField.value);
+                    }
+                };
+            } else {
+                inputContainer.style.display = 'none';
+                inputField.value = '';
+            }
+            
+            // Set buttons
+            if (options.buttons) {
+                buttons.innerHTML = options.buttons.map(btn => 
+                    `<button class="custom-dialog-btn ${btn.class || 'primary'}" onclick="closeCustomDialog(${btn.value !== undefined ? JSON.stringify(btn.value) : 'true'})">${btn.text}</button>`
+                ).join('');
+            } else if (options.prompt) {
+                buttons.innerHTML = `
+                    <button class="custom-dialog-btn secondary" onclick="closeCustomDialog(null)">${options.cancelText || t('cancel')}</button>
+                    <button class="custom-dialog-btn ${options.confirmClass || 'primary'}" onclick="closeCustomDialog(document.getElementById('customDialogInput').value)">${options.confirmText || 'OK'}</button>
+                `;
+            } else if (options.confirm) {
+                buttons.innerHTML = `
+                    <button class="custom-dialog-btn secondary" onclick="closeCustomDialog(false)">${options.cancelText || t('cancel')}</button>
+                    <button class="custom-dialog-btn ${options.confirmClass || 'primary'}" onclick="closeCustomDialog(true)">${options.confirmText || 'OK'}</button>
+                `;
+            } else {
+                buttons.innerHTML = `<button class="custom-dialog-btn primary" onclick="closeCustomDialog(true)">OK</button>`;
+            }
+            
+            // Show dialog
+            overlay.classList.add('show');
+            
+            // Close on overlay click (optional)
+            if (options.closeOnOverlay !== false) {
+                overlay.onclick = function(e) {
+                    if (e.target === overlay) {
+                        closeCustomDialog(false);
+                    }
+                };
+            }
+            
+            // Close on ESC key
+            const escHandler = function(e) {
+                if (e.key === 'Escape') {
+                    closeCustomDialog(false);
+                    document.removeEventListener('keydown', escHandler);
+                }
+            };
+            document.addEventListener('keydown', escHandler);
+        });
+    };
+    
+    // Close custom dialog
+    window.closeCustomDialog = function(result) {
+        const overlay = document.getElementById('customDialogOverlay');
+        overlay.classList.remove('show');
+        
+        if (dialogResolve) {
+            dialogResolve(result);
+            dialogResolve = null;
+        }
+    };
+    
+    // Shorthand functions
+    window.showAlert = function(message, title, type = 'info') {
+        return showDialog({
+            type: type,
+            title: title || t('notification'),
+            message: message
+        });
+    };
+    
+    window.showSuccess = function(message, title) {
+        return showDialog({
+            type: 'success',
+            title: title || t('success'),
+            message: message
+        });
+    };
+    
+    window.showError = function(message, title) {
+        return showDialog({
+            type: 'error',
+            title: title || t('error'),
+            message: message
+        });
+    };
+    
+    window.showWarning = function(message, title) {
+        return showDialog({
+            type: 'warning',
+            title: title || t('warning'),
+            message: message
+        });
+    };
+    
+    window.showConfirm = function(message, title, options = {}) {
+        return showDialog({
+            type: options.type || 'question',
+            title: title || t('confirm'),
+            message: message,
+            confirm: true,
+            confirmText: options.confirmText || t('yes') || 'Yes',
+            cancelText: options.cancelText || t('cancel') || 'Cancel',
+            confirmClass: options.confirmClass || 'primary',
+            icon: options.icon
+        });
+    };
+    
+    window.showDeleteConfirm = function(message, title) {
+        return showDialog({
+            type: 'danger',
+            icon: '<i class="fa-solid fa-trash"></i>',
+            title: title || t('confirm_delete') || 'Confirm Delete',
+            message: message,
+            confirm: true,
+            confirmText: t('delete') || 'Delete',
+            cancelText: t('cancel') || 'Cancel',
+            confirmClass: 'danger'
+        });
+    };
+    
+    // Show prompt dialog (replacement for native prompt())
+    window.showPrompt = function(message, title, options = {}) {
+        return showDialog({
+            type: options.type || 'question',
+            icon: options.icon || '<i class="fa-solid fa-pen"></i>',
+            title: title || t('input_required') || 'Input Required',
+            message: message,
+            prompt: true,
+            placeholder: options.placeholder || '',
+            defaultValue: options.defaultValue || '',
+            inputType: options.inputType || 'text',
+            confirmText: options.confirmText || 'OK',
+            cancelText: options.cancelText || t('cancel') || 'Cancel',
+            confirmClass: options.confirmClass || 'primary'
+        });
+    };
+
+    // Filter button handlers
+    document.addEventListener('DOMContentLoaded', () => {
+        const filterButtons = document.querySelectorAll('.filter-btn');
+        filterButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                filterButtons.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentFilter = btn.dataset.filter;
+                loadNotifications();
+            });
+        });
+        
+        // Load initial notification count
+        if (window.location.pathname !== '/login') {
+            loadNotificationCount();
+            
+            // Refresh count every 30 seconds
+            setInterval(loadNotificationCount, 30000);
+        }
+        
+        // Add click handlers for sidebar menu items to update page title
+        const sidebarLinks = document.querySelectorAll('.sidebar-nav a');
+        sidebarLinks.forEach(link => {
+            link.addEventListener('click', function() {
+                const menuText = this.querySelector('span')?.textContent || '';
+                if (menuText) {
+                    // Update browser tab title
+                    document.title = menuText;
+                    // Update header title
+                    const headerTitle = document.querySelector('header h2');
+                    if (headerTitle) {
+                        headerTitle.textContent = menuText;
+                    }
+                }
+            });
+        });
+    });
+</script>
+<!-- Bootstrap 5 JS Bundle -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js" integrity="sha384-C6RzsynM9kWDrMNeT87bh95OGNyZPhcTNXj1NW7RuBCsyN/o0jlpcV8Qyq46cDfL" crossorigin="anonymous"></script>
+
+<!-- Toast Container - Outside layout for proper positioning -->
+<div id="toastContainer" class="toast-container"></div>
+
+</body>
+</html>

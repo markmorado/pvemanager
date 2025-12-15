@@ -1,0 +1,270 @@
+{% extends "base.html" %}
+{% set page_title = t('nav_dashboard') %}
+{% block content %}
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-label">{{ t('proxmox_servers') }}</div>
+        <div class="stat-value">{{ stats.total_servers }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">{{ t('online') }}</div>
+        <div class="stat-value text-success">{{ stats.online_servers }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">{{ t('offline') }}</div>
+        <div class="stat-value text-danger">{{ stats.offline_servers }}</div>
+    </div>
+</div>
+
+<!-- Графики Proxmox нод -->
+<div class="card" id="proxmox-charts-section" style="display: none;">
+    <h3><i class="fa-solid fa-chart-line"></i> {{ t('proxmox_nodes_load') }}</h3>
+    <div class="dashboard-charts-grid" id="nodes-charts-grid"></div>
+</div>
+
+<style>
+    .dashboard-charts-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+        gap: 1rem;
+        margin-top: 1rem;
+    }
+    
+    @media (max-width: 768px) {
+        .dashboard-charts-grid {
+            grid-template-columns: 1fr;
+        }
+        
+        .stats-grid {
+            grid-template-columns: 1fr !important;
+        }
+        
+        .stat-card {
+            padding: 1rem;
+        }
+        
+        .stat-value {
+            font-size: 1.75rem;
+        }
+    }
+    
+    @media (max-width: 480px) {
+        .dashboard-charts-grid .card h4 {
+            font-size: 0.9rem;
+        }
+    }
+</style>
+
+<script>
+// Загрузка статистики и графиков Proxmox нод
+async function loadProxmoxNodesStats() {
+    try {
+        const response = await fetchWithAuth('/proxmox/api/servers');
+        if (!response) return;
+        
+        const servers = await response.json();
+        const onlineServers = servers.filter(s => s.is_online);
+        
+        if (onlineServers.length === 0) return;
+        
+        const chartsSection = document.getElementById('proxmox-charts-section');
+        const chartsGrid = document.getElementById('nodes-charts-grid');
+        
+        chartsGrid.innerHTML = '';
+        
+        // Собрать все данные сначала, потом отрисовать
+        const chartsToRender = [];
+        const seenNodes = new Set(); // Для дедупликации нод кластера
+        
+        // Загрузить данные для каждого сервера
+        for (const server of onlineServers) {
+            try {
+                // Получить список нод
+                const nodesResponse = await fetchWithAuth(`/proxmox/api/${server.id}/nodes`);
+                if (!nodesResponse || !nodesResponse.ok) {
+                    console.warn(`Failed to load nodes for ${server.name}`);
+                    continue;
+                }
+                
+                const nodesData = await nodesResponse.json();
+                const nodes = nodesData.nodes || [];
+                
+                if (nodes.length === 0) {
+                    console.warn(`No nodes found for ${server.name}`);
+                    continue;
+                }
+                
+                // Для кластеров берём только ПЕРВУЮ ноду, т.к. все серверы кластера имеют одинаковые ноды
+                // Используем IP сервера + имя ноды для дедупликации
+                const node = nodes[0].node;
+                const nodeKey = `${server.ip_address}-${node}`;
+                
+                if (seenNodes.has(nodeKey)) {
+                    continue; // Уже показали эту ноду
+                }
+                seenNodes.add(nodeKey);
+                
+                // Получить данные для графиков
+                const rrdResponse = await fetchWithAuth(`/proxmox/api/${server.id}/node/rrddata?node=${node}&timeframe=hour`);
+                if (!rrdResponse || !rrdResponse.ok) {
+                    console.warn(`Failed to load RRD data for ${server.name}/${node}, skipping chart`);
+                    continue;
+                }
+                
+                const rrdData = await rrdResponse.json();
+                const data = rrdData.data || [];
+                
+                if (data.length === 0) {
+                    console.warn(`No RRD data for ${server.name}/${node}`);
+                    continue;
+                }
+                
+                // Сохранить данные для отрисовки
+                chartsToRender.push({
+                    canvasId: `chart-${server.id}-${node}`,
+                    serverName: server.name,
+                    nodeName: node,
+                    data: data
+                });
+                
+            } catch (error) {
+                console.error(`Error loading stats for server ${server.id}:`, error);
+            }
+        }
+        
+        // Теперь создать все canvas элементы
+        if (chartsToRender.length > 0) {
+            let html = '';
+            for (const chart of chartsToRender) {
+                // Извлекаем базовое имя сервера (убираем " - nodeX" если есть)
+                let baseServerName = chart.serverName.trim();
+                // Если имя сервера заканчивается на " - <nodeName>", убираем это
+                const nodePattern = new RegExp(`\\s*-\\s*(pve\\d+|node\\d+|${chart.nodeName})$`, 'i');
+                baseServerName = baseServerName.replace(nodePattern, '').trim();
+                
+                // Формируем отображаемое имя
+                // Если базовое имя пустое или равно имени ноды — просто показываем имя ноды
+                let displayName;
+                if (!baseServerName || baseServerName.toLowerCase() === chart.nodeName.toLowerCase()) {
+                    displayName = chart.nodeName;
+                } else {
+                    displayName = `${baseServerName} - ${chart.nodeName}`;
+                }
+                html += `
+                    <div class="card">
+                        <h4 style="margin: 0 0 1rem 0;">${displayName}</h4>
+                        <canvas id="${chart.canvasId}" style="max-height: 250px;"></canvas>
+                    </div>
+                `;
+            }
+            chartsGrid.innerHTML = html;
+            chartsSection.style.display = 'block';
+            
+            // Отрисовать все графики после того как DOM обновился
+            requestAnimationFrame(() => {
+                for (const chart of chartsToRender) {
+                    drawNodeChart(chart.canvasId, chart.data);
+                }
+            });
+        }
+        
+    } catch (error) {
+        console.error('Error loading Proxmox stats:', error);
+    }
+}
+
+// Отрисовка графика ноды
+function drawNodeChart(canvasId, data) {
+    if (typeof Chart === 'undefined') {
+        console.error('Chart.js not loaded');
+        return;
+    }
+    
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) {
+        console.error('Canvas not found:', canvasId);
+        return;
+    }
+    
+    const locale = "{{ 'ru-RU' if lang == 'ru' else 'en-US' }}";
+    const formatTime = (timestamp) => {
+        const date = new Date(timestamp * 1000);
+        return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+    };
+    
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: data.map(d => formatTime(d.time)),
+            datasets: [
+                {
+                    label: '{{ t('cpu') }} %',
+                    data: data.map(d => ((d.cpu || 0) * 100).toFixed(2)),
+                    borderColor: '#60a5fa',
+                    backgroundColor: 'rgba(96,165,250,0.1)',
+                    borderWidth: 2,
+                    tension: 0.4,
+                    fill: true,
+                    pointRadius: 0,
+                    yAxisID: 'y'
+                },
+                {
+                    label: '{{ t('memory') }} {{ t('gb') }}',
+                    data: data.map(d => ((d.memused || 0) / (1024*1024*1024)).toFixed(2)),
+                    borderColor: '#f59e0b',
+                    backgroundColor: 'rgba(245,158,11,0.1)',
+                    borderWidth: 2,
+                    tension: 0.4,
+                    fill: true,
+                    pointRadius: 0,
+                    yAxisID: 'y1'
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top',
+                    labels: { color: '#9ca3af', usePointStyle: true, padding: 10 }
+                },
+                tooltip: { enabled: true, mode: 'index', intersect: false }
+            },
+            scales: {
+                x: {
+                    type: 'category',
+                    grid: { color: 'rgba(255,255,255,0.1)' },
+                    ticks: { color: '#9ca3af', maxTicksLimit: 10 }
+                },
+                y: {
+                    type: 'linear',
+                    display: true,
+                    position: 'left',
+                    beginAtZero: true,
+                    grid: { color: 'rgba(255,255,255,0.1)' },
+                    ticks: { color: '#9ca3af' },
+                    title: { display: true, text: '{{ t('cpu') }} %', color: '#60a5fa' }
+                },
+                y1: {
+                    type: 'linear',
+                    display: true,
+                    position: 'right',
+                    beginAtZero: true,
+                    grid: { drawOnChartArea: false },
+                    ticks: { color: '#9ca3af' },
+                    title: { display: true, text: '{{ t('memory') }} {{ t('gb') }}', color: '#f59e0b' }
+                }
+            }
+        }
+    });
+}
+
+// Инициализация при полной загрузке DOM
+document.addEventListener('DOMContentLoaded', function() {
+    // Загрузить графики нод
+    loadProxmoxNodesStats();
+});
+</script>
+{% endblock %}

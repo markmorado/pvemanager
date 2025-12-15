@@ -1,0 +1,2246 @@
+{% extends "base.html" %}
+{% set page_title = server.name + " - VM/LXC" %}
+{% set embed_mode = request.query_params.get('embed') == '1' %}
+{% block content %}
+
+{% if embed_mode %}
+<style>
+    /* Hide sidebar and header in embed mode */
+    .sidebar, .topbar, .main-header, header, nav { display: none !important; }
+    .main-content { margin-left: 0 !important; padding: 1rem !important; }
+    body { overflow: auto; }
+</style>
+{% endif %}
+
+<div class="card" style="margin-bottom: 1rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div style="flex: 1;">
+            <h3 style="margin: 0;"><i class="fa-solid fa-computer"></i> {{ server.name }}</h3>
+            <div style="color: var(--text-secondary); font-size: 0.875rem; margin-top: 0.25rem;">
+                <i class="fa-solid fa-globe"></i> {{ server.ip_address }}:{{ server.port }} | <i class="fa-solid fa-user"></i> {{ server.api_user }}
+            </div>
+        </div>
+        {% if not embed_mode %}
+        <div style="display: flex; gap: 0.75rem;">
+            <button onclick="showHostMonitor()" class="btn btn-primary"><i class="fa-solid fa-chart-simple"></i> {{ t('host') }}</button>
+            <button onclick="loadResources()" class="btn btn-secondary"><i class="fa-solid fa-rotate"></i> {{ t('refresh') }}</button>
+        </div>
+        {% endif %}
+    </div>
+    
+    <!-- Метрики хоста -->
+    <div id="host-metrics" style="display: none; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.75rem;">
+            <div style="text-align: center;">
+                <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.25rem;">CPU</div>
+                <div id="host-cpu" style="font-size: 1.125rem; font-weight: 600; color: var(--accent);">--%</div>
+                <div class="progress-bar" style="margin-top: 0.25rem; height: 4px;">
+                    <div id="host-cpu-bar" class="progress-fill" style="width: 0%"></div>
+                </div>
+            </div>
+            <div style="text-align: center;">
+                <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.25rem;">{{ t('memory_usage') }}</div>
+                <div id="host-memory" style="font-size: 1.125rem; font-weight: 600; color: var(--accent);">--%</div>
+                <div class="progress-bar" style="margin-top: 0.25rem; height: 4px;">
+                    <div id="host-memory-bar" class="progress-fill" style="width: 0%"></div>
+                </div>
+            </div>
+            <div style="text-align: center;">
+                <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.25rem;">{{ t('uptime') }}</div>
+                <div id="host-uptime" style="font-size: 1.125rem; font-weight: 600; color: var(--text-primary);">--</div>
+            </div>
+            <div style="text-align: center;">
+                <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.25rem;">{{ t('load_average') }}</div>
+                <div id="host-loadavg" style="font-size: 1.125rem; font-weight: 600; color: var(--text-primary);">--</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Статистика -->
+<div id="stats-section" style="display: none; margin-bottom: 1.5rem;">
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+        <div class="card stat-filter" data-filter="qemu" onclick="filterByStatus('qemu')" style="background: var(--gradient-primary); padding: 1.5rem; cursor: pointer;">
+            <div style="font-size: 0.875rem; color: rgba(255,255,255,0.8); margin-bottom: 0.5rem;"><i class="fa-solid fa-cube"></i> {{ t('total_vms') }}</div>
+            <div id="total-vms" style="font-size: 2rem; font-weight: bold; color: var(--text-on-primary);">0</div>
+        </div>
+        <div class="card stat-filter" data-filter="lxc" onclick="filterByStatus('lxc')" style="background: linear-gradient(135deg, var(--purple) 0%, var(--danger) 100%); padding: 1.5rem; cursor: pointer;">
+            <div style="font-size: 0.875rem; color: rgba(255,255,255,0.8); margin-bottom: 0.5rem;"><i class="fa-solid fa-cube"></i> {{ t('total_lxc') }}</div>
+            <div id="total-containers" style="font-size: 2rem; font-weight: bold; color: var(--text-on-primary);">0</div>
+        </div>
+        <div class="card stat-filter" data-filter="running" onclick="filterByStatus('running')" style="background: linear-gradient(135deg, var(--info) 0%, var(--cyan) 100%); padding: 1.5rem; cursor: pointer;">
+            <div style="font-size: 0.875rem; color: rgba(255,255,255,0.8); margin-bottom: 0.5rem;"><i class="fa-solid fa-circle" style="color: #22c55e;"></i> {{ t('running') }}</div>
+            <div id="total-running" style="font-size: 2rem; font-weight: bold; color: var(--text-on-primary);">0</div>
+        </div>
+        <div class="card stat-filter" data-filter="stopped" onclick="filterByStatus('stopped')" style="background: linear-gradient(135deg, var(--danger) 0%, var(--warning) 100%); padding: 1.5rem; cursor: pointer;">
+            <div style="font-size: 0.875rem; color: rgba(255,255,255,0.8); margin-bottom: 0.5rem;"><i class="fa-solid fa-circle" style="color: #ef4444;"></i> {{ t('stopped') }}</div>
+            <div id="total-stopped" style="font-size: 2rem; font-weight: bold; color: var(--text-on-primary);">0</div>
+        </div>
+    </div>
+</div>
+
+<!-- Загрузка -->
+<div id="loading" style="text-align: center; padding: 2rem; color: var(--text-muted);">
+    <i class="fa-solid fa-spinner fa-spin"></i> {{ t('loading_data') }}
+</div>
+
+<!-- Контейнер для VM и LXC -->
+<div id="resources-container"></div>
+
+<!-- Modal мониторинга -->
+<div id="monitorModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 2000; align-items: center; justify-content: center; padding: 1rem;">
+    <div class="card" style="max-width: 1400px; width: 95%; max-height: 95vh; overflow-y: auto; position: relative;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; position: sticky; top: 0; background: var(--bg-secondary); z-index: 10; padding-bottom: 1rem; border-bottom: 1px solid var(--border-color);">
+            <h3 id="monitorTitle" style="margin: 0;"><i class="fa-solid fa-chart-simple"></i> {{ t('monitoring') }}</h3>
+            <button onclick="closeMonitorModal()" style="background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer; padding: 0; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 4px; transition: var(--transition);" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='none'">&times;</button>
+        </div>
+        <div id="monitorContent"></div>
+    </div>
+</div>
+
+<!-- Modal VNC -->
+<div id="vncModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.95); z-index: 2000; align-items: center; justify-content: center; padding: 1rem;">
+    <div class="card" style="max-width: 1400px; width: 95%; max-height: 95vh; display: flex; flex-direction: column;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border-color);">
+            <h3 id="vncTitle" style="margin: 0;"><i class="fa-solid fa-desktop"></i> {{ t('vnc_console') }}</h3>
+            <button onclick="closeVNCModal()" style="background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer; padding: 0.5rem;">&times;</button>
+        </div>
+        <div id="vncContent" style="flex: 1; min-height: 600px; background: #000; border-radius: 4px; overflow: hidden;"></div>
+    </div>
+</div>
+
+<!-- Modal xterm.js Terminal -->
+<div id="terminalModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.95); z-index: 2000; align-items: center; justify-content: center; padding: 1rem;">
+    <div class="card" style="max-width: 1200px; width: 95%; max-height: 90vh; display: flex; flex-direction: column;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border-color);">
+            <h3 id="terminalTitle" style="margin: 0;"><i class="fa-solid fa-terminal"></i> {{ t('terminal_console') or 'Terminal' }}</h3>
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+                <span id="terminalStatus" style="font-size: 0.75rem; color: var(--text-muted);"></span>
+                <button onclick="closeTerminalModal()" style="background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer; padding: 0.5rem;">&times;</button>
+            </div>
+        </div>
+        <div id="terminalContent" style="flex: 1; min-height: 500px; background: #000; border-radius: 4px; overflow: hidden;"></div>
+    </div>
+</div>
+
+<!-- Modal редактирования конфигурации -->
+<div id="editConfigModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 2000; align-items: center; justify-content: center; padding: 1rem;">
+    <div class="card" style="max-width: 800px; width: 95%; max-height: 95vh; overflow-y: auto; position: relative;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border-color);">
+            <h3 id="editConfigTitle" style="margin: 0;"><i class="fa-solid fa-gear"></i> {{ t('settings') }}</h3>
+            <button onclick="closeEditConfigModal()" style="background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer; padding: 0; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 4px; transition: var(--transition);" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='none'">&times;</button>
+        </div>
+        <div id="editConfigContent"></div>
+    </div>
+</div>
+
+<!-- Modal переустановки -->
+<div id="reinstallModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 2000; align-items: center; justify-content: center; padding: 1rem;">
+    <div class="card" style="max-width: 600px; width: 95%; max-height: 95vh; overflow-y: auto; position: relative;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border-color);">
+            <h3 id="reinstallTitle" style="margin: 0;"><i class="fa-solid fa-rotate"></i> {{ t('reinstall') }}</h3>
+            <button onclick="closeReinstallModal()" style="background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer; padding: 0; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 4px; transition: var(--transition);" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='none'">&times;</button>
+        </div>
+        <div id="reinstallContent"></div>
+    </div>
+</div>
+
+<script>
+const serverId = {{ server.id }};
+let currentData = null;
+let hostNode = null;
+
+async function loadHostMetrics() {
+    if (!hostNode) return;
+    
+    try {
+        const response = await fetchWithAuth(`/proxmox/api/${serverId}/node/status?node=${hostNode}`);
+        
+        if (!response.ok) {
+            console.error('Failed to load host metrics');
+            return;
+        }
+        
+        const status = await response.json();
+        
+        // CPU
+        const cpuPercent = ((status.cpu || 0) * 100).toFixed(1);
+        document.getElementById('host-cpu').textContent = `${cpuPercent}%`;
+        const cpuBar = document.getElementById('host-cpu-bar');
+        cpuBar.style.width = `${cpuPercent}%`;
+        cpuBar.className = `progress-fill ${cpuPercent > 80 ? 'danger' : cpuPercent > 60 ? 'warning' : ''}`;
+        
+        // Memory
+        const memPercent = (((status.memory?.used || 0) / (status.memory?.total || 1)) * 100).toFixed(1);
+        document.getElementById('host-memory').textContent = `${memPercent}%`;
+        const memBar = document.getElementById('host-memory-bar');
+        memBar.style.width = `${memPercent}%`;
+        memBar.className = `progress-fill ${memPercent > 80 ? 'danger' : memPercent > 60 ? 'warning' : ''}`;
+        
+        // Uptime
+        const uptime = status.uptime || 0;
+        const days = Math.floor(uptime / 86400);
+        const hours = Math.floor((uptime % 86400) / 3600);
+        const uptimeStr = days > 0 ? `${days}d ${hours}h` : `${hours}h`;
+        document.getElementById('host-uptime').textContent = uptimeStr;
+        
+        // Load Average
+        const loadavg = status.loadavg || [0, 0, 0];
+        const loadAvgValue = typeof loadavg === 'string' ? parseFloat(loadavg) : (Array.isArray(loadavg) && loadavg[0] !== undefined ? loadavg[0] : 0);
+        document.getElementById('host-loadavg').textContent = (Number(loadAvgValue) || 0).toFixed(2);
+        
+        // Показать блок метрик
+        document.getElementById('host-metrics').style.display = 'block';
+    } catch (error) {
+        console.error('Error loading host metrics:', error);
+    }
+}
+
+function showHostMonitor() {
+    if (!hostNode) {
+        showToast('error', t('error'), t('cannot_detect_proxmox_node') || 'Не удалось определить ноду Proxmox');
+        return;
+    }
+    
+    showHostMonitorModal();
+}
+
+function showHostMonitorModal() {
+    const modal = document.getElementById('monitorModal');
+    document.getElementById('monitorTitle').innerHTML = `
+        <i class="fa-solid fa-desktop"></i> ${t('host_monitoring')}: {{ server.name }}
+        <span id="updateIndicator" style="display: inline-block; margin-left: 0.5rem; width: 8px; height: 8px; background: var(--accent); border-radius: 50%; opacity: 0; transition: opacity 0.3s ease;"></span>
+    `;
+    document.getElementById('monitorContent').innerHTML = `<div style="text-align: center; padding: 2rem; color: var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> ${t('loading_data')}...</div>`;
+    
+    modal.style.display = 'flex';
+    
+    loadHostMonitorData();
+    
+    if (window.monitorInterval) clearInterval(window.monitorInterval);
+    window.monitorInterval = setInterval(() => {
+        if (modal.style.display === 'flex') {
+            loadHostMonitorData();
+        }
+    }, 5000);
+}
+
+async function loadHostMonitorData() {
+    const monitorContent = document.getElementById('monitorContent');
+    const isFirstLoad = !monitorContent.dataset.initialized;
+    
+    try {
+        const updateIndicator = document.getElementById('updateIndicator');
+        if (updateIndicator) updateIndicator.style.opacity = '1';
+        
+        // Загружаем статус и RRD данные отдельно
+        const statusRes = await fetchWithAuth(`/proxmox/api/${serverId}/node/status?node=${hostNode}`);
+        
+        if (!statusRes.ok) {
+            throw new Error(`HTTP error: ${statusRes.status}`);
+        }
+        
+        const status = await statusRes.json();
+        
+        // Пытаемся загрузить RRD данные, но не падаем если не получилось
+        let rrdData = { data: [] };
+        try {
+            const rrdRes = await fetchWithAuth(`/proxmox/api/${serverId}/node/rrddata?node=${hostNode}&timeframe=hour`);
+            
+            if (rrdRes.ok) {
+                rrdData = await rrdRes.json();
+            }
+        } catch (rrdError) {
+            // RRD data error - charts will be unavailable
+        }
+        
+        if (isFirstLoad) {
+            renderHostMonitorData(status, rrdData);
+            monitorContent.dataset.initialized = 'true';
+        } else {
+            updateHostMonitorData(status, rrdData);
+        }
+        
+        if (updateIndicator) {
+            setTimeout(() => updateIndicator.style.opacity = '0', 300);
+        }
+    } catch (error) {
+        console.error('Error loading host monitor data:', error);
+        monitorContent.innerHTML = `
+            <div style="padding: 2rem; text-align: center;">
+                <div style="background: var(--bg-tertiary); padding: 2rem; border-radius: 8px;">
+                    <div style="font-size: 2rem; margin-bottom: 1rem;"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                    <h3 style="color: var(--text-primary); margin-bottom: 1rem;">${t('error_loading_host_data')}</h3>
+                    <p style="color: var(--text-secondary);">${error.message}</p>
+                    <button onclick="closeMonitorModal()" class="btn" style="margin-top: 1rem;">${t('close')}</button>
+                </div>
+            </div>
+        `;
+    }
+}
+
+function renderHostMonitorData(status, rrdData) {
+    const monitorContent = document.getElementById('monitorContent');
+    
+    const cpuPercent = ((status.cpu || 0) * 100).toFixed(1);
+    const memPercent = (((status.memory?.used || 0) / (status.memory?.total || 1)) * 100).toFixed(1);
+    const rootPercent = (((status.rootfs?.used || 0) / (status.rootfs?.total || 1)) * 100).toFixed(1);
+    
+    const uptime = status.uptime || 0;
+    const days = Math.floor(uptime / 86400);
+    const hours = Math.floor((uptime % 86400) / 3600);
+    const mins = Math.floor((uptime % 3600) / 60);
+    const uptimeStr = days > 0 
+        ? `${days} ${days === 1 ? 'day' : 'days'}, ${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`
+        : `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+    
+    const loadavg = status.loadavg || [0, 0, 0];
+    const loadAvg0 = typeof loadavg === 'string' ? parseFloat(loadavg) : (Array.isArray(loadavg) && loadavg[0] !== undefined ? loadavg[0] : 0);
+    const loadAvg1 = typeof loadavg === 'string' ? 0 : (Array.isArray(loadavg) && loadavg[1] !== undefined ? loadavg[1] : 0);
+    const loadAvg2 = typeof loadavg === 'string' ? 0 : (Array.isArray(loadavg) && loadavg[2] !== undefined ? loadavg[2] : 0);
+    
+    let html = `
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+            <div class="stat-card">
+                <div class="stat-label">${t('cpu_cores')}</div>
+                <div style="font-size: 1.25rem; color: var(--text-primary);">${status.cpuinfo?.cpus || 'N/A'}</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-label">${t('cpu_usage')}</div>
+                <div data-metric="host-cpu-value" style="font-size: 1.25rem; color: var(--accent);">${cpuPercent}%</div>
+                <div class="progress-bar" style="margin-top: 0.5rem;">
+                    <div data-metric="host-cpu-progress" class="progress-fill ${cpuPercent > 80 ? 'danger' : cpuPercent > 60 ? 'warning' : ''}" style="width: ${cpuPercent}%; transition: width 0.5s ease;"></div>
+                </div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-label">${t('memory_usage')}</div>
+                <div data-metric="host-mem-value" style="font-size: 1.25rem; color: var(--accent);">${memPercent}%</div>
+                <div data-metric="host-mem-size" style="font-size: 0.75rem; color: var(--text-muted);">${formatBytes(status.memory?.used || 0)} / ${formatBytes(status.memory?.total || 0)}</div>
+                <div class="progress-bar" style="margin-top: 0.5rem;">
+                    <div data-metric="host-mem-progress" class="progress-fill ${memPercent > 80 ? 'danger' : memPercent > 60 ? 'warning' : ''}" style="width: ${memPercent}%; transition: width 0.5s ease;"></div>
+                </div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-label">${t('root_fs')}</div>
+                <div data-metric="host-disk-value" style="font-size: 1.25rem; color: var(--accent);">${rootPercent}%</div>
+                <div data-metric="host-disk-size" style="font-size: 0.75rem; color: var(--text-muted);">${formatBytes(status.rootfs?.used || 0)} / ${formatBytes(status.rootfs?.total || 0)}</div>
+                <div class="progress-bar" style="margin-top: 0.5rem;">
+                    <div data-metric="host-disk-progress" class="progress-fill ${rootPercent > 80 ? 'danger' : rootPercent > 60 ? 'warning' : ''}" style="width: ${rootPercent}%; transition: width 0.5s ease;"></div>
+                </div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-label">${t('uptime')}</div>
+                <div data-metric="host-uptime" style="font-size: 1.25rem; color: var(--text-primary);">${uptimeStr}</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-label">${t('load_average')}</div>
+                <div data-metric="host-loadavg" style="font-size: 1.25rem; color: var(--text-primary);">${(Number(loadAvg0) || 0).toFixed(2)}</div>
+                <div style="font-size: 0.75rem; color: var(--text-muted);">${(Number(loadAvg1) || 0).toFixed(2)} / ${(Number(loadAvg2) || 0).toFixed(2)}</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-label">${t('kernel')}</div>
+                <div style="font-size: 0.875rem; color: var(--text-primary);">${status.kversion || 'N/A'}</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-label">${t('pve_version')}</div>
+                <div style="font-size: 1rem; color: var(--text-primary);">${status.pveversion?.replace('pve-manager/', '') || 'N/A'}</div>
+            </div>
+        </div>
+        
+        <div style="margin-top: 1.5rem;">
+            <h4 style="margin-bottom: 1rem; color: var(--text-primary);"><i class="fa-solid fa-chart-line"></i> ${t('host_graphs')}</h4>
+            <div id="hostChartsContainer" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem;">
+                ${renderHostCharts(rrdData)}
+            </div>
+        </div>
+    `;
+    
+    monitorContent.innerHTML = html;
+}
+
+function renderHostCharts(rrdResponse) {
+    const data = Array.isArray(rrdResponse) ? rrdResponse : (rrdResponse?.data || []);
+    
+    if (!data || data.length === 0) {
+        return `<div style="color: var(--text-muted); text-align: center; padding: 2rem;">${t('no_chart_data')}</div>`;
+    }
+    
+    const html = `
+        <div class="card" style="padding: 1rem;">
+            <div style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--text-secondary);">${t('cpu_usage_percent')}</div>
+            <canvas id="hostCpuChart" style="max-height: 200px;"></canvas>
+        </div>
+        <div class="card" style="padding: 1rem;">
+            <div style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--text-secondary);">${t('memory_gb')}</div>
+            <canvas id="hostMemChart" style="max-height: 200px;"></canvas>
+        </div>
+        <div class="card" style="padding: 1rem;">
+            <div style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--text-secondary);">${t('network_mb_s')}</div>
+            <canvas id="hostNetChart" style="max-height: 200px;"></canvas>
+        </div>
+        <div class="card" style="padding: 1rem;">
+            <div style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--text-secondary);">${t('load_average')}</div>
+            <canvas id="hostLoadChart" style="max-height: 200px;"></canvas>
+        </div>
+    `;
+    
+    // Отрисовать графики после вставки HTML
+    setTimeout(() => {
+        drawHostCharts(data);
+    }, 100);
+    
+    return html;
+}
+    
+function drawHostCharts(data) {
+    if (typeof Chart === 'undefined') {
+        console.error('Chart.js not loaded!');
+        return;
+    }
+    
+    // Уничтожаем старые графики если они существуют и являются Chart объектами
+    if (window.hostCpuChart && typeof window.hostCpuChart.destroy === 'function') {
+        window.hostCpuChart.destroy();
+    }
+    if (window.hostMemChart && typeof window.hostMemChart.destroy === 'function') {
+        window.hostMemChart.destroy();
+    }
+    if (window.hostNetChart && typeof window.hostNetChart.destroy === 'function') {
+        window.hostNetChart.destroy();
+    }
+    if (window.hostLoadChart && typeof window.hostLoadChart.destroy === 'function') {
+        window.hostLoadChart.destroy();
+    }
+    
+    // Определяем цвета в зависимости от темы
+    const isDarkTheme = document.documentElement.getAttribute('data-theme') !== 'light';
+    const gridColor = isDarkTheme ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)';
+    const tickColor = isDarkTheme ? '#b0b0b0' : '#666666';
+    const cpuColor = isDarkTheme ? '#a78bfa' : '#7c3aed';  // Фиолетовый
+    const memColor = isDarkTheme ? '#34d399' : '#059669';  // Зеленый
+    const cpuBgColor = isDarkTheme ? 'rgba(167,139,250,0.2)' : 'rgba(124,58,237,0.2)';
+    const memBgColor = isDarkTheme ? 'rgba(52,211,153,0.2)' : 'rgba(5,150,105,0.2)';
+    
+    const chartConfig = {
+        responsive: true,
+        maintainAspectRatio: true,
+        plugins: {
+            legend: { display: false },
+            tooltip: { enabled: true, mode: 'index', intersect: false }
+        },
+        scales: {
+            x: {
+                type: 'category',
+                grid: { color: gridColor },
+                ticks: { color: tickColor, maxTicksLimit: 10 }
+            },
+            y: {
+                beginAtZero: true,
+                grid: { color: gridColor },
+                ticks: { color: tickColor }
+            }
+        }
+    };
+    
+    const formatTime = (timestamp) => {
+        const date = new Date(timestamp * 1000);
+        return date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    };
+    
+    // CPU Chart
+    const cpuCtx = document.getElementById('hostCpuChart');
+    if (cpuCtx) {
+        window.hostCpuChart = new Chart(cpuCtx, {
+            type: 'line',
+            data: {
+                labels: data.map(d => formatTime(d.time)),
+                datasets: [{
+                    label: t('cpu_usage_percent'),
+                    data: data.map(d => ((d.cpu || 0) * 100).toFixed(2)),
+                    borderColor: cpuColor,
+                    backgroundColor: cpuBgColor,
+                    borderWidth: 2,
+                    tension: 0.4,
+                    fill: true,
+                    pointRadius: 0
+                }]
+            },
+            options: chartConfig
+        });
+    }
+    
+    // Memory Chart
+    const memCtx = document.getElementById('hostMemChart');
+    if (memCtx) {
+        window.hostMemChart = new Chart(memCtx, {
+            type: 'line',
+            data: {
+                labels: data.map(d => formatTime(d.time)),
+                datasets: [{
+                    label: t('memory_gb'),
+                    data: data.map(d => ((d.memused || 0) / (1024*1024*1024)).toFixed(2)),
+                    borderColor: memColor,
+                    backgroundColor: memBgColor,
+                    borderWidth: 2,
+                    tension: 0.4,
+                    fill: true,
+                    pointRadius: 0
+                }]
+            },
+            options: chartConfig
+        });
+    }
+    
+    // Network Chart
+    const netCtx = document.getElementById('hostNetChart');
+    if (netCtx) {
+        window.hostNetChart = new Chart(netCtx, {
+            type: 'line',
+            data: {
+                labels: data.map(d => formatTime(d.time)),
+                datasets: [
+                    {
+                        label: t('in_mb_s'),
+                        data: data.map(d => ((d.netin || 0) / (1024*1024)).toFixed(2)),
+                        borderColor: '#4ade80',
+                        backgroundColor: 'rgba(74,222,128,0.2)',
+                        borderWidth: 2,
+                        tension: 0.4,
+                        pointRadius: 0
+                    },
+                    {
+                        label: t('out_mb_s'),
+                        data: data.map(d => ((d.netout || 0) / (1024*1024)).toFixed(2)),
+                        borderColor: '#f87171',
+                        backgroundColor: 'rgba(248,113,113,0.2)',
+                        borderWidth: 2,
+                        tension: 0.4,
+                        pointRadius: 0
+                    }
+                ]
+            },
+            options: {
+                ...chartConfig,
+                plugins: {
+                    legend: { display: true, position: 'top', labels: { color: tickColor, usePointStyle: true, padding: 10 } },
+                    tooltip: { enabled: true, mode: 'index', intersect: false }
+                }
+            }
+        });
+    }
+    
+    // Load Average Chart
+    const loadCtx = document.getElementById('hostLoadChart');
+    if (loadCtx) {
+        window.hostLoadChart = new Chart(loadCtx, {
+            type: 'line',
+            data: {
+                labels: data.map(d => formatTime(d.time)),
+                datasets: [{
+                    label: t('load_average'),
+                    data: data.map(d => {
+                        const loadavg = d.loadavg;
+                        const val = typeof loadavg === 'string' ? parseFloat(loadavg) : (Array.isArray(loadavg) && loadavg[0] ? loadavg[0] : (typeof loadavg === 'number' ? loadavg : 0));
+                        return val.toFixed(2);
+                    }),
+                    borderColor: '#60a5fa',
+                    backgroundColor: 'rgba(96,165,250,0.2)',
+                    borderWidth: 2,
+                    tension: 0.4,
+                    fill: true,
+                    pointRadius: 0
+                }]
+            },
+            options: chartConfig
+        });
+    }
+}
+
+function updateHostMonitorData(status, rrdData) {
+    const cpuPercent = ((status.cpu || 0) * 100).toFixed(1);
+    const memPercent = (((status.memory?.used || 0) / (status.memory?.total || 1)) * 100).toFixed(1);
+    const rootPercent = (((status.rootfs?.used || 0) / (status.rootfs?.total || 1)) * 100).toFixed(1);
+    
+    const uptime = status.uptime || 0;
+    const days = Math.floor(uptime / 86400);
+    const hours = Math.floor((uptime % 86400) / 3600);
+    const mins = Math.floor((uptime % 3600) / 60);
+    const uptimeStr = days > 0 
+        ? `${days} ${days === 1 ? 'day' : 'days'}, ${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`
+        : `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+    
+    const loadavg = status.loadavg || [0, 0, 0];
+    const loadAvg0 = typeof loadavg === 'string' ? parseFloat(loadavg) : (Array.isArray(loadavg) && loadavg[0] !== undefined ? loadavg[0] : 0);
+    
+    const updates = [
+        { selector: '[data-metric="host-cpu-value"]', value: `${cpuPercent}%` },
+        { selector: '[data-metric="host-cpu-progress"]', style: { width: `${cpuPercent}%` } },
+        { selector: '[data-metric="host-mem-value"]', value: `${memPercent}%` },
+        { selector: '[data-metric="host-mem-size"]', value: `${formatBytes(status.memory?.used || 0)} / ${formatBytes(status.memory?.total || 0)}` },
+        { selector: '[data-metric="host-mem-progress"]', style: { width: `${memPercent}%` } },
+        { selector: '[data-metric="host-disk-value"]', value: `${rootPercent}%` },
+        { selector: '[data-metric="host-disk-size"]', value: `${formatBytes(status.rootfs?.used || 0)} / ${formatBytes(status.rootfs?.total || 0)}` },
+        { selector: '[data-metric="host-disk-progress"]', style: { width: `${rootPercent}%` } },
+        { selector: '[data-metric="host-uptime"]', value: uptimeStr },
+        { selector: '[data-metric="host-loadavg"]', value: (Number(loadAvg0) || 0).toFixed(2) }
+    ];
+    
+    updates.forEach(update => {
+        const element = document.querySelector(update.selector);
+        if (element) {
+            if (update.value !== undefined) element.textContent = update.value;
+            if (update.style) Object.assign(element.style, update.style);
+        }
+    });
+    
+    updateHostCharts(rrdData);
+}
+
+function updateHostCharts(rrdResponse) {
+    if (!window.hostCpuChart || !window.hostMemChart || !window.hostNetChart || !window.hostLoadChart) {
+        return;
+    }
+    
+    // Проверка что графики полностью инициализированы
+    if (!window.hostCpuChart.data || !window.hostMemChart.data || !window.hostNetChart.data || !window.hostLoadChart.data) {
+        return;
+    }
+    
+    const data = Array.isArray(rrdResponse) ? rrdResponse : (rrdResponse?.data || []);
+    if (data.length === 0) return;
+    
+    const formatTime = (timestamp) => {
+        const date = new Date(timestamp * 1000);
+        return date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    };
+    
+    if (window.hostCpuChart && window.hostCpuChart.data) {
+        window.hostCpuChart.data.labels = data.map(d => formatTime(d.time));
+        window.hostCpuChart.data.datasets[0].data = data.map(d => ((d.cpu || 0) * 100).toFixed(2));
+        window.hostCpuChart.update('none');
+    }
+    
+    if (window.hostMemChart && window.hostMemChart.data) {
+        window.hostMemChart.data.labels = data.map(d => formatTime(d.time));
+        window.hostMemChart.data.datasets[0].data = data.map(d => ((d.memused || 0) / (1024*1024*1024)).toFixed(2));
+        window.hostMemChart.update('none');
+    }
+    
+    if (window.hostNetChart && window.hostNetChart.data) {
+        window.hostNetChart.data.labels = data.map(d => formatTime(d.time));
+        window.hostNetChart.data.datasets[0].data = data.map(d => ((d.netin || 0) / (1024*1024)).toFixed(2));
+        window.hostNetChart.data.datasets[1].data = data.map(d => ((d.netout || 0) / (1024*1024)).toFixed(2));
+        window.hostNetChart.update('none');
+    }
+    
+    if (window.hostLoadChart && window.hostLoadChart.data) {
+        window.hostLoadChart.data.labels = data.map(d => formatTime(d.time));
+        window.hostLoadChart.data.datasets[0].data = data.map(d => {
+            const loadavg = d.loadavg;
+            const val = typeof loadavg === 'string' ? parseFloat(loadavg) : (Array.isArray(loadavg) && loadavg[0] ? loadavg[0] : (typeof loadavg === 'number' ? loadavg : 0));
+            return val.toFixed(2);
+        });
+        window.hostLoadChart.update('none');
+    }
+}
+
+async function loadResources() {
+    const container = document.getElementById('resources-container');
+    const loading = document.getElementById('loading');
+    const statsSection = document.getElementById('stats-section');
+    
+    container.innerHTML = '';
+    loading.style.display = 'block';
+    statsSection.style.display = 'none';
+    
+    try {
+        const response = await fetchWithAuth(`/proxmox/api/${serverId}/resources`);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        
+        const vms = data.vms || [];
+        const containers = data.containers || [];
+        
+        // Определить ноду из первой VM или контейнера
+        if (!hostNode && (vms.length > 0 || containers.length > 0)) {
+            hostNode = vms[0]?.node || containers[0]?.node;
+            if (hostNode) {
+                loadHostMetrics();
+            }
+        }
+        
+        const formattedData = {
+            servers: [{
+                id: data.server_id,
+                name: data.server_name,
+                vms: vms,
+                containers: containers,
+                vms_count: vms.length,
+                containers_count: containers.length
+            }],
+            total_vms: vms.length,
+            total_containers: containers.length
+        };
+        
+        currentData = formattedData;
+        displayStats(formattedData);
+        displayResources(formattedData);
+        
+        statsSection.style.display = 'block';
+    } catch (error) {
+        console.error('Error loading resources:', error);
+        container.innerHTML = `<div class="card"><p style="color: var(--danger);"><i class="fa-solid fa-circle-xmark"></i> Ошибка загрузки: ${error.message || error}</p></div>`;
+    } finally {
+        loading.style.display = 'none';
+    }
+}
+
+function displayStats(data) {
+    if (!data || !data.servers) return;
+    
+    let totalRunning = 0;
+    let totalStopped = 0;
+    let totalVMs = 0;
+    let totalContainers = 0;
+    
+    data.servers.forEach(server => {
+        // Фильтруем шаблоны при подсчёте статистики
+        const filteredVMs = (server.vms || []).filter(vm => !vm.template);
+        totalVMs += filteredVMs.length;
+        totalContainers += (server.containers || []).length;
+        
+        [...filteredVMs, ...(server.containers || [])].forEach(resource => {
+            if (resource.status === 'running') totalRunning++;
+            else totalStopped++;
+        });
+    });
+    
+    document.getElementById('total-vms').textContent = totalVMs;
+    document.getElementById('total-containers').textContent = totalContainers;
+    document.getElementById('total-running').textContent = totalRunning;
+    document.getElementById('total-stopped').textContent = totalStopped;
+}
+
+function displayResources(data) {
+    const container = document.getElementById('resources-container');
+    
+    if (!data || !data.servers || data.servers.length === 0) {
+        container.innerHTML = '<div class="card"><p style="color: var(--text-muted);">Нет данных для отображения</p></div>';
+        return;
+    }
+    
+    let html = '';
+    
+    data.servers.forEach(server => {
+        // Фильтруем шаблоны (template=1), чтобы они не отображались
+        const filteredVMs = (server.vms || []).filter(vm => !vm.template);
+        const allResources = [
+            ...filteredVMs,
+            ...(server.containers || [])
+        ].sort((a, b) => (a.vmid || 0) - (b.vmid || 0));
+        
+        if (allResources.length === 0) {
+            html += '<div class="card"><p style="color: var(--text-muted);">Нет VM или контейнеров</p></div>';
+            return;
+        }
+        
+        html += '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem;">';
+        
+        allResources.forEach(resource => {
+            const statusColor = resource.status === 'running' ? 'var(--success)' : 'var(--danger)';
+            const statusIcon = resource.status === 'running' ? '<i class="fa-solid fa-circle" style="color:var(--success)"></i>' : '<i class="fa-solid fa-circle" style="color:var(--danger)"></i>';
+            const typeIcon = resource.type === 'qemu' ? '<i class="fa-solid fa-computer"></i>' : '<i class="fa-solid fa-cube"></i>';
+            
+            html += `
+                <a href="/proxmox/server/${server.id}/instance/${resource.vmid}?type=${resource.type}&node=${resource.node}" 
+                   class="card resource-card" 
+                   data-status="${resource.status}" 
+                   data-type="${resource.type}" 
+                   style="background: var(--bg-tertiary); border: 1px solid var(--border-color); padding: 1rem; cursor: pointer; display: block; text-decoration: none; color: inherit;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div style="display: flex; align-items: center; gap: 0.75rem;">
+                            <div style="display: flex; flex-direction: column; align-items: center; gap: 0.25rem;">
+                                <span style="font-size: 2rem;">${typeIcon}</span>
+                                <span style="font-size: 0.65rem; padding: 0.125rem 0.5rem; border-radius: 0.25rem; background: ${resource.type === 'qemu' ? 'var(--info)' : 'var(--purple)'}; color: var(--text-on-primary); font-weight: 600;">${resource.type === 'qemu' ? 'QEMU' : 'LXC'}</span>
+                            </div>
+                            <div>
+                                <h4 style="margin: 0 0 0.25rem 0; color: var(--text-primary); font-size: 1.1rem;">${resource.name || 'VM-' + resource.vmid}</h4>
+                                <div style="font-size: 0.8rem; color: var(--text-muted);">ID: ${resource.vmid} | Node: ${resource.node}</div>
+                            </div>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 0.5rem; color: ${statusColor}; font-weight: 600;">
+                            <span style="font-size: 0.75rem;">${statusIcon}</span>
+                            <span style="font-size: 0.875rem;">${resource.status}</span>
+                        </div>
+                    </div>
+                </a>
+            `;
+        });
+        
+        html += '</div>';
+    });
+    
+    container.innerHTML = html;
+}
+
+// Фильтрация по статусу
+let vmStatusFilter = 'all';
+
+function filterByStatus(filter) {
+    vmStatusFilter = filter;
+    
+    // Обновить активный фильтр
+    document.querySelectorAll('.stat-filter').forEach(el => {
+        if (el.dataset.filter === filter) {
+            el.style.boxShadow = '0 0 0 3px rgba(255,255,255,0.3)';
+        } else {
+            el.style.boxShadow = 'none';
+        }
+    });
+    
+    // Показать/скрыть ресурсы
+    const resources = document.querySelectorAll('.resource-card');
+    resources.forEach(card => {
+        if (filter === 'all') {
+            card.style.display = 'block';
+        } else if (filter === 'qemu' || filter === 'lxc') {
+            // Фильтрация по типу
+            card.style.display = card.dataset.type === filter ? 'block' : 'none';
+        } else {
+            // Фильтрация по статусу (running/stopped)
+            card.style.display = card.dataset.status === filter ? 'block' : 'none';
+        }
+    });
+}
+
+async function controlResource(serverId, vmid, type, action, node) {
+    const actionNames = {
+        start: t('start') || 'запустить',
+        stop: t('stop') || 'остановить',
+        restart: t('restart') || 'перезапустить'
+    };
+    const typeName = type === 'qemu' ? 'VM' : t('container') || 'контейнер';
+    
+    const confirmed = await showConfirm(
+        t('confirm_action') || 'Подтверждение',
+        `${t('are_you_sure_to')} ${actionNames[action]} ${typeName} ${vmid}?`,
+        { type: action === 'stop' ? 'warning' : 'info', confirmText: actionNames[action] }
+    );
+    
+    if (!confirmed) return;
+    
+    try {
+        // Конвертировать тип: qemu -> vm, lxc -> container
+        const apiType = type === 'qemu' ? 'vm' : 'container';
+        
+        const response = await fetchWithAuth(`/proxmox/api/${serverId}/${apiType}/${vmid}/${action}?node=${node}`, {
+            method: 'POST'
+        });
+        
+        if (response.ok) {
+            showToast('success', t('success'), `${t('command_sent_successfully')} ${action}`);
+            setTimeout(() => loadResources(), 2000);
+        } else {
+            const error = await response.json();
+            showToast('error', t('error'), error.detail || t('failed_to_execute_command'));
+        }
+    } catch (error) {
+        console.error('Control error:', error);
+        showToast('error', t('error'), t('connection_error'));
+    }
+}
+
+function formatBytes(bytes) {
+    if (!bytes || bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return (bytes / Math.pow(k, i)).toFixed(2) + ' ' + sizes[i];
+}
+
+// Загрузить данные при открытии страницы
+window.addEventListener('DOMContentLoaded', () => {
+    // Check for embed mode
+    const urlParams = new URLSearchParams(window.location.search);
+    const embedMode = urlParams.get('embed') === '1';
+    
+    // In embed mode, hide unnecessary elements
+    if (embedMode) {
+        document.querySelectorAll('.sidebar, .topbar, .main-header, header, nav').forEach(el => {
+            if (el) el.style.display = 'none';
+        });
+        const mainContent = document.querySelector('.main-content');
+        if (mainContent) {
+            mainContent.style.marginLeft = '0';
+            mainContent.style.padding = '1rem';
+        }
+        // Hide the server card in embed mode - we only want the modal
+        const serverCard = document.querySelector('.card');
+        if (serverCard) serverCard.style.display = 'none';
+    }
+    
+    loadResources();
+    
+    // Автообновление метрик хоста каждые 5 секунд
+    setInterval(() => {
+        if (hostNode && document.getElementById('host-metrics').style.display !== 'none') {
+            loadHostMetrics();
+        }
+    }, 5000);
+});
+
+// === ФУНКЦИИ МОНИТОРИНГА ===
+
+function showMonitorModal(serverId, node, vmid, type, name) {
+    const modal = document.getElementById('monitorModal');
+    document.getElementById('monitorTitle').innerHTML = `
+        <i class="fa-solid fa-chart-simple"></i> Мониторинг: ${name} (${vmid})
+        <span id="updateIndicator" style="display: inline-block; margin-left: 0.5rem; width: 8px; height: 8px; background: var(--accent); border-radius: 50%; opacity: 0; transition: opacity 0.3s ease;"></span>
+    `;
+    document.getElementById('monitorContent').innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка данных...</div>';
+    
+    modal.style.display = 'flex';
+    
+    loadMonitorData(serverId, node, vmid, type);
+    
+    if (window.monitorInterval) clearInterval(window.monitorInterval);
+    window.monitorInterval = setInterval(() => {
+        if (modal.style.display === 'flex') {
+            loadMonitorData(serverId, node, vmid, type);
+        }
+    }, 5000);
+}
+
+function closeMonitorModal() {
+    const modal = document.getElementById('monitorModal');
+    const monitorContent = document.getElementById('monitorContent');
+    
+    modal.style.display = 'none';
+    
+    if (monitorContent) {
+        delete monitorContent.dataset.initialized;
+    }
+    
+    if (window.monitorInterval) {
+        clearInterval(window.monitorInterval);
+        window.monitorInterval = null;
+    }
+}
+
+async function loadMonitorData(serverId, node, vmid, type) {
+    const monitorContent = document.getElementById('monitorContent');
+    const isFirstLoad = !monitorContent.dataset.initialized;
+    
+    try {
+        const updateIndicator = document.getElementById('updateIndicator');
+        if (updateIndicator) updateIndicator.style.opacity = '1';
+        
+        // Конвертировать тип: qemu -> vm, lxc -> container
+        const apiType = type === 'qemu' ? 'vm' : 'container';
+        
+        const [statusRes, rrdRes] = await Promise.all([
+            fetchWithAuth(`/proxmox/api/${serverId}/${apiType}/${vmid}/status?node=${node}`),
+            fetchWithAuth(`/proxmox/api/${serverId}/${apiType}/${vmid}/rrddata?node=${node}&timeframe=hour`)
+        ]);
+        
+        if (!statusRes.ok || !rrdRes.ok) {
+            throw new Error(`HTTP error: ${statusRes.status} / ${rrdRes.status}`);
+        }
+        
+        const status = await statusRes.json();
+        const rrdData = await rrdRes.json();
+        
+        if (isFirstLoad) {
+            renderMonitorData(status, rrdData, type);
+            monitorContent.dataset.initialized = 'true';
+        } else {
+            updateMonitorData(status, rrdData);
+        }
+        
+        if (updateIndicator) {
+            setTimeout(() => updateIndicator.style.opacity = '0', 300);
+        }
+    } catch (error) {
+        console.error('Error loading monitor data:', error);
+        monitorContent.innerHTML = `
+            <div style="padding: 2rem; text-align: center;">
+                <div style="background: var(--bg-tertiary); padding: 2rem; border-radius: 8px;">
+                    <div style="font-size: 2rem; margin-bottom: 1rem;"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                    <h3 style="color: var(--text-primary); margin-bottom: 1rem;">Ошибка загрузки данных</h3>
+                    <p style="color: var(--text-secondary);">${error.message}</p>
+                    <button onclick="closeMonitorModal()" class="btn" style="margin-top: 1rem;">Закрыть</button>
+                </div>
+            </div>
+        `;
+    }
+}
+
+function updateMonitorData(status, rrdData) {
+    const cpuPercent = ((status.cpu || 0) * 100).toFixed(1);
+    const memPercent = (((status.mem || 0) / (status.maxmem || 1)) * 100).toFixed(1);
+    const diskPercent = (((status.disk || 0) / (status.maxdisk || 1)) * 100).toFixed(1);
+    
+    const totalSeconds = status.uptime || 0;
+    const days = Math.floor(totalSeconds / 86400);
+    const hours = Math.floor((totalSeconds % 86400) / 3600);
+    const mins = Math.floor((totalSeconds % 3600) / 60);
+    const secs = Math.floor(totalSeconds % 60);
+    const uptimeStr = days > 0 
+        ? `${days} ${days === 1 ? 'day' : 'days'}, ${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
+        : `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    
+    const updates = [
+        { selector: '[data-metric="status"]', value: status.status === 'running' ? '● Запущен' : '○ Остановлен' },
+        { selector: '[data-metric="uptime"]', value: uptimeStr },
+        { selector: '[data-metric="cpu-value"]', value: `${cpuPercent}%` },
+        { selector: '[data-metric="cpu-progress"]', style: { width: `${cpuPercent}%` } },
+        { selector: '[data-metric="mem-value"]', value: `${memPercent}%` },
+        { selector: '[data-metric="mem-size"]', value: `${formatBytes(status.mem)} / ${formatBytes(status.maxmem)}` },
+        { selector: '[data-metric="mem-progress"]', style: { width: `${memPercent}%` } },
+        { selector: '[data-metric="disk-value"]', value: `${diskPercent}%` },
+        { selector: '[data-metric="disk-size"]', value: `${formatBytes(status.disk)} / ${formatBytes(status.maxdisk)}` },
+        { selector: '[data-metric="disk-progress"]', style: { width: `${diskPercent}%` } },
+        { selector: '[data-metric="netin"]', value: formatBytes(status.netin || 0) },
+        { selector: '[data-metric="netout"]', value: formatBytes(status.netout || 0) },
+        { selector: '[data-metric="diskread"]', value: formatBytes(status.diskread || 0) },
+        { selector: '[data-metric="diskwrite"]', value: formatBytes(status.diskwrite || 0) }
+    ];
+    
+    updates.forEach(update => {
+        const element = document.querySelector(update.selector);
+        if (element) {
+            if (update.value !== undefined) element.textContent = update.value;
+            if (update.style) Object.assign(element.style, update.style);
+        }
+    });
+    
+    updateCharts(status, rrdData);
+}
+
+function renderMonitorData(status, rrdData, type) {
+    const monitorContent = document.getElementById('monitorContent');
+    if (!monitorContent.style.transition) {
+        monitorContent.style.transition = 'opacity 0.3s ease-in-out';
+    }
+    
+    const cpuPercent = ((status.cpu || 0) * 100).toFixed(1);
+    const memPercent = (((status.mem || 0) / (status.maxmem || 1)) * 100).toFixed(1);
+    const diskPercent = (((status.disk || 0) / (status.maxdisk || 1)) * 100).toFixed(1);
+    
+    const totalSeconds = status.uptime || 0;
+    const days = Math.floor(totalSeconds / 86400);
+    const hours = Math.floor((totalSeconds % 86400) / 3600);
+    const mins = Math.floor((totalSeconds % 3600) / 60);
+    const secs = Math.floor(totalSeconds % 60);
+    
+    let uptimeStr = '';
+    if (days > 0) {
+        uptimeStr = `${days} ${days === 1 ? 'day' : 'days'}, ${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    } else {
+        uptimeStr = `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    }
+    
+    let html = `
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+            <div class="stat-card">
+                <div class="stat-label">${t('status')}</div>
+                <div data-metric="status" style="font-size: 1.25rem; color: ${status.status === 'running' ? 'var(--accent)' : 'var(--text-muted)'}; transition: color 0.3s ease;">
+                    ${status.status === 'running' ? '● ' + t('running_status') : '○ ' + t('stopped_status')}
+                </div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-label">${t('uptime')}</div>
+                <div data-metric="uptime" style="font-size: 1.25rem; color: var(--text-primary);">${uptimeStr}</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-label">CPU</div>
+                <div data-metric="cpu-value" style="font-size: 1.25rem; color: var(--accent);">${cpuPercent}%</div>
+                <div class="progress-bar" style="margin-top: 0.5rem;">
+                    <div data-metric="cpu-progress" class="progress-fill ${cpuPercent > 80 ? 'danger' : cpuPercent > 60 ? 'warning' : ''}" style="width: ${cpuPercent}%; transition: width 0.5s ease;"></div>
+                </div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-label">${t('memory_usage')}</div>
+                <div data-metric="mem-value" style="font-size: 1.25rem; color: var(--accent);">${memPercent}%</div>
+                <div data-metric="mem-size" style="font-size: 0.75rem; color: var(--text-muted);">${formatBytes(status.mem)} / ${formatBytes(status.maxmem)}</div>
+                <div class="progress-bar" style="margin-top: 0.5rem;">
+                    <div data-metric="mem-progress" class="progress-fill ${memPercent > 80 ? 'danger' : memPercent > 60 ? 'warning' : ''}" style="width: ${memPercent}%; transition: width 0.5s ease;"></div>
+                </div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-label">${t('disk')}</div>
+                <div data-metric="disk-value" style="font-size: 1.25rem; color: var(--accent);">${diskPercent}%</div>
+                <div data-metric="disk-size" style="font-size: 0.75rem; color: var(--text-muted);">${formatBytes(status.disk)} / ${formatBytes(status.maxdisk)}</div>
+                <div class="progress-bar" style="margin-top: 0.5rem;">
+                    <div data-metric="disk-progress" class="progress-fill ${diskPercent > 80 ? 'danger' : diskPercent > 60 ? 'warning' : ''}" style="width: ${diskPercent}%; transition: width 0.5s ease;"></div>
+                </div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-label">${t('network_in')}</div>
+                <div data-metric="netin" style="font-size: 1.25rem; color: var(--accent);">${formatBytes(status.netin || 0)}</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-label">${t('network_out')}</div>
+                <div data-metric="netout" style="font-size: 1.25rem; color: var(--accent);">${formatBytes(status.netout || 0)}</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-label">${t('disk_read')}</div>
+                <div data-metric="diskread" style="font-size: 1.25rem; color: var(--accent);">${formatBytes(status.diskread || 0)}</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-label">${t('disk_write')}</div>
+                <div data-metric="diskwrite" style="font-size: 1.25rem; color: var(--accent);">${formatBytes(status.diskwrite || 0)}</div>
+            </div>
+        </div>
+        
+        <div style="margin-top: 1.5rem;">
+            <h4 style="margin-bottom: 1rem; color: var(--text-primary);"><i class="fa-solid fa-chart-line"></i> ${t('vm_graphs')}</h4>
+            <div id="chartsContainer" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem;">
+                ${renderCharts(rrdData)}
+            </div>
+        </div>
+    `;
+    
+    document.getElementById('monitorContent').innerHTML = html;
+}
+
+function renderCharts(rrdResponse) {
+    const data = Array.isArray(rrdResponse) ? rrdResponse : (rrdResponse?.data || []);
+    
+    if (!data || data.length === 0) {
+        return `<div style="color: var(--text-muted); text-align: center;">${t('no_chart_data')}</div>`;
+    }
+    
+    const cpuData = data.map(d => ({time: d.time, value: (d.cpu || 0) * 100}));
+    const memData = data.map(d => ({time: d.time, value: (d.mem || 0) / (1024*1024*1024)}));
+    const netData = data.map(d => ({time: d.time, in: (d.netin || 0) / (1024*1024), out: (d.netout || 0) / (1024*1024)}));
+    const diskData = data.map(d => ({time: d.time, read: (d.diskread || 0) / (1024*1024), write: (d.diskwrite || 0) / (1024*1024)}));
+    
+    const html = `
+        <div class="card" style="padding: 1rem;">
+            <div style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--text-secondary);">${t('cpu_usage_percent')}</div>
+            <canvas id="cpuChart" style="max-height: 200px;"></canvas>
+        </div>
+        <div class="card" style="padding: 1rem;">
+            <div style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--text-secondary);">${t('memory_gb')}</div>
+            <canvas id="memChart" style="max-height: 200px;"></canvas>
+        </div>
+        <div class="card" style="padding: 1rem;">
+            <div style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--text-secondary);">${t('network_mb_s')}</div>
+            <canvas id="netChart" style="max-height: 200px;"></canvas>
+        </div>
+        <div class="card" style="padding: 1rem;">
+            <div style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--text-secondary);">${t('disk_io')}</div>
+            <canvas id="diskChart" style="max-height: 200px;"></canvas>
+        </div>
+    `;
+    
+    setTimeout(() => {
+        drawCharts(cpuData, memData, netData, diskData);
+    }, 100);
+    
+    return html;
+}
+
+function updateCharts(status, rrdResponse) {
+    if (!window.cpuChart || !window.memChart || !window.netChart || !window.diskChart) {
+        return;
+    }
+    
+    const data = Array.isArray(rrdResponse) ? rrdResponse : (rrdResponse?.data || []);
+    if (data.length === 0) return;
+    
+    const formatTime = (timestamp) => {
+        const date = new Date(timestamp * 1000);
+        return date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    };
+    
+    if (window.cpuChart) {
+        window.cpuChart.data.labels = data.map(d => formatTime(d.time));
+        window.cpuChart.data.datasets[0].data = data.map(d => ((d.cpu || 0) * 100).toFixed(2));
+        window.cpuChart.update('none');
+    }
+    
+    if (window.memChart) {
+        window.memChart.data.labels = data.map(d => formatTime(d.time));
+        window.memChart.data.datasets[0].data = data.map(d => ((d.mem || 0) / (1024*1024*1024)).toFixed(2));
+        window.memChart.update('none');
+    }
+    
+    if (window.netChart) {
+        window.netChart.data.labels = data.map(d => formatTime(d.time));
+        window.netChart.data.datasets[0].data = data.map(d => ((d.netin || 0) / (1024*1024)).toFixed(2));
+        window.netChart.data.datasets[1].data = data.map(d => ((d.netout || 0) / (1024*1024)).toFixed(2));
+        window.netChart.update('none');
+    }
+    
+    if (window.diskChart) {
+        window.diskChart.data.labels = data.map(d => formatTime(d.time));
+        window.diskChart.data.datasets[0].data = data.map(d => ((d.diskread || 0) / (1024*1024)).toFixed(2));
+        window.diskChart.data.datasets[1].data = data.map(d => ((d.diskwrite || 0) / (1024*1024)).toFixed(2));
+        window.diskChart.update('none');
+    }
+}
+
+function drawCharts(cpuData, memData, netData, diskData) {
+    if (typeof Chart === 'undefined') {
+        console.error('Chart.js not loaded!');
+        return;
+    }
+    
+    if (window.cpuChart && typeof window.cpuChart.destroy === 'function') window.cpuChart.destroy();
+    if (window.memChart && typeof window.memChart.destroy === 'function') window.memChart.destroy();
+    if (window.netChart && typeof window.netChart.destroy === 'function') window.netChart.destroy();
+    if (window.diskChart && typeof window.diskChart.destroy === 'function') window.diskChart.destroy();
+    
+    const chartConfig = {
+        responsive: true,
+        maintainAspectRatio: true,
+        plugins: {
+            legend: { display: false },
+            tooltip: { enabled: true, mode: 'index', intersect: false }
+        },
+        scales: {
+            x: {
+                type: 'category',
+                grid: { color: 'rgba(255,255,255,0.1)' },
+                ticks: { color: '#b0b0b0', maxTicksLimit: 10 }
+            },
+            y: {
+                beginAtZero: true,
+                grid: { color: 'rgba(255,255,255,0.1)' },
+                ticks: { color: '#b0b0b0' }
+            }
+        }
+    };
+    
+    const formatTime = (timestamp) => {
+        const date = new Date(timestamp * 1000);
+        return date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    };
+    
+    const cpuCtx = document.getElementById('cpuChart');
+    if (cpuCtx && cpuData.length > 0) {
+        window.cpuChart = new Chart(cpuCtx, {
+            type: 'line',
+            data: {
+                labels: cpuData.map(d => formatTime(d.time)),
+                datasets: [{
+                    label: t('cpu_usage_percent'),
+                    data: cpuData.map(d => d.value.toFixed(2)),
+                    borderColor: '#ffffff',
+                    backgroundColor: 'rgba(255,255,255,0.1)',
+                    borderWidth: 2,
+                    tension: 0.4,
+                    fill: true,
+                    pointRadius: 0
+                }]
+            },
+            options: chartConfig
+        });
+    }
+    
+    const memCtx = document.getElementById('memChart');
+    if (memCtx && memData.length > 0) {
+        window.memChart = new Chart(memCtx, {
+            type: 'line',
+            data: {
+                labels: memData.map(d => formatTime(d.time)),
+                datasets: [{
+                    label: t('memory_gb'),
+                    data: memData.map(d => d.value.toFixed(2)),
+                    borderColor: '#ffffff',
+                    backgroundColor: 'rgba(255,255,255,0.1)',
+                    borderWidth: 2,
+                    tension: 0.4,
+                    fill: true,
+                    pointRadius: 0
+                }]
+            },
+            options: chartConfig
+        });
+    }
+    
+    const netCtx = document.getElementById('netChart');
+    if (netCtx && netData.length > 0) {
+        window.netChart = new Chart(netCtx, {
+            type: 'line',
+            data: {
+                labels: netData.map(d => formatTime(d.time)),
+                datasets: [
+                    {
+                        label: t('in_mb_s'),
+                        data: netData.map(d => d.in.toFixed(2)),
+                        borderColor: '#4ade80',
+                        backgroundColor: 'rgba(74,222,128,0.1)',
+                        borderWidth: 2,
+                        tension: 0.4,
+                        pointRadius: 0
+                    },
+                    {
+                        label: t('out_mb_s'),
+                        data: netData.map(d => d.out.toFixed(2)),
+                        borderColor: '#f87171',
+                        backgroundColor: 'rgba(248,113,113,0.1)',
+                        borderWidth: 2,
+                        tension: 0.4,
+                        pointRadius: 0
+                    }
+                ]
+            },
+            options: {
+                ...chartConfig,
+                plugins: {
+                    legend: { display: true, position: 'top', labels: { color: '#b0b0b0', usePointStyle: true, padding: 10 } },
+                    tooltip: { enabled: true, mode: 'index', intersect: false }
+                }
+            }
+        });
+    }
+    
+    const diskCtx = document.getElementById('diskChart');
+    if (diskCtx && diskData.length > 0) {
+        window.diskChart = new Chart(diskCtx, {
+            type: 'line',
+            data: {
+                labels: diskData.map(d => formatTime(d.time)),
+                datasets: [
+                    {
+                        label: t('disk_read'),
+                        data: diskData.map(d => d.read.toFixed(2)),
+                        borderColor: '#60a5fa',
+                        backgroundColor: 'rgba(96,165,250,0.1)',
+                        borderWidth: 2,
+                        tension: 0.4,
+                        pointRadius: 0
+                    },
+                    {
+                        label: t('disk_write'),
+                        data: diskData.map(d => d.write.toFixed(2)),
+                        borderColor: '#f59e0b',
+                        backgroundColor: 'rgba(245,158,11,0.1)',
+                        borderWidth: 2,
+                        tension: 0.4,
+                        pointRadius: 0
+                    }
+                ]
+            },
+            options: {
+                ...chartConfig,
+                plugins: {
+                    legend: { display: true, position: 'top', labels: { color: '#b0b0b0', usePointStyle: true, padding: 10 } },
+                    tooltip: { enabled: true, mode: 'index', intersect: false }
+                }
+            }
+        });
+    }
+}
+
+let vncConnection = null;
+let RFBClass = null;
+
+function showVNCModal(serverId, node, vmid, type, name) {
+    const modal = document.getElementById('vncModal');
+    document.getElementById('vncTitle').textContent = `<i class="fa-solid fa-desktop"></i> VNC Console: ${name} (${vmid})`;
+    document.getElementById('vncContent').innerHTML = `<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> ${t('connecting_to_vnc')}</div>`;
+    
+    modal.style.display = 'flex';
+    
+    // Wait for noVNC library to load before connecting
+    waitForNoVNC().then((rfb) => {
+        RFBClass = rfb;
+        loadVNC(serverId, node, vmid, type);
+    }).catch(error => {
+        const vncContent = document.getElementById('vncContent');
+        vncContent.innerHTML = `
+            <div style="padding: 2rem; text-align: center;">
+                <div style="background: var(--bg-tertiary); padding: 2rem; border-radius: 8px;">
+                    <div style="font-size: 2rem; margin-bottom: 1rem;"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                    <h3 style="color: var(--text-primary); margin-bottom: 1rem;">${t('novnc_loading_error')}</h3>
+                    <p style="color: var(--text-secondary); margin-bottom: 1rem;">${error.message}</p>
+                    <p style="color: var(--text-muted); font-size: 0.875rem;">${t('check_connection_retry')}</p>
+                    <button onclick="closeVNCModal()" class="btn" style="margin-top: 1rem;">${t('close')}</button>
+                </div>
+            </div>
+        `;
+    });
+}
+
+// Wait for noVNC library to load with timeout
+function waitForNoVNC(timeout = 10000) {
+    return window.waitForRFB();
+}
+
+async function loadVNC(serverId, node, vmid, type) {
+    const vncContent = document.getElementById('vncContent');
+    
+    try {
+        // Конвертировать тип: qemu -> vm, lxc -> container
+        const apiType = type === 'qemu' ? 'vm' : 'container';
+        
+        const response = await fetchWithAuth(`/proxmox/api/${serverId}/${apiType}/${vmid}/vnc?node=${node}`);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        
+        const vncData = await response.json();
+        
+        // Логируем только безопасную информацию (без токенов и паролей)
+        // Очистить контейнер
+        vncContent.innerHTML = '';
+        
+        // Создать URL для websocket подключения через наш прокси
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsHost = window.location.host;
+        const resourceType = vncData.type; // 'qemu' или 'lxc'
+        
+        // Подключаемся через наш WebSocket прокси, передаём auth_ticket из той же сессии
+        const wsUrl = `${protocol}//${wsHost}/proxmox/ws/vnc/${serverId}/${node}/${resourceType}/${vmid}?port=${vncData.port}&vncticket=${encodeURIComponent(vncData.ticket)}&auth_ticket=${encodeURIComponent(vncData.auth_ticket)}`;
+        
+        // Создаём опции для noVNC - используем vncticket как пароль для VNC auth
+        const rfbOptions = {
+            credentials: {
+                password: vncData.ticket  // VNC ticket используется как пароль
+            }
+        };
+        
+        // Создать noVNC подключение с credentials
+        vncConnection = new RFBClass(vncContent, wsUrl, rfbOptions);
+        
+        vncConnection.scaleViewport = true;
+        vncConnection.resizeSession = true;
+        
+        vncConnection.addEventListener('connect', () => {
+            // Принудительно обновить размер
+            setTimeout(() => {
+                if (vncConnection && vncConnection._display) {
+                    vncConnection._display.autoscale(vncContent.clientWidth, vncContent.clientHeight);
+                }
+            }, 500);
+        });
+        
+        // Обработка запроса пароля - автоматически отправляем vncticket
+        vncConnection.addEventListener('credentialsrequired', (e) => {
+            vncConnection.sendCredentials({ password: vncData.ticket });
+        });
+        
+        // Обработка ошибок клипборда (игнорируем)
+        vncConnection.addEventListener('clipboard', (e) => {
+            // Clipboard event - ignored
+        });
+        
+        vncConnection.addEventListener('disconnect', (e) => {
+            if (e.detail.clean) {
+                vncContent.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-secondary);">Соединение закрыто</div>';
+            } else {
+                vncContent.innerHTML = `
+                    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: var(--text-secondary); padding: 2rem;">
+                        <div style="font-size: 2rem; margin-bottom: 1rem;"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                        <div style="margin-bottom: 1rem; font-size: 1.125rem;">Соединение прервано</div>
+                        <div style="background: var(--bg-tertiary); padding: 1.5rem; border-radius: 8px; max-width: 500px; text-align: left; margin-bottom: 1rem;">
+                            <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 0.5rem;">
+                                <strong>Возможные причины:</strong>
+                            </p>
+                            <ul style="color: var(--text-muted); font-size: 0.8rem; margin-left: 1rem;">
+                                <li>Proxmox VNC требует авторизацию по паролю (не API token)</li>
+                                <li>Добавьте пароль в настройках Proxmox сервера</li>
+                                <li>VM/контейнер может быть выключен</li>
+                            </ul>
+                        </div>
+                        <div style="display: flex; gap: 1rem;">
+                            <button onclick="loadVNC(${serverId}, '${node}', ${vmid}, '${type}')" class="btn btn-secondary"><i class="fa-solid fa-rotate"></i> Переподключиться</button>
+                            <a href="https://${vncData.host}:8006" target="_blank" class="btn" style="background: var(--bg-tertiary); color: var(--text-primary);"><i class="fa-solid fa-globe"></i> Открыть Proxmox</a>
+                        </div>
+                    </div>
+                `;
+            }
+        });
+        
+        vncConnection.addEventListener('securityfailure', (e) => {
+            console.error('VNC security failure:', e.detail);
+            vncContent.innerHTML = `
+                <div style="padding: 2rem; text-align: center;">
+                    <div style="font-size: 2rem; margin-bottom: 1rem;"><i class="fa-solid fa-lock"></i></div>
+                    <h3 style="color: var(--text-primary); margin-bottom: 1rem;">Ошибка авторизации VNC</h3>
+                    <p style="color: var(--text-secondary);">${e.detail.reason}</p>
+                </div>
+            `;
+        });
+        
+    } catch (error) {
+        console.error('VNC error:', error);
+        vncContent.innerHTML = `
+            <div style="padding: 2rem; text-align: center;">
+                <div style="background: var(--bg-tertiary); padding: 2rem; border-radius: 8px;">
+                    <div style="font-size: 2rem; margin-bottom: 1rem;"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                    <h3 style="color: var(--text-primary); margin-bottom: 1rem;">Ошибка подключения VNC</h3>
+                    <p style="color: var(--text-secondary);">${error.message}</p>
+                    <button onclick="closeVNCModal()" class="btn" style="margin-top: 1rem;">Закрыть</button>
+                </div>
+            </div>
+        `;
+    }
+}
+
+function closeVNCModal() {
+    if (vncConnection) {
+        vncConnection.disconnect();
+        vncConnection = null;
+    }
+    document.getElementById('vncModal').style.display = 'none';
+}
+
+// === TERMINAL (xterm.js) FUNCTIONS ===
+let terminalInstance = null;
+let terminalWebSocket = null;
+let fitAddon = null;
+
+function showTerminalModal(serverId, node, vmid, type, name) {
+    const modal = document.getElementById('terminalModal');
+    document.getElementById('terminalTitle').innerHTML = `<i class="fa-solid fa-terminal"></i> Terminal: ${name} (${vmid})`;
+    document.getElementById('terminalStatus').textContent = t('connecting') + '...';
+    document.getElementById('terminalContent').innerHTML = '';
+    
+    modal.style.display = 'flex';
+    
+    // Small delay to ensure modal is visible
+    setTimeout(() => {
+        connectTerminal(serverId, node, vmid, type);
+    }, 100);
+}
+
+async function connectTerminal(serverId, node, vmid, type) {
+    const terminalContent = document.getElementById('terminalContent');
+    const statusEl = document.getElementById('terminalStatus');
+    
+    try {
+        // Determine API endpoint based on type
+        const apiType = type === 'qemu' ? 'vm' : 'container';
+        
+        // Get terminal proxy data from our API
+        const response = await fetchWithAuth(`/proxmox/api/${serverId}/${apiType}/${vmid}/terminal?node=${node}`);
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || `HTTP ${response.status}`);
+        }
+        
+        const termData = await response.json();
+        
+        // Initialize xterm.js
+        terminalInstance = new Terminal({
+            cursorBlink: true,
+            fontSize: 14,
+            fontFamily: '"JetBrains Mono", "Fira Code", "Consolas", monospace',
+            theme: {
+                background: '#1a1a1a',
+                foreground: '#e0e0e0',
+                cursor: '#00ff00',
+                cursorAccent: '#1a1a1a',
+                selection: 'rgba(255, 255, 255, 0.3)',
+                black: '#000000',
+                red: '#ff5555',
+                green: '#50fa7b',
+                yellow: '#f1fa8c',
+                blue: '#6272a4',
+                magenta: '#ff79c6',
+                cyan: '#8be9fd',
+                white: '#f8f8f2',
+                brightBlack: '#6272a4',
+                brightRed: '#ff6e6e',
+                brightGreen: '#69ff94',
+                brightYellow: '#ffffa5',
+                brightBlue: '#d6acff',
+                brightMagenta: '#ff92df',
+                brightCyan: '#a4ffff',
+                brightWhite: '#ffffff'
+            },
+            allowTransparency: false,
+            scrollback: 10000,
+            tabStopWidth: 4
+        });
+        
+        // Add fit addon
+        fitAddon = new FitAddon.FitAddon();
+        terminalInstance.loadAddon(fitAddon);
+        
+        // Add web links addon
+        const webLinksAddon = new WebLinksAddon.WebLinksAddon();
+        terminalInstance.loadAddon(webLinksAddon);
+        
+        // Open terminal in container
+        terminalInstance.open(terminalContent);
+        fitAddon.fit();
+        
+        // Connect WebSocket
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsHost = window.location.host;
+        const resourceType = termData.type === 'qemu' ? 'vm' : 'lxc';
+        
+        const wsUrl = `${protocol}//${wsHost}/proxmox/ws/terminal/${serverId}/${node}/${resourceType}/${vmid}?port=${termData.port}&ticket=${encodeURIComponent(termData.ticket)}`;
+        
+        terminalWebSocket = new WebSocket(wsUrl);
+        terminalWebSocket.binaryType = 'arraybuffer';
+        
+        terminalWebSocket.onopen = () => {
+            statusEl.textContent = t('connected') || 'Connected';
+            statusEl.style.color = 'var(--success)';
+            terminalInstance.focus();
+            
+            // Send initial resize
+            const dims = fitAddon.proposeDimensions();
+            if (dims) {
+                const resizeMsg = `1:${dims.cols}:${dims.rows}:`;
+                terminalWebSocket.send(resizeMsg);
+            }
+        };
+        
+        terminalWebSocket.onmessage = (event) => {
+            if (event.data instanceof ArrayBuffer) {
+                const data = new Uint8Array(event.data);
+                terminalInstance.write(data);
+            } else {
+                terminalInstance.write(event.data);
+            }
+        };
+        
+        terminalWebSocket.onclose = (event) => {
+            statusEl.textContent = t('disconnected') || 'Disconnected';
+            statusEl.style.color = 'var(--danger)';
+            
+            if (!event.wasClean) {
+                terminalInstance.write('\r\n\x1b[31m*** Connection closed ***\x1b[0m\r\n');
+            }
+        };
+        
+        terminalWebSocket.onerror = (error) => {
+            statusEl.textContent = t('error') || 'Error';
+            statusEl.style.color = 'var(--danger)';
+        };
+        
+        // Send input to WebSocket
+        terminalInstance.onData(data => {
+            if (terminalWebSocket && terminalWebSocket.readyState === WebSocket.OPEN) {
+                // Send data with Proxmox protocol prefix: 0 = stdin
+                terminalWebSocket.send('0:' + data.length + ':' + data);
+            }
+        });
+        
+        // Handle resize
+        window.addEventListener('resize', handleTerminalResize);
+        
+        // Initial message
+        terminalInstance.write('\x1b[33m' + (t('connecting_to_terminal') || 'Connecting to terminal...') + '\x1b[0m\r\n');
+        
+    } catch (error) {
+        console.error('Terminal error:', error);
+        statusEl.textContent = t('error') || 'Error';
+        statusEl.style.color = 'var(--danger)';
+        
+        terminalContent.innerHTML = `
+            <div style="padding: 2rem; text-align: center;">
+                <div style="background: var(--bg-tertiary); padding: 2rem; border-radius: 8px;">
+                    <div style="font-size: 2rem; margin-bottom: 1rem;"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                    <h3 style="color: var(--text-primary); margin-bottom: 1rem;">${t('terminal_connection_error') || 'Terminal Connection Error'}</h3>
+                    <p style="color: var(--text-secondary); margin-bottom: 1rem;">${error.message}</p>
+                    <div style="background: var(--bg-secondary); padding: 1rem; border-radius: 4px; margin-bottom: 1rem; text-align: left;">
+                        <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 0.5rem;"><strong>${t('possible_causes') || 'Possible causes'}:</strong></p>
+                        <ul style="color: var(--text-muted); font-size: 0.8rem; margin-left: 1rem;">
+                            <li>${t('terminal_requires_password') || 'Terminal requires password authentication (not API token)'}</li>
+                            <li>${t('vm_may_be_stopped') || 'VM/Container may be stopped'}</li>
+                            <li>${t('check_proxmox_settings') || 'Check Proxmox server settings'}</li>
+                        </ul>
+                    </div>
+                    <button onclick="closeTerminalModal()" class="btn">${t('close') || 'Close'}</button>
+                </div>
+            </div>
+        `;
+    }
+}
+
+function handleTerminalResize() {
+    if (fitAddon && terminalInstance && terminalWebSocket && terminalWebSocket.readyState === WebSocket.OPEN) {
+        fitAddon.fit();
+        const dims = fitAddon.proposeDimensions();
+        if (dims) {
+            // Send resize command: 1 = resize, cols:rows
+            const resizeMsg = `1:${dims.cols}:${dims.rows}:`;
+            terminalWebSocket.send(resizeMsg);
+        }
+    }
+}
+
+function closeTerminalModal() {
+    window.removeEventListener('resize', handleTerminalResize);
+    
+    if (terminalWebSocket) {
+        terminalWebSocket.close();
+        terminalWebSocket = null;
+    }
+    
+    if (terminalInstance) {
+        terminalInstance.dispose();
+        terminalInstance = null;
+    }
+    
+    fitAddon = null;
+    document.getElementById('terminalModal').style.display = 'none';
+}
+
+// === ФУНКЦИИ УПРАВЛЕНИЯ VM/LXC ===
+
+// Удаление VM/LXC
+async function deleteResource(serverId, node, vmid, type, name) {
+    const typeName = type === 'qemu' ? t('virtual_machine') || 'виртуальную машину' : t('container') || 'контейнер';
+    
+    // Первое подтверждение
+    const confirmed = await showDeleteConfirm(
+        t('delete_resource') || 'Удаление ресурса',
+        `<i class="fa-solid fa-triangle-exclamation"></i> ${t('are_you_sure_delete')} ${typeName} "${name}" (ID: ${vmid})?\n\n${t('action_irreversible')}`
+    );
+    
+    if (!confirmed) return;
+    
+    // Дополнительное подтверждение - ввод ID
+    const confirmText = await showPrompt(
+        `${t('enter_id_to_confirm')}: ${vmid}`,
+        t('confirm_deletion') || 'Подтверждение удаления',
+        { placeholder: vmid }
+    );
+    
+    if (confirmText !== String(vmid)) {
+        showToast('warning', t('cancelled'), t('id_mismatch_cancelled') || 'ID не совпадает. Удаление отменено.');
+        return;
+    }
+    
+    try {
+        const apiType = type === 'qemu' ? 'vm' : 'container';
+        
+        const response = await fetchWithAuth(`/proxmox/api/${serverId}/${apiType}/${vmid}?node=${node}&force=true`, {
+            method: 'DELETE'
+        });
+        
+        if (response.ok) {
+            const result = await response.json();
+            showToast('success', t('success'), `${typeName} ${t('deleted_successfully')}`);
+            loadResources();
+        } else {
+            const error = await response.json();
+            showToast('error', t('error'), error.detail || t('unknown_error'));
+        }
+    } catch (error) {
+        console.error('Delete error:', error);
+        showToast('error', t('error'), t('connection_error'));
+    }
+}
+
+// Редактирование конфигурации
+async function showEditConfigModal(serverId, node, vmid, type, name) {
+    const modal = document.getElementById('editConfigModal');
+    const title = document.getElementById('editConfigTitle');
+    const content = document.getElementById('editConfigContent');
+    
+    title.textContent = `<i class="fa-solid fa-gear"></i> Настройки: ${name} (${vmid})`;
+    content.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка конфигурации...</div>';
+    
+    modal.style.display = 'flex';
+    
+    // Сохранить параметры для отправки
+    modal.dataset.serverId = serverId;
+    modal.dataset.node = node;
+    modal.dataset.vmid = vmid;
+    modal.dataset.type = type;
+    
+    try {
+        const apiType = type === 'qemu' ? 'vm' : 'container';
+        const response = await fetchWithAuth(`/proxmox/api/${serverId}/${apiType}/${vmid}/config?node=${node}`);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        
+        const config = await response.json();
+        renderEditConfigForm(config, type);
+    } catch (error) {
+        console.error('Error loading config:', error);
+        content.innerHTML = `
+            <div style="padding: 2rem; text-align: center;">
+                <div style="font-size: 2rem; margin-bottom: 1rem;"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                <h3 style="color: var(--text-primary); margin-bottom: 1rem;">Ошибка загрузки конфигурации</h3>
+                <p style="color: var(--text-secondary);">${error.message}</p>
+                <button onclick="closeEditConfigModal()" class="btn" style="margin-top: 1rem;">Закрыть</button>
+            </div>
+        `;
+    }
+}
+
+function renderEditConfigForm(config, type) {
+    const content = document.getElementById('editConfigContent');
+    
+    const cores = config.cores || 1;
+    const sockets = config.sockets || 1;
+    const memory = config.memory || 512;
+    const name = config.name || '';
+    const onboot = config.onboot || 0;
+    
+    // Найти диски
+    const disks = [];
+    const diskKeys = type === 'qemu' 
+        ? ['scsi0', 'scsi1', 'scsi2', 'virtio0', 'virtio1', 'virtio2', 'ide0', 'ide1', 'sata0', 'sata1']
+        : ['rootfs', 'mp0', 'mp1', 'mp2', 'mp3'];
+    
+    diskKeys.forEach(key => {
+        if (config[key]) {
+            const diskInfo = config[key];
+            // Парсим размер диска
+            let currentSize = 'N/A';
+            const sizeMatch = diskInfo.match(/size=(\d+)([GMTK]?)/i);
+            if (sizeMatch) {
+                currentSize = sizeMatch[1] + (sizeMatch[2] || 'G');
+            }
+            disks.push({ key, info: diskInfo, currentSize });
+        }
+    });
+    
+    let html = `
+        <form id="editConfigForm" onsubmit="saveConfig(event)">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+                <div class="form-group">
+                    <label for="editName" style="color: var(--text-secondary); font-size: 0.875rem;">${t('name')}</label>
+                    <input type="text" id="editName" name="name" value="${name}" class="form-control" style="width: 100%; padding: 0.5rem; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                </div>
+                
+                <div class="form-group">
+                    <label for="editCores" style="color: var(--text-secondary); font-size: 0.875rem;">${t('cpu_cores')}</label>
+                    <input type="number" id="editCores" name="cores" value="${cores}" min="1" max="128" class="form-control" style="width: 100%; padding: 0.5rem; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                </div>
+    `;
+    
+    if (type === 'qemu') {
+        html += `
+                <div class="form-group">
+                    <label for="editSockets" style="color: var(--text-secondary); font-size: 0.875rem;">CPU Sockets</label>
+                    <input type="number" id="editSockets" name="sockets" value="${sockets}" min="1" max="8" class="form-control" style="width: 100%; padding: 0.5rem; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                </div>
+        `;
+    }
+    
+    html += `
+                <div class="form-group">
+                    <label for="editMemory" style="color: var(--text-secondary); font-size: 0.875rem;">${t('memory_mb')}</label>
+                    <input type="number" id="editMemory" name="memory" value="${memory}" min="128" step="128" class="form-control" style="width: 100%; padding: 0.5rem; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                </div>
+                
+                <div class="form-group">
+                    <label style="color: var(--text-secondary); font-size: 0.875rem; display: flex; align-items: center; gap: 0.5rem;">
+                        <input type="checkbox" id="editOnboot" name="onboot" ${onboot ? 'checked' : ''} style="width: auto;">
+                        ${t('autostart_on_boot')}
+                    </label>
+                </div>
+            </div>
+            
+            <div style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 1.5rem;">
+                <button type="button" onclick="closeEditConfigModal()" class="btn" style="background: var(--bg-tertiary); color: var(--text-primary);">${t('cancel')}</button>
+                <button type="submit" class="btn btn-success"><i class="fa-solid fa-floppy-disk"></i> ${t('save')}</button>
+            </div>
+        </form>
+    `;
+    
+    // Секция дисков
+    if (disks.length > 0) {
+        html += `
+            <div style="background: var(--bg-tertiary); padding: 1rem; border-radius: 8px; margin-top: 1.5rem;">
+                <h4 style="color: var(--text-secondary); font-size: 0.875rem; margin-bottom: 1rem;"><i class="fa-solid fa-floppy-disk"></i> ${t('disks')}</h4>
+                <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+        `;
+        
+        disks.forEach(disk => {
+            html += `
+                <div style="display: flex; align-items: center; gap: 1rem; padding: 0.75rem; background: var(--bg-secondary); border-radius: 6px;">
+                    <div style="flex: 1;">
+                        <div style="font-weight: 600; color: var(--text-primary);">${disk.key}</div>
+                        <div style="font-size: 0.75rem; color: var(--text-muted); word-break: break-all;">${disk.info.substring(0, 60)}${disk.info.length > 60 ? '...' : ''}</div>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        <span style="color: var(--text-secondary); font-size: 0.875rem;">${t('current_size')}: ${disk.currentSize}</span>
+                        <input type="number" id="resize_${disk.key}" placeholder="+10" min="1" style="width: 80px; padding: 0.375rem; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-primary); text-align: center;">
+                        <span style="color: var(--text-muted);">GB</span>
+                        <button type="button" onclick="resizeDisk('${disk.key}')" class="btn btn-sm btn-warning" style="padding: 0.375rem 0.75rem;">
+                            📐 ${t('increase')}
+                        </button>
+                    </div>
+                </div>
+            `;
+        });
+        
+        html += `
+                </div>
+                <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.75rem;">
+                    <i class="fa-solid fa-triangle-exclamation"></i> ${t('enter_gb_to_add')}
+                </p>
+            </div>
+        `;
+    }
+    
+    html += `
+        <div style="background: var(--bg-tertiary); padding: 1rem; border-radius: 8px; margin-top: 1.5rem;">
+            <h4 style="color: var(--text-secondary); font-size: 0.875rem; margin-bottom: 0.75rem;"><i class="fa-solid fa-list"></i> Текущая конфигурация</h4>
+            <div style="max-height: 200px; overflow-y: auto;">
+                <pre style="font-size: 0.75rem; color: var(--text-muted); margin: 0; white-space: pre-wrap;">${JSON.stringify(config, null, 2)}</pre>
+            </div>
+        </div>
+    `;
+    
+    content.innerHTML = html;
+}
+
+async function resizeDisk(diskKey) {
+    const modal = document.getElementById('editConfigModal');
+    const serverId = modal.dataset.serverId;
+    const node = modal.dataset.node;
+    const vmid = modal.dataset.vmid;
+    const type = modal.dataset.type;
+    const apiType = type === 'qemu' ? 'vm' : 'container';
+    
+    const sizeInput = document.getElementById(`resize_${diskKey}`);
+    const addSize = parseInt(sizeInput.value);
+    
+    if (!addSize || addSize <= 0) {
+        showNotification('<i class="fa-solid fa-circle-xmark"></i> ' + t('enter_positive_number_gb'), 'error');
+        return;
+    }
+    
+    const confirmed = await showConfirm(
+        t('resize_disk_warning').replace('{disk}', diskKey).replace('{size}', addSize),
+        t('resize_disk') || 'Увеличение диска',
+        { type: 'warning', confirmText: t('resize') || 'Увеличить' }
+    );
+    
+    if (!confirmed) return;
+    
+    try {
+        const response = await fetchWithAuth(`/proxmox/api/${serverId}/${apiType}/${vmid}/disk/resize?node=${node}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                disk: diskKey,
+                size: `+${addSize}G`
+            })
+        });
+        
+        if (response.ok) {
+            const result = await response.json();
+            showNotification(`<i class="fa-solid fa-circle-check"></i> ${result.message}`, 'success');
+            // Перезагрузить конфигурацию
+            showEditConfigModal(serverId, node, vmid, type, '');
+        } else {
+            const error = await response.json();
+            showNotification(`<i class="fa-solid fa-circle-xmark"></i> ${t('error')}: ${error.detail || t('disk_resize_failed')}`, 'error');
+        }
+    } catch (error) {
+        console.error('Resize error:', error);
+        showToast('error', t('error'), t('connection_error'));
+    }
+}
+
+async function saveConfig(event) {
+    event.preventDefault();
+    
+    const modal = document.getElementById('editConfigModal');
+    const serverId = modal.dataset.serverId;
+    const node = modal.dataset.node;
+    const vmid = modal.dataset.vmid;
+    const type = modal.dataset.type;
+    const apiType = type === 'qemu' ? 'vm' : 'container';
+    
+    const config = {};
+    
+    const name = document.getElementById('editName').value;
+    if (name) config.name = name;
+    
+    const cores = parseInt(document.getElementById('editCores').value);
+    if (cores) config.cores = cores;
+    
+    if (type === 'qemu') {
+        const sockets = parseInt(document.getElementById('editSockets').value);
+        if (sockets) config.sockets = sockets;
+    }
+    
+    const memory = parseInt(document.getElementById('editMemory').value);
+    if (memory) config.memory = memory;
+    
+    const onboot = document.getElementById('editOnboot').checked ? 1 : 0;
+    config.onboot = onboot;
+    
+    try {
+        const response = await fetchWithAuth(`/proxmox/api/${serverId}/${apiType}/${vmid}/config?node=${node}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(config)
+        });
+        
+        if (response.ok) {
+            showToast('success', t('success'), t('config_saved_successfully') || 'Конфигурация сохранена успешно');
+            closeEditConfigModal();
+            loadResources();
+        } else {
+            const error = await response.json();
+            showToast('error', t('error'), error.detail || t('unknown_error'));
+        }
+    } catch (error) {
+        console.error('Save config error:', error);
+        showToast('error', t('error'), t('connection_error'));
+    }
+}
+
+function closeEditConfigModal() {
+    document.getElementById('editConfigModal').style.display = 'none';
+}
+
+// Переустановка
+async function showReinstallModal(serverId, node, vmid, type, name) {
+    const modal = document.getElementById('reinstallModal');
+    const title = document.getElementById('reinstallTitle');
+    const content = document.getElementById('reinstallContent');
+    
+    title.textContent = `<i class="fa-solid fa-rotate"></i> Переустановка: ${name} (${vmid})`;
+    content.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка доступных шаблонов...</div>';
+    
+    modal.style.display = 'flex';
+    
+    modal.dataset.serverId = serverId;
+    modal.dataset.node = node;
+    modal.dataset.vmid = vmid;
+    modal.dataset.type = type;
+    modal.dataset.name = name;
+    
+    try {
+        // Загружаем доступные группы шаблонов
+        const response = await fetchWithAuth('/templates/api/groups');
+        
+        if (!response.ok) {
+            throw new Error('Не удалось загрузить шаблоны');
+        }
+        
+        const groups = await response.json();
+        
+        // Загружаем шаблоны для текущего сервера
+        const templatesResponse = await fetchWithAuth(`/templates/api?server_id=${serverId}`);
+        const templates = templatesResponse.ok ? await templatesResponse.json() : [];
+        
+        renderReinstallForm(groups, templates, serverId);
+    } catch (error) {
+        console.error('Error loading templates:', error);
+        content.innerHTML = `
+            <div style="padding: 2rem; text-align: center;">
+                <div style="font-size: 2rem; margin-bottom: 1rem;"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                <h3 style="color: var(--text-primary); margin-bottom: 1rem;">Ошибка загрузки шаблонов</h3>
+                <p style="color: var(--text-secondary);">${error.message}</p>
+                <p style="color: var(--text-muted); font-size: 0.875rem; margin-top: 1rem;">Убедитесь, что вы добавили шаблоны ОС в разделе "Шаблоны ОС"</p>
+                <button onclick="closeReinstallModal()" class="btn" style="margin-top: 1rem;">Закрыть</button>
+            </div>
+        `;
+    }
+}
+
+function renderReinstallForm(groups, templates, serverId) {
+    const content = document.getElementById('reinstallContent');
+    
+    // Фильтруем шаблоны для текущего сервера
+    const serverTemplates = templates.filter(t => t.server_id === parseInt(serverId));
+    
+    if (serverTemplates.length === 0) {
+        content.innerHTML = `
+            <div style="padding: 2rem; text-align: center;">
+                <div style="font-size: 2rem; margin-bottom: 1rem;"><i class="fa-solid fa-cube"></i></div>
+                <h3 style="color: var(--text-primary); margin-bottom: 1rem;">Шаблоны не найдены</h3>
+                <p style="color: var(--text-secondary);">Для этого сервера нет добавленных шаблонов ОС.</p>
+                <p style="color: var(--text-muted); font-size: 0.875rem; margin-top: 1rem;">
+                    Перейдите в раздел <a href="/templates" style="color: var(--accent);">Шаблоны ОС</a> и добавьте шаблоны для переустановки.
+                </p>
+                <button onclick="closeReinstallModal()" class="btn" style="margin-top: 1rem;">Закрыть</button>
+            </div>
+        `;
+        return;
+    }
+    
+    // Группируем шаблоны по группам
+    const groupedTemplates = {};
+    serverTemplates.forEach(template => {
+        const groupId = template.group_id || 'other';
+        if (!groupedTemplates[groupId]) {
+            groupedTemplates[groupId] = [];
+        }
+        groupedTemplates[groupId].push(template);
+    });
+    
+    let html = `
+        <div style="margin-bottom: 1rem;">
+            <p style="color: var(--text-secondary); font-size: 0.875rem;">
+                <i class="fa-solid fa-triangle-exclamation"></i> <strong>${t('attention')}!</strong> ${t('reinstall_data_loss_warning')}
+            </p>
+        </div>
+        
+        <form id="reinstallForm" onsubmit="executeReinstall(event)">
+            <div class="form-group" style="margin-bottom: 1rem;">
+                <label for="reinstallTemplate" style="color: var(--text-secondary); font-size: 0.875rem;">${t('select_os_template')}:</label>
+                <select id="reinstallTemplate" required style="width: 100%; padding: 0.75rem; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary); margin-top: 0.5rem;">
+                    <option value="">${t('select_template')}</option>
+    `;
+    
+    groups.forEach(group => {
+        const groupTemplates = groupedTemplates[group.id] || [];
+        if (groupTemplates.length > 0) {
+            html += `<optgroup label="${group.icon || ''} ${group.name}">`;
+            groupTemplates.forEach(template => {
+                html += `<option value="${template.id}" data-vmid="${template.vmid}" data-node="${template.node}">${template.name}</option>`;
+            });
+            html += `</optgroup>`;
+        }
+    });
+    
+    // Шаблоны без группы
+    if (groupedTemplates['other']) {
+        html += `<optgroup label="Другие">`;
+        groupedTemplates['other'].forEach(template => {
+            html += `<option value="${template.id}" data-vmid="${template.vmid}" data-node="${template.node}">${template.name}</option>`;
+        });
+        html += `</optgroup>`;
+    }
+    
+    html += `
+                </select>
+            </div>
+            
+            <div class="form-group" style="margin-bottom: 1.5rem;">
+                <label style="color: var(--text-secondary); font-size: 0.875rem; display: flex; align-items: center; gap: 0.5rem;">
+                    <input type="checkbox" id="reinstallConfirm" required style="width: auto;">
+                    Я понимаю, что все данные будут потеряны
+                </label>
+            </div>
+            
+            <div style="display: flex; gap: 1rem; justify-content: flex-end;">
+                <button type="button" onclick="closeReinstallModal()" class="btn" style="background: var(--bg-tertiary); color: var(--text-primary);">Отмена</button>
+                <button type="submit" class="btn btn-warning"><i class="fa-solid fa-rotate"></i> Переустановить</button>
+            </div>
+        </form>
+    `;
+    
+    content.innerHTML = html;
+}
+
+async function executeReinstall(event) {
+    event.preventDefault();
+    
+    const modal = document.getElementById('reinstallModal');
+    const serverId = modal.dataset.serverId;
+    const node = modal.dataset.node;
+    const vmid = modal.dataset.vmid;
+    const type = modal.dataset.type;
+    const name = modal.dataset.name;
+    
+    const templateSelect = document.getElementById('reinstallTemplate');
+    const templateId = templateSelect.value;
+    const selectedOption = templateSelect.options[templateSelect.selectedIndex];
+    const templateVmid = selectedOption.dataset.vmid;
+    const templateNode = selectedOption.dataset.node;
+    
+    if (!templateId) {
+        showToast('warning', t('warning'), t('select_os_template'));
+        return;
+    }
+    
+    // Final confirmation
+    const confirmed = await showDeleteConfirm(
+        `<i class="fa-solid fa-triangle-exclamation"></i> ${t('attention')}!`,
+        `${t('reinstall_confirm_message').replace('{name}', name).replace('{vmid}', vmid)}\n\n${t('continue')}?`
+    );
+    
+    if (!confirmed) return;
+    
+    await doReinstall(modal, serverId, node, vmid, type, name, templateId, templateVmid, templateNode);
+}
+
+async function doReinstall(modal, serverId, node, vmid, type, name, templateId, templateVmid, templateNode) {
+    const apiType = type === 'qemu' ? 'vm' : 'container';
+    
+    try {
+        // Шаг 1: Остановить VM если запущена
+        const statusResponse = await fetchWithAuth(`/proxmox/api/${serverId}/${apiType}/${vmid}/status?node=${node}`);
+        if (statusResponse.ok) {
+            const status = await statusResponse.json();
+            if (status.status === 'running') {
+                await fetchWithAuth(`/proxmox/api/${serverId}/${apiType}/${vmid}/stop?node=${node}`, { method: 'POST' });
+                // Ждем остановки
+                await new Promise(resolve => setTimeout(resolve, 5000));
+            }
+        }
+        
+        // Шаг 2: Удалить старую VM
+        const deleteResponse = await fetchWithAuth(`/proxmox/api/${serverId}/${apiType}/${vmid}?node=${node}&force=true`, {
+            method: 'DELETE'
+        });
+        
+        if (!deleteResponse.ok) {
+            throw new Error('Не удалось удалить старую VM');
+        }
+        
+        // Ждем удаления
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        
+        // Шаг 3: Развернуть новую VM из шаблона с тем же VMID
+        const deployResponse = await fetchWithAuth('/templates/api/deploy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                template_id: parseInt(templateId),
+                new_vmid: parseInt(vmid),
+                new_name: name,
+                target_node: node
+            })
+        });
+        
+        if (deployResponse.ok) {
+            showToast('success', t('success'), t('reinstall_started') || 'Переустановка запущена. VM будет доступна через несколько минут.');
+            closeReinstallModal();
+            setTimeout(() => loadResources(), 5000);
+        } else {
+            const error = await deployResponse.json();
+            throw new Error(error.detail || 'Ошибка развертывания');
+        }
+    } catch (error) {
+        console.error('Reinstall error:', error);
+        showToast('error', t('error'), `${t('reinstall_error')}: ${error.message}`);
+    }
+}
+
+function closeReinstallModal() {
+    document.getElementById('reinstallModal').style.display = 'none';
+}
+</script>
+
+{% endblock %}

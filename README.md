@@ -1,10 +1,12 @@
-# 🖥️ PVEmanager
+# 🖥️ PVEmanager v2.1.4
 
 Modern web panel for managing Proxmox servers, virtual machines and LXC containers.
 
 [![Version](https://img.shields.io/badge/version-2.1.4-blue.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](compose.yml)
+
+![Dashboard Screenshot](docs/screenshot.png)
 
 ## ✨ Key Features
 
@@ -109,7 +111,7 @@ MIT License — see [LICENSE](LICENSE)
 ## 📞 Support
 
 - 📖 [Documentation (WIKI.md)](WIKI.md)
-- 🐛 [Issues](https://github.com/markmorado/pvemanager/issues)
+- 🐛 [Issues](https://github.com/your-repo/pvemanager/issues)
 - 📝 [Changelog](CHANGELOG.md)
 
 ---

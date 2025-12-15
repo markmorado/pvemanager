@@ -1,0 +1,647 @@
+{% extends "base.html" %}
+{% block title %}IPAM - {{ t('network_detail') }}{% endblock %}
+
+{% block content %}
+<div class="page-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+    <div>
+        <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem;">
+            <a href="/ipam" style="color: var(--text-muted); text-decoration: none;">IPAM</a>
+            <span style="color: var(--text-muted);">/</span>
+            <span id="networkBreadcrumb">{{ t('network_label') }}</span>
+        </div>
+        <h1 style="font-size: 1.75rem; font-weight: 600; margin: 0;" id="networkTitle"><i class="fa-solid fa-globe"></i> {{ t('loading') }}</h1>
+    </div>
+    <div style="display: flex; gap: 0.75rem;">
+        <button onclick="showAddPoolModal()" class="btn" style="background: var(--bg-tertiary); color: var(--text-primary);" data-permission="ipam.manage"><i class="fa-solid fa-cube"></i> {{ t('add_pool') }}</button>
+        <button onclick="showAllocateModal()" class="btn" style="background: var(--success); color: var(--text-on-success);" data-permission="ipam.manage"><i class="fa-solid fa-plus"></i> {{ t('allocate_ip') }}</button>
+        <a href="/ipam" class="btn" style="background: var(--bg-tertiary); color: var(--text-primary);">← {{ t('back') }}</a>
+    </div>
+</div>
+
+<!-- Network Stats -->
+<div class="stats-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin-bottom: 2rem;">
+    <div class="card" style="padding: 1rem;">
+        <div style="font-size: 1.5rem; font-weight: 600; color: var(--text-primary);" id="statTotal">-</div>
+        <div style="color: var(--text-secondary); font-size: 0.875rem;">{{ t('total_ips') }}</div>
+    </div>
+    <div class="card" style="padding: 1rem;">
+        <div style="font-size: 1.5rem; font-weight: 600; color: var(--success);" id="statAvailable">-</div>
+        <div style="color: var(--text-secondary); font-size: 0.875rem;">{{ t('available_ips') }}</div>
+    </div>
+    <div class="card" style="padding: 1rem;">
+        <div style="font-size: 1.5rem; font-weight: 600; color: var(--info);" id="statAllocated">-</div>
+        <div style="color: var(--text-secondary); font-size: 0.875rem;">{{ t('allocated_ips') }}</div>
+    </div>
+    <div class="card" style="padding: 1rem;">
+        <div style="font-size: 1.5rem; font-weight: 600; color: var(--warning);" id="statReserved">-</div>
+        <div style="color: var(--text-secondary); font-size: 0.875rem;">{{ t('reserved_ips') }}</div>
+    </div>
+    <div class="card" style="padding: 1rem;">
+        <div style="font-size: 1.5rem; font-weight: 600; color: var(--text-primary);" id="statUtilization">-</div>
+        <div style="color: var(--text-secondary); font-size: 0.875rem;">{{ t('utilization') }}</div>
+    </div>
+</div>
+
+<!-- Pools -->
+<div class="card" style="margin-bottom: 1.5rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h3 style="margin: 0;"><i class="fa-solid fa-cube"></i> {{ t('ip_pools') }}</h3>
+    </div>
+    <div id="poolsContainer">
+        <div style="text-align: center; padding: 1rem; color: var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> {{ t('loading') }}</div>
+    </div>
+</div>
+
+<!-- IP Grid -->
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h3 style="margin: 0;"><i class="fa-solid fa-map"></i> {{ t('ip_map') }}</h3>
+        <div style="display: flex; gap: 1rem; align-items: center;">
+            <div style="display: flex; gap: 0.5rem; align-items: center; font-size: 0.8rem; color: var(--text-primary);">
+                <span style="display: inline-block; width: 16px; height: 16px; background: var(--success); border-radius: 3px;"></span> {{ t('available') }}
+                <span style="display: inline-block; width: 16px; height: 16px; background: var(--info); border-radius: 3px; margin-left: 0.5rem;"></span> {{ t('allocated') }}
+                <span style="display: inline-block; width: 16px; height: 16px; background: var(--warning); border-radius: 3px; margin-left: 0.5rem;"></span> {{ t('reserved') }}
+                <span style="display: inline-block; width: 16px; height: 16px; background: var(--purple); border-radius: 3px; margin-left: 0.5rem;"></span> {{ t('gateway') }}
+            </div>
+            <button onclick="loadIPMap()" class="btn btn-sm" style="background: var(--bg-tertiary); color: var(--text-primary);"><i class="fa-solid fa-rotate"></i></button>
+        </div>
+    </div>
+    <div id="ipGridContainer" style="max-height: 500px; overflow-y: auto;">
+        <div style="text-align: center; padding: 2rem; color: var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> {{ t('loading_data') }}</div>
+    </div>
+</div>
+
+<!-- Allocations Table -->
+<div class="card" style="margin-top: 1.5rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h3 style="margin: 0;"><i class="fa-solid fa-list"></i> {{ t('allocated_addresses') }}</h3>
+    </div>
+    <div id="allocationsContainer">
+        <div style="text-align: center; padding: 1rem; color: var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> {{ t('loading') }}</div>
+    </div>
+</div>
+
+<!-- Allocate IP Modal -->
+<div id="allocateModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 2000; align-items: center; justify-content: center; padding: 1rem;">
+    <div class="card" style="max-width: 500px; width: 95%; max-height: 90vh; overflow-y: auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+            <h3 style="margin: 0;"><i class="fa-solid fa-plus"></i> {{ t('allocate_ip') }}</h3>
+            <button onclick="closeAllocateModal()" style="background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer;">&times;</button>
+        </div>
+        
+        <form id="allocateForm" onsubmit="allocateIP(event)">
+            <div style="display: grid; gap: 1rem;">
+                <div class="form-group">
+                    <label style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary);">{{ t('ip_address') }}</label>
+                    <div style="display: flex; gap: 0.5rem;">
+                        <input type="text" id="allocIP" placeholder="{{ t('auto_button') }}" style="flex: 1; padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                        <button type="button" onclick="getNextAvailable()" class="btn" style="background: var(--bg-tertiary); color: var(--text-primary);"><i class="fa-solid fa-dice"></i> {{ t('auto_button') }}</button>
+                    </div>
+                    <small style="color: var(--text-muted);">{{ t('leave_empty_auto') }}</small>
+                </div>
+                
+                <div class="form-group">
+                    <label style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary);">{{ t('resource_type') }}</label>
+                    <select id="allocResourceType" style="width: 100%; padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                        <option value="">{{ t('not_specified') }}</option>
+                        <option value="vm"><i class="fa-solid fa-desktop"></i> {{ t('vm') }}</option>
+                        <option value="lxc"><i class="fa-solid fa-cube"></i> {{ t('lxc_container') }}</option>
+                        <option value="physical"><i class="fa-solid fa-server"></i> {{ t('physical_server') }}</option>
+                        <option value="service"><i class="fa-solid fa-gear"></i> {{ t('service') }}</option>
+                        <option value="reserved"><i class="fa-solid fa-lock"></i> {{ t('reserved') }}</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary);">{{ t('resource_name') }}</label>
+                    <input type="text" id="allocResourceName" placeholder="web-server-01" style="width: 100%; padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                </div>
+                
+                <div class="form-group">
+                    <label style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary);">{{ t('hostname') }}</label>
+                    <input type="text" id="allocHostname" placeholder="web-server-01" style="width: 100%; padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                </div>
+                
+                <div class="form-group">
+                    <label style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary);">{{ t('mac_address') }}</label>
+                    <input type="text" id="allocMAC" placeholder="AA:BB:CC:DD:EE:FF" style="width: 100%; padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                </div>
+                
+                <div class="form-group">
+                    <label style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary);">{{ t('notes') }}</label>
+                    <textarea id="allocNotes" rows="2" placeholder="{{ t('description_placeholder') }}" style="width: 100%; padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary); resize: vertical;"></textarea>
+                </div>
+            </div>
+            
+            <div style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
+                <button type="button" onclick="closeAllocateModal()" class="btn" style="background: var(--bg-tertiary); color: var(--text-primary);">{{ t('cancel') }}</button>
+                <button type="submit" class="btn btn-success"><i class="fa-solid fa-floppy-disk"></i> {{ t('allocate') }}</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Add Pool Modal -->
+<div id="addPoolModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 2000; align-items: center; justify-content: center; padding: 1rem;">
+    <div class="card" style="max-width: 500px; width: 95%;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+            <h3 style="margin: 0;"><i class="fa-solid fa-cube"></i> {{ t('add_pool') }}</h3>
+            <button onclick="closeAddPoolModal()" style="background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer;">&times;</button>
+        </div>
+        
+        <form id="addPoolForm" onsubmit="createPool(event)">
+            <div style="display: grid; gap: 1rem;">
+                <div class="form-group">
+                    <label style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary);">{{ t('pool_name') }} {{ t('required') }}</label>
+                    <input type="text" id="poolName" required placeholder="Static IPs" style="width: 100%; padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                </div>
+                
+                <div class="form-group">
+                    <label style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary);">{{ t('pool_type') }}</label>
+                    <select id="poolType" style="width: 100%; padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                        <option value="static">{{ t('static') }}</option>
+                        <option value="dhcp">{{ t('dhcp') }}</option>
+                        <option value="reserved">{{ t('reserved') }}</option>
+                    </select>
+                </div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                    <div class="form-group">
+                        <label style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary);">{{ t('range_start') }} {{ t('required') }}</label>
+                        <input type="text" id="poolStart" required placeholder="10.10.10.100" style="width: 100%; padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary);">{{ t('range_end') }} {{ t('required') }}</label>
+                        <input type="text" id="poolEnd" required placeholder="10.10.10.200" style="width: 100%; padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label style="display: flex; align-items: center; gap: 0.5rem; color: var(--text-secondary);">
+                        <input type="checkbox" id="poolAutoAssign" checked style="width: auto;">
+                        {{ t('auto_assign_pool') }}
+                    </label>
+                </div>
+                
+                <div class="form-group">
+                    <label style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary);">{{ t('description') }}</label>
+                    <textarea id="poolDescription" rows="2" placeholder="{{ t('pool_description') }}" style="width: 100%; padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary); resize: vertical;"></textarea>
+                </div>
+            </div>
+            
+            <div style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
+                <button type="button" onclick="closeAddPoolModal()" class="btn" style="background: var(--bg-tertiary); color: var(--text-primary);">{{ t('cancel') }}</button>
+                <button type="submit" class="btn btn-success"><i class="fa-solid fa-floppy-disk"></i> {{ t('create') }}</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- IP Detail Modal -->
+<div id="ipDetailModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 2000; align-items: center; justify-content: center; padding: 1rem;">
+    <div class="card" style="max-width: 500px; width: 95%;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+            <h3 style="margin: 0;" id="ipDetailTitle"><i class="fa-solid fa-thumbtack"></i> IP Details</h3>
+            <button onclick="closeIPDetailModal()" style="background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer;">&times;</button>
+        </div>
+        <div id="ipDetailContent"></div>
+    </div>
+</div>
+
+<script>
+// Use global fetchWithAuth from base.html
+const networkId = {{ network_id }};
+
+async function loadData() {
+    await Promise.all([
+        loadNetworkInfo(),
+        loadPools(),
+        loadIPMap(),
+        loadAllocations()
+    ]);
+}
+
+async function loadNetworkInfo() {
+    try {
+        const response = await fetchWithAuth(`/ipam/api/networks/${networkId}/stats`);
+        if (response.ok) {
+            const stats = await response.json();
+            
+            document.getElementById('networkTitle').innerHTML = `<i class="fa-solid fa-globe"></i> ${stats.network_name}`;
+            document.getElementById('networkBreadcrumb').textContent = stats.network_name;
+            
+            document.getElementById('statTotal').textContent = stats.total_ips;
+            document.getElementById('statAvailable').textContent = stats.available_ips;
+            document.getElementById('statAllocated').textContent = stats.allocated_ips;
+            document.getElementById('statReserved').textContent = stats.reserved_ips;
+            document.getElementById('statUtilization').textContent = stats.utilization_percent + '%';
+        }
+    } catch (error) {
+        console.error('Error loading network info:', error);
+    }
+}
+
+async function loadPools() {
+    try {
+        const response = await fetchWithAuth(`/ipam/api/pools?network_id=${networkId}`);
+        const container = document.getElementById('poolsContainer');
+        
+        if (response.ok) {
+            const pools = await response.json();
+            
+            if (pools.length === 0) {
+                container.innerHTML = `
+                    <div style="text-align: center; padding: 1rem; color: var(--text-muted);">
+                        ${t('no_pools')} <button onclick="showAddPoolModal()" style="background: none; border: none; color: var(--accent); cursor: pointer; text-decoration: underline;">${t('add_pool')}</button>
+                    </div>
+                `;
+                return;
+            }
+            
+            container.innerHTML = `
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem;">
+                    ${pools.map(pool => `
+                        <div style="background: var(--bg-tertiary); border-radius: 6px; padding: 1rem; border: 1px solid var(--border-color);">
+                            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 0.5rem;">
+                                <div>
+                                    <div style="font-weight: 500; color: var(--text-primary);">${pool.name}</div>
+                                    <div style="font-size: 0.8rem; color: var(--text-muted);">${pool.pool_type}</div>
+                                </div>
+                                <button onclick="deletePool(${pool.id}, '${pool.name}')" style="background: none; border: none; color: var(--text-muted); cursor: pointer;"><i class="fa-solid fa-trash"></i></button>
+                            </div>
+                            <div style="font-family: monospace; font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 0.5rem;">
+                                ${pool.range_start} - ${pool.range_end}
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                <div style="flex: 1; height: 6px; background: var(--bg-secondary); border-radius: 3px; overflow: hidden;">
+                                    <div style="height: 100%; background: var(--info); width: ${pool.total_ips > 0 ? (pool.used_ips / pool.total_ips * 100) : 0}%;"></div>
+                                </div>
+                                <span style="font-size: 0.75rem; color: var(--text-muted);">${pool.used_ips}/${pool.total_ips}</span>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        }
+    } catch (error) {
+        console.error('Error loading pools:', error);
+    }
+}
+
+async function loadIPMap() {
+    try {
+        const response = await fetchWithAuth(`/ipam/api/networks/${networkId}/ip-map`);
+        const container = document.getElementById('ipGridContainer');
+        
+        if (response.ok) {
+            const data = await response.json();
+            const ipMap = data.ip_map;
+            
+            if (ipMap.length === 0) {
+                container.innerHTML = `<div style="text-align: center; padding: 2rem; color: var(--text-muted);">${t('no_data')}</div>`;
+                return;
+            }
+            
+            // Limit to first 254 IPs for /24 or show warning for larger networks
+            const displayIPs = ipMap.slice(0, 254);
+            const hasMore = ipMap.length > 254;
+            
+            container.innerHTML = `
+                <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(70px, 1fr)); gap: 4px;">
+                    ${displayIPs.map(ip => {
+                        const lastOctet = ip.ip_address.split('.').pop();
+                        const color = getIPColor(ip.status);
+                        const icon = getIPIcon(ip);
+                        
+                        return `
+                            <div onclick="showIPDetail('${ip.ip_address}')" 
+                                 style="background: ${color}; padding: 0.5rem; border-radius: 4px; text-align: center; cursor: pointer; transition: filter 0.15s;"
+                                 onmouseover="this.style.filter='brightness(1.1)'" 
+                                 onmouseout="this.style.filter='brightness(1)'"
+                                 title="${ip.ip_address}${ip.resource_name ? ' - ' + ip.resource_name : ''}">
+                                <div style="font-size: 0.75rem; font-weight: 500;">.${lastOctet}</div>
+                                <div style="font-size: 0.7rem;">${icon}</div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+                ${hasMore ? `<div style="text-align: center; padding: 1rem; color: var(--text-muted);">${t('showing_first_ips')} ${ipMap.length}</div>` : ''}
+            `;
+        }
+    } catch (error) {
+        console.error('Error loading IP map:', error);
+        document.getElementById('ipGridContainer').innerHTML = `<div style="text-align: center; padding: 2rem; color: var(--danger);"><i class="fa-solid fa-circle-xmark"></i> ${t('error_loading_map')}</div>`;
+    }
+}
+
+function getIPColor(status) {
+    switch(status) {
+        case 'available': return 'rgba(34, 197, 94, 0.2)';
+        case 'allocated': return 'rgba(59, 130, 246, 0.3)';
+        case 'reserved': return 'rgba(245, 158, 11, 0.3)';
+        case 'gateway': return 'rgba(139, 92, 246, 0.3)';
+        case 'conflict': return 'rgba(239, 68, 68, 0.3)';
+        default: return 'var(--bg-tertiary)';
+    }
+}
+
+function getIPIcon(ip) {
+    if (ip.is_gateway) return '<i class="fa-solid fa-globe"></i>';
+    if (!ip.resource_type) return '';
+    switch(ip.resource_type) {
+        case 'vm': return '<i class="fa-solid fa-desktop"></i>';
+        case 'lxc': return '<i class="fa-solid fa-cube"></i>';
+        case 'physical': return '<i class="fa-solid fa-server"></i>';
+        case 'service': return '<i class="fa-solid fa-gear"></i>';
+        case 'reserved': return '<i class="fa-solid fa-lock"></i>';
+        default: return '<i class="fa-solid fa-thumbtack"></i>';
+    }
+}
+
+async function loadAllocations() {
+    try {
+        const response = await fetchWithAuth(`/ipam/api/allocations?network_id=${networkId}&limit=50`);
+        const container = document.getElementById('allocationsContainer');
+        
+        if (response.ok) {
+            const allocations = await response.json();
+            
+            if (allocations.length === 0) {
+                container.innerHTML = `<div style="text-align: center; padding: 1rem; color: var(--text-muted);">${t('no_allocated_addresses')}</div>`;
+                return;
+            }
+            
+            container.innerHTML = `
+                <table style="width: 100%; border-collapse: collapse;">
+                    <thead>
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <th style="text-align: left; padding: 0.5rem; color: var(--text-secondary); font-weight: 500; font-size: 0.875rem;">${t('ip_address')}</th>
+                            <th style="text-align: left; padding: 0.5rem; color: var(--text-secondary); font-weight: 500; font-size: 0.875rem;">${t('resource')}</th>
+                            <th style="text-align: left; padding: 0.5rem; color: var(--text-secondary); font-weight: 500; font-size: 0.875rem;">${t('type')}</th>
+                            <th style="text-align: left; padding: 0.5rem; color: var(--text-secondary); font-weight: 500; font-size: 0.875rem;">${t('hostname')}</th>
+                            <th style="text-align: left; padding: 0.5rem; color: var(--text-secondary); font-weight: 500; font-size: 0.875rem;">${t('status')}</th>
+                            <th style="text-align: right; padding: 0.5rem;"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${allocations.map(alloc => `
+                            <tr style="border-bottom: 1px solid var(--border-color);" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='transparent'">
+                                <td style="padding: 0.5rem; font-family: monospace; color: var(--text-primary);">${alloc.ip_address}</td>
+                                <td style="padding: 0.5rem; color: var(--text-primary);">${alloc.resource_name || '-'}</td>
+                                <td style="padding: 0.5rem; color: var(--text-secondary);">${alloc.resource_type || '-'}</td>
+                                <td style="padding: 0.5rem; color: var(--text-secondary);">${alloc.hostname || '-'}</td>
+                                <td style="padding: 0.5rem;">
+                                    <span style="padding: 0.125rem 0.5rem; border-radius: 4px; font-size: 0.75rem; background: ${getStatusColor(alloc.status)}; color: #fff;">
+                                        ${alloc.status}
+                                    </span>
+                                </td>
+                                <td style="padding: 0.5rem; text-align: right;">
+                                    <button onclick="releaseIP(${alloc.id}, '${alloc.ip_address}')" class="btn btn-sm btn-danger"><i class="fa-solid fa-trash"></i></button>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+    } catch (error) {
+        console.error('Error loading allocations:', error);
+    }
+}
+
+function getStatusColor(status) {
+    switch(status) {
+        case 'allocated': return 'rgba(59, 130, 246, 0.3)';
+        case 'reserved': return 'rgba(245, 158, 11, 0.3)';
+        case 'conflict': return 'rgba(239, 68, 68, 0.3)';
+        default: return 'var(--bg-tertiary)';
+    }
+}
+
+// Modal functions
+function showAllocateModal() {
+    document.getElementById('allocateModal').style.display = 'flex';
+}
+
+function closeAllocateModal() {
+    document.getElementById('allocateModal').style.display = 'none';
+    document.getElementById('allocateForm').reset();
+}
+
+function showAddPoolModal() {
+    document.getElementById('addPoolModal').style.display = 'flex';
+}
+
+function closeAddPoolModal() {
+    document.getElementById('addPoolModal').style.display = 'none';
+    document.getElementById('addPoolForm').reset();
+}
+
+function closeIPDetailModal() {
+    document.getElementById('ipDetailModal').style.display = 'none';
+}
+
+async function getNextAvailable() {
+    try {
+        const response = await fetchWithAuth(`/ipam/api/allocations/next-available/${networkId}`);
+        if (response.ok) {
+            const data = await response.json();
+            document.getElementById('allocIP').value = data.next_available_ip;
+        } else {
+            await showWarning(t('no_available_ips'), t('warning'));
+        }
+    } catch (error) {
+        console.error('Error getting next IP:', error);
+    }
+}
+
+async function allocateIP(event) {
+    event.preventDefault();
+    
+    const ip = document.getElementById('allocIP').value.trim();
+    
+    const data = {
+        network_id: networkId,
+        resource_type: document.getElementById('allocResourceType').value || null,
+        resource_name: document.getElementById('allocResourceName').value || null,
+        hostname: document.getElementById('allocHostname').value || null,
+        mac_address: document.getElementById('allocMAC').value || null,
+        notes: document.getElementById('allocNotes').value || null,
+        status: document.getElementById('allocResourceType').value === 'reserved' ? 'reserved' : 'allocated'
+    };
+    
+    try {
+        let response;
+        if (ip) {
+            data.ip_address = ip;
+            response = await fetchWithAuth('/ipam/api/allocations', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+        } else {
+            response = await fetchWithAuth('/ipam/api/allocations/auto', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+        }
+        
+        if (response.ok) {
+            closeAllocateModal();
+            loadData();
+        } else {
+            const error = await response.json();
+            await showError(error.detail || t('error_allocating_ip'), t('error'));
+        }
+    } catch (error) {
+        console.error('Error allocating IP:', error);
+        await showError(t('error_allocating_ip'), t('error'));
+    }
+}
+
+async function createPool(event) {
+    event.preventDefault();
+    
+    const data = {
+        network_id: networkId,
+        name: document.getElementById('poolName').value,
+        pool_type: document.getElementById('poolType').value,
+        range_start: document.getElementById('poolStart').value,
+        range_end: document.getElementById('poolEnd').value,
+        auto_assign: document.getElementById('poolAutoAssign').checked,
+        description: document.getElementById('poolDescription').value || null
+    };
+    
+    try {
+        const response = await fetchWithAuth('/ipam/api/pools', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        
+        if (response.ok) {
+            closeAddPoolModal();
+            loadPools();
+        } else {
+            const error = await response.json();
+            await showError(error.detail || t('error_creating_pool'), t('error'));
+        }
+    } catch (error) {
+        console.error('Error creating pool:', error);
+        await showError(t('error_creating_pool'), t('error'));
+    }
+}
+
+async function deletePool(id, name) {
+    const confirmed = await showDeleteConfirm(`${t('delete_pool_confirm')} "${name}"?`);
+    if (!confirmed) return;
+    
+    try {
+        const response = await fetchWithAuth(`/ipam/api/pools/${id}`, { method: 'DELETE' });
+        if (response.ok) {
+            loadPools();
+        } else {
+            const error = await response.json();
+            await showError(error.detail || t('error_deleting_pool'), t('error'));
+        }
+    } catch (error) {
+        console.error('Error deleting pool:', error);
+    }
+}
+
+async function releaseIP(id, ip) {
+    const confirmed = await showConfirm(`${t('release_ip_confirm')} ${ip}?`, t('confirm'), { type: 'warning', icon: '<i class="fa-solid fa-lock-open"></i>' });
+    if (!confirmed) return;
+    
+    try {
+        const response = await fetchWithAuth(`/ipam/api/allocations/${id}`, { method: 'DELETE' });
+        if (response.ok) {
+            loadData();
+        } else {
+            const error = await response.json();
+            await showError(error.detail || t('error_releasing_ip'), t('error'));
+        }
+    } catch (error) {
+        console.error('Error releasing IP:', error);
+    }
+}
+
+async function showIPDetail(ip) {
+    const modal = document.getElementById('ipDetailModal');
+    const content = document.getElementById('ipDetailContent');
+    
+    document.getElementById('ipDetailTitle').innerHTML = `<i class="fa-solid fa-thumbtack"></i> ${ip}`;
+    content.innerHTML = `<div style="text-align: center; padding: 1rem; color: var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> ${t('loading')}</div>`;
+    modal.style.display = 'flex';
+    
+    try {
+        // Try to find allocation for this IP
+        const response = await fetchWithAuth(`/ipam/api/allocations?search=${ip}&limit=1`);
+        if (response.ok) {
+            const allocations = await response.json();
+            const alloc = allocations.find(a => a.ip_address === ip);
+            
+            if (alloc) {
+                content.innerHTML = `
+                    <div style="display: grid; gap: 0.75rem;">
+                        <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 0.5rem;">
+                            <div style="color: var(--text-muted);">${t('ip_address')}:</div>
+                            <div style="font-family: monospace; color: var(--text-primary);">${alloc.ip_address}</div>
+                            
+                            <div style="color: var(--text-muted);">${t('status')}:</div>
+                            <div><span style="padding: 0.125rem 0.5rem; border-radius: 4px; font-size: 0.875rem; background: ${getStatusColor(alloc.status)}; color: #fff;">${alloc.status}</span></div>
+                            
+                            <div style="color: var(--text-muted);">${t('resource_type')}:</div>
+                            <div style="color: var(--text-primary);">${alloc.resource_type || '-'}</div>
+                            
+                            <div style="color: var(--text-muted);">${t('name')}:</div>
+                            <div style="color: var(--text-primary);">${alloc.resource_name || '-'}</div>
+                            
+                            <div style="color: var(--text-muted);">${t('hostname')}:</div>
+                            <div style="color: var(--text-primary);">${alloc.hostname || '-'}</div>
+                            
+                            <div style="color: var(--text-muted);">${t('mac_address')}:</div>
+                            <div style="font-family: monospace; color: var(--text-primary);">${alloc.mac_address || '-'}</div>
+                            
+                            <div style="color: var(--text-muted);">${t('proxmox_vmid')}:</div>
+                            <div style="color: var(--text-primary);">${alloc.proxmox_vmid || '-'}</div>
+                            
+                            <div style="color: var(--text-muted);">${t('allocated_by')}:</div>
+                            <div style="color: var(--text-primary);">${alloc.allocated_by || 'system'} • ${new Date(alloc.allocated_at).toLocaleString('ru-RU')}</div>
+                            
+                            <div style="color: var(--text-muted);">${t('notes')}:</div>
+                            <div style="color: var(--text-primary);">${alloc.notes || '-'}</div>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
+                        <button onclick="releaseIP(${alloc.id}, '${alloc.ip_address}'); closeIPDetailModal();" class="btn btn-danger"><i class="fa-solid fa-trash"></i> ${t('release')}</button>
+                        <button onclick="closeIPDetailModal()" class="btn" style="background: var(--bg-tertiary); color: var(--text-primary);">${t('close')}</button>
+                    </div>
+                `;
+            } else {
+                content.innerHTML = `
+                    <div style="text-align: center; padding: 1rem;">
+                        <div style="font-size: 2rem; margin-bottom: 0.5rem;"><i class="fa-solid fa-circle-check"></i></div>
+                        <div style="color: var(--text-secondary);">${t('ip_available')}</div>
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; justify-content: center; margin-top: 1rem;">
+                        <button onclick="document.getElementById('allocIP').value='${ip}'; closeIPDetailModal(); showAllocateModal();" class="btn btn-success"><i class="fa-solid fa-plus"></i> ${t('allocate')}</button>
+                        <button onclick="closeIPDetailModal()" class="btn" style="background: var(--bg-tertiary); color: var(--text-primary);">${t('close')}</button>
+                    </div>
+                `;
+            }
+        }
+    } catch (error) {
+        console.error('Error loading IP detail:', error);
+        content.innerHTML = `<div style="text-align: center; padding: 1rem; color: var(--danger);"><i class="fa-solid fa-circle-xmark"></i> ${t('error_loading')}</div>`;
+    }
+}
+
+// Initial load after DOM ready
+window.addEventListener('DOMContentLoaded', () => {
+    setTimeout(loadData, 100);
+});
+</script>
+{% endblock %}

@@ -1,0 +1,351 @@
+{% extends "base.html" %}
+{% block title %}IPAM - {{ t('ip_allocations') }}{% endblock %}
+
+{% block content %}
+<div class="page-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+    <div>
+        <h1 style="font-size: 1.75rem; font-weight: 600; margin: 0;"><i class="fa-solid fa-thumbtack"></i> {{ t('ip_allocations') }}</h1>
+        <p style="color: var(--text-secondary); margin-top: 0.25rem;">{{ t('all_allocated_ips') }}</p>
+    </div>
+    <div style="display: flex; gap: 0.75rem;">
+        <a href="/ipam" class="btn btn-secondary">← {{ t('back') }}</a>
+        <button onclick="showAllocateModal()" class="btn btn-success" data-permission="ipam.manage"><i class="fa-solid fa-plus"></i> {{ t('allocate_ip') }}</button>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card" style="margin-bottom: 1rem;">
+    <div style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: center;">
+        <div>
+            <label style="color: var(--text-secondary); font-size: 0.875rem;">{{ t('network_label') }}:</label>
+            <select id="filterNetwork" onchange="loadAllocations()" class="form-select" style="padding: 0.5rem; min-width: 150px;">
+                <option value="">{{ t('all_networks') }}</option>
+            </select>
+        </div>
+        <div>
+            <label style="color: var(--text-secondary); font-size: 0.875rem;">{{ t('status') }}:</label>
+            <select id="filterStatus" onchange="loadAllocations()" class="form-select" style="padding: 0.5rem; min-width: 150px;">
+                <option value="">{{ t('all_status') }}</option>
+                <option value="allocated">{{ t('allocated') }}</option>
+                <option value="reserved">{{ t('reserved') }}</option>
+            </select>
+        </div>
+        <div>
+            <label style="color: var(--text-secondary); font-size: 0.875rem;">{{ t('search') }}:</label>
+            <input type="text" id="filterSearch" placeholder="{{ t('search_placeholder') }}" oninput="filterTable()" style="padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+        </div>
+        <button onclick="loadAllocations()" class="btn btn-sm" style="background: var(--bg-tertiary); color: var(--text-primary); margin-left: auto;"><i class="fa-solid fa-rotate"></i> {{ t('refresh') }}</button>
+    </div>
+</div>
+
+<!-- Allocations List -->
+<div class="card">
+    <div id="allocationsContainer">
+        <div style="text-align: center; padding: 2rem; color: var(--text-muted);">
+            <i class="fa-solid fa-spinner fa-spin"></i> {{ t('loading') }}
+        </div>
+    </div>
+</div>
+
+<!-- Allocate IP Modal -->
+<div id="allocateModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 2000; align-items: center; justify-content: center; padding: 1rem;">
+    <div class="card" style="max-width: 500px; width: 95%; max-height: 90vh; overflow-y: auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+            <h3 style="margin: 0;"><i class="fa-solid fa-plus"></i> {{ t('allocate_ip') }}</h3>
+            <button onclick="closeAllocateModal()" style="background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer;">&times;</button>
+        </div>
+        
+        <form id="allocateForm" onsubmit="allocateIP(event)">
+            <div style="display: grid; gap: 1rem;">
+                <div class="form-group">
+                    <label style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary);">{{ t('network_label') }} {{ t('required') }}</label>
+                    <select id="allocNetwork" required style="width: 100%; padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                        <option value="">{{ t('select_network') }}</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary);">{{ t('ip_address_auto') }}</label>
+                    <input type="text" id="allocIP" placeholder="{{ t('auto_allocation') }}" style="width: 100%; padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                </div>
+                
+                <div class="form-group">
+                    <label style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary);">{{ t('hostname') }}</label>
+                    <input type="text" id="allocHostname" placeholder="server-01" style="width: 100%; padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                </div>
+                
+                <div class="form-group">
+                    <label style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary);">{{ t('description') }}</label>
+                    <input type="text" id="allocDescription" placeholder="Web server" style="width: 100%; padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                </div>
+                
+                <div class="form-group">
+                    <label style="display: flex; align-items: center; gap: 0.5rem; color: var(--text-secondary);">
+                        <input type="checkbox" id="allocReserved" style="width: auto;">
+                        {{ t('reserve_checkbox') }}
+                    </label>
+                </div>
+            </div>
+            
+            <div style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border-default);">
+                <button type="button" onclick="closeAllocateModal()" class="btn btn-secondary">{{ t('cancel') }}</button>
+                <button type="submit" class="btn btn-success"><i class="fa-solid fa-floppy-disk"></i> {{ t('allocate') }}</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+let allAllocations = [];
+
+// URL params helper functions
+function getUrlParams() {
+    return new URLSearchParams(window.location.search);
+}
+
+function updateUrlParams(params) {
+    const url = new URL(window.location);
+    Object.entries(params).forEach(([key, value]) => {
+        if (value) {
+            url.searchParams.set(key, value);
+        } else {
+            url.searchParams.delete(key);
+        }
+    });
+    window.history.replaceState({}, '', url);
+}
+
+function restoreFiltersFromUrl() {
+    const params = getUrlParams();
+    
+    const network = params.get('network') || '';
+    const networkSelect = document.getElementById('filterNetwork');
+    if (networkSelect && network) {
+        // Will be set after networks are loaded
+        networkSelect.dataset.pendingValue = network;
+    }
+    
+    const status = params.get('status') || '';
+    document.getElementById('filterStatus').value = status;
+    
+    const search = params.get('search') || '';
+    document.getElementById('filterSearch').value = search;
+}
+
+async function loadNetworks() {
+    try {
+        const response = await fetchWithAuth('/ipam/api/networks');
+        if (response.ok) {
+            const networks = await response.json();
+            
+            const filterSelect = document.getElementById('filterNetwork');
+            const allocSelect = document.getElementById('allocNetwork');
+            
+            filterSelect.innerHTML = `<option value="">${t('all_networks')}</option>` + 
+                networks.map(n => `<option value="${n.id}">${n.name} (${n.network})</option>`).join('');
+            
+            // Restore pending value from URL
+            if (filterSelect.dataset.pendingValue) {
+                filterSelect.value = filterSelect.dataset.pendingValue;
+                delete filterSelect.dataset.pendingValue;
+            }
+            
+            allocSelect.innerHTML = `<option value="">${t('select_network')}</option>` + 
+                networks.map(n => `<option value="${n.id}">${n.name} (${n.network})</option>`).join('');
+        }
+    } catch (error) {
+        console.error('Error loading networks:', error);
+    }
+}
+
+async function loadAllocations() {
+    try {
+        const networkId = document.getElementById('filterNetwork').value;
+        const status = document.getElementById('filterStatus').value;
+        
+        // Save filters to URL
+        updateUrlParams({ network: networkId, status: status });
+        
+        let url = '/ipam/api/allocations?';
+        if (networkId) url += `network_id=${networkId}&`;
+        if (status) url += `status=${status}&`;
+        
+        const response = await fetchWithAuth(url);
+        const container = document.getElementById('allocationsContainer');
+        
+        if (response.ok) {
+            allAllocations = await response.json();
+            // Apply search filter if exists
+            filterTable(false);
+        } else {
+            container.innerHTML = `<div style="text-align: center; padding: 2rem; color: var(--danger);"><i class="fa-solid fa-circle-xmark"></i> ${t('error_loading')}</div>`;
+        }
+    } catch (error) {
+        console.error('Error loading allocations:', error);
+        document.getElementById('allocationsContainer').innerHTML = `<div style="text-align: center; padding: 2rem; color: var(--danger);"><i class="fa-solid fa-circle-xmark"></i> ${t('error_loading')}</div>`;
+    }
+}
+
+function filterTable(updateUrl = true) {
+    const search = document.getElementById('filterSearch').value.toLowerCase();
+    if (updateUrl) {
+        updateUrlParams({ search: search });
+    }
+    const filtered = allAllocations.filter(a => 
+        a.ip_address.toLowerCase().includes(search) ||
+        (a.hostname || '').toLowerCase().includes(search) ||
+        (a.description || '').toLowerCase().includes(search) ||
+        (a.vmid || '').toString().includes(search)
+    );
+    renderAllocations(filtered);
+}
+
+function renderAllocations(allocations) {
+    const container = document.getElementById('allocationsContainer');
+    
+    if (allocations.length === 0) {
+        container.innerHTML = `
+            <div style="text-align: center; padding: 3rem;">
+                <div style="font-size: 3rem; margin-bottom: 1rem;"><i class="fa-solid fa-thumbtack"></i></div>
+                <h3 style="color: var(--text-primary); margin-bottom: 0.5rem;">${t('allocations_not_found')}</h3>
+                <p style="color: var(--text-secondary);">${t('no_allocated_ips')}</p>
+            </div>
+        `;
+        return;
+    }
+    
+    container.innerHTML = `
+        <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr style="border-bottom: 1px solid var(--border-color);">
+                    <th style="text-align: left; padding: 0.75rem; color: var(--text-secondary); font-weight: 500;">${t('ip_address')}</th>
+                    <th style="text-align: left; padding: 0.75rem; color: var(--text-secondary); font-weight: 500;">${t('network_label')}</th>
+                    <th style="text-align: left; padding: 0.75rem; color: var(--text-secondary); font-weight: 500;">${t('hostname')}</th>
+                    <th style="text-align: left; padding: 0.75rem; color: var(--text-secondary); font-weight: 500;">${t('resource')}</th>
+                    <th style="text-align: left; padding: 0.75rem; color: var(--text-secondary); font-weight: 500;">${t('status')}</th>
+                    <th style="text-align: left; padding: 0.75rem; color: var(--text-secondary); font-weight: 500;">${t('created')}</th>
+                    <th style="text-align: right; padding: 0.75rem; color: var(--text-secondary); font-weight: 500;">${t('actions')}</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${allocations.map(a => `
+                    <tr style="border-bottom: 1px solid var(--border-default);" onmouseover="this.style.background='var(--bg-surface-hover)'" onmouseout="this.style.background='transparent'">
+                        <td style="padding: 0.75rem; font-family: monospace; font-weight: 500; color: var(--text-primary);">${a.ip_address}</td>
+                        <td style="padding: 0.75rem; color: var(--text-secondary);">${a.network_name || '-'}</td>
+                        <td style="padding: 0.75rem; color: var(--text-primary);">${a.hostname || '-'}</td>
+                        <td style="padding: 0.75rem; color: var(--text-primary);">
+                            ${a.resource_type ? `<span style="background: var(--bg-surface-hover); padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; color: var(--text-primary);">${a.resource_type}</span>` : ''}
+                            ${a.vmid ? `<span style="font-family: monospace; margin-left: 0.25rem; color: var(--text-secondary);">#${a.vmid}</span>` : ''}
+                        </td>
+                        <td style="padding: 0.75rem;">
+                            ${a.status === 'reserved' ? 
+                                `<span class="badge badge-info" style="color: #fff;"><i class="fa-solid fa-lock"></i> ${t('reserved')}</span>` : 
+                                `<span class="badge badge-success" style="color: #fff;">✓ ${t('allocated')}</span>`}
+                        </td>
+                        <td style="padding: 0.75rem; color: var(--text-muted); font-size: 0.875rem;">${a.created_at ? new Date(a.created_at).toLocaleDateString('ru-RU') : '-'}</td>
+                        <td style="padding: 0.75rem; text-align: right;">
+                            <button onclick="releaseIP(${a.id}, '${a.ip_address}')" class="btn btn-sm btn-danger"><i class="fa-solid fa-trash"></i> ${t('release')}</button>
+                        </td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+function showAllocateModal() {
+    document.getElementById('allocateModal').style.display = 'flex';
+}
+
+function closeAllocateModal() {
+    document.getElementById('allocateModal').style.display = 'none';
+    document.getElementById('allocateForm').reset();
+}
+
+async function allocateIP(event) {
+    event.preventDefault();
+    
+    const networkId = document.getElementById('allocNetwork').value;
+    const ip = document.getElementById('allocIP').value.trim();
+    const hostname = document.getElementById('allocHostname').value.trim();
+    const description = document.getElementById('allocDescription').value.trim();
+    const isReserved = document.getElementById('allocReserved').checked;
+    
+    try {
+        let response;
+        
+        if (ip) {
+            // Manual allocation
+            response = await fetchWithAuth('/ipam/api/allocations', {
+                method: 'POST',
+                body: JSON.stringify({
+                    network_id: parseInt(networkId),
+                    ip_address: ip,
+                    hostname: hostname || null,
+                    description: description || null,
+                    status: isReserved ? 'reserved' : 'allocated'
+                })
+            });
+        } else {
+            // Auto allocation
+            response = await fetchWithAuth('/ipam/api/allocations/auto', {
+                method: 'POST',
+                body: JSON.stringify({
+                    network_id: parseInt(networkId),
+                    hostname: hostname || null,
+                    description: description || null
+                })
+            });
+        }
+        
+        if (response.ok) {
+            closeAllocateModal();
+            loadAllocations();
+            showToast('success', t('success'), t('ip_allocated_successfully') || 'IP allocated successfully');
+        } else {
+            const error = await response.json();
+            showToast('error', t('error'), error.detail || t('error_allocating_ip'));
+        }
+    } catch (error) {
+        console.error('Error allocating IP:', error);
+        showToast('error', t('error'), t('error_allocating_ip'));
+    }
+}
+
+async function releaseIP(id, ip) {
+    const confirmed = await showConfirm(
+        t('release_ip'),
+        `${t('release_ip_confirm')} ${ip}?`,
+        { type: 'warning', confirmText: t('release') }
+    );
+    
+    if (!confirmed) return;
+    
+    try {
+        const response = await fetchWithAuth(`/ipam/api/allocations/${id}`, {
+            method: 'DELETE'
+        });
+        
+        if (response.ok) {
+            loadAllocations();
+            showToast('success', t('success'), t('ip_released_successfully') || 'IP released successfully');
+        } else {
+            const error = await response.json();
+            showToast('error', t('error'), error.detail || t('error_releasing_ip'));
+        }
+    } catch (error) {
+        console.error('Error releasing IP:', error);
+        showToast('error', t('error'), t('error_releasing_ip'));
+    }
+}
+
+// Initial load after DOM ready
+window.addEventListener('DOMContentLoaded', () => {
+    restoreFiltersFromUrl();
+    setTimeout(() => {
+        loadNetworks();
+        loadAllocations();
+    }, 100);
+});
+</script>
+{% endblock %}

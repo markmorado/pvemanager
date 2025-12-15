@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% set page_title = t('docker_management') %}
+{% block content %}
+<div class="card">
+    <h3><i class="fa-brands fa-docker"></i> {{ t('docker_containers') }}</h3>
+    <p class="text-muted" style="margin-top: 1rem;">
+        {{ t('section_in_development') }}
+    </p>
+    <div style="margin-top: 1.5rem;">
+        <a href="/servers" class="btn btn-primary">← {{ t('to_servers') }}</a>
+    </div>
+</div>
+{% endblock %}

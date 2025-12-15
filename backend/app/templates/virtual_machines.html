@@ -1,0 +1,4337 @@
+{% extends "base.html" %}
+{% set page_title = t('nav_vms') %}
+{% block content %}
+
+<style>
+    .vm-table-container {
+        background: var(--bg-surface);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        overflow: hidden;
+    }
+    
+    .vm-tabs {
+        display: flex;
+        gap: 0;
+        border-bottom: 1px solid var(--border-color);
+        background: var(--bg-surface-elevated);
+    }
+    
+    .vm-tab {
+        padding: 1rem 1.5rem;
+        background: none;
+        border: none;
+        color: var(--text-secondary);
+        cursor: pointer;
+        font-weight: 500;
+        transition: all 0.2s ease;
+        border-bottom: 2px solid transparent;
+        margin-bottom: -1px;
+    }
+    
+    .vm-tab:hover {
+        color: var(--text-primary);
+        background: var(--bg-hover);
+    }
+    
+    .vm-tab.active {
+        color: var(--primary);
+        border-bottom-color: var(--primary);
+    }
+    
+    .vm-toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 1rem 1.5rem;
+        border-bottom: 1px solid var(--border-color);
+        flex-wrap: wrap;
+        gap: 1rem;
+    }
+    
+    .vm-toolbar-left {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+    }
+    
+    .vm-toolbar-right {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+    }
+    
+    .vm-filter-btn {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.5rem 1rem;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    
+    .vm-filter-btn:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+    }
+    
+    .vm-pagination {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        color: var(--text-secondary);
+        font-size: 0.875rem;
+    }
+    
+    .vm-pagination select {
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        padding: 0.25rem 0.5rem;
+        color: var(--text-primary);
+    }
+    
+    .vm-pagination-nav {
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+    }
+    
+    .vm-pagination-btn {
+        width: 28px;
+        height: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    
+    .vm-pagination-btn:hover:not(:disabled) {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+    }
+    
+    .vm-pagination-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+    
+    .vm-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    
+    .vm-table th {
+        text-align: left;
+        padding: 0.75rem 1rem;
+        background: var(--bg-surface-elevated);
+        color: var(--text-secondary);
+        font-weight: 500;
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        border-bottom: 1px solid var(--border-color);
+        white-space: nowrap;
+    }
+    
+    .vm-table th.sortable {
+        cursor: pointer;
+        user-select: none;
+    }
+    
+    .vm-table th.sortable:hover {
+        color: var(--text-primary);
+    }
+    
+    .vm-table th .sort-icon {
+        margin-left: 0.25rem;
+        opacity: 0.5;
+    }
+    
+    .vm-table th.sorted .sort-icon {
+        opacity: 1;
+        color: var(--primary);
+    }
+    
+    .vm-table td {
+        padding: 0.875rem 1rem;
+        border-bottom: 1px solid var(--border-color);
+        color: var(--text-primary);
+        font-size: 0.9rem;
+    }
+    
+    .vm-table tbody tr {
+        transition: background 0.15s ease;
+        cursor: pointer;
+    }
+    
+    .vm-table tbody tr:hover {
+        background: var(--bg-hover);
+    }
+    
+    .vm-table tbody tr:last-child td {
+        border-bottom: none;
+    }
+    
+    .vm-name-cell {
+        display: flex;
+        flex-direction: column;
+        gap: 0.125rem;
+    }
+    
+    .vm-name {
+        color: var(--primary);
+        font-weight: 500;
+        text-decoration: none;
+    }
+    
+    .vm-name:hover {
+        text-decoration: underline;
+    }
+    
+    .vm-hostname {
+        font-size: 0.75rem;
+        color: var(--text-muted);
+    }
+    
+    .vm-config {
+        font-size: 0.85rem;
+        color: var(--text-secondary);
+    }
+    
+    .vm-status-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        padding: 0.25rem 0.75rem;
+        border-radius: 4px;
+        font-size: 0.8rem;
+        font-weight: 500;
+    }
+    
+    .vm-status-badge.running {
+        background: rgba(16, 185, 129, 0.15);
+        color: var(--success);
+    }
+    
+    .vm-status-badge.stopped {
+        background: rgba(239, 68, 68, 0.15);
+        color: var(--danger);
+    }
+    
+    .vm-status-badge.pending {
+        background: rgba(245, 158, 11, 0.15);
+        color: var(--warning);
+    }
+    
+    .status-spinner {
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        border: 2px solid currentColor;
+        border-top-color: transparent;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+    }
+    
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+    
+    .vm-type-badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 0.2rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.7rem;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+    
+    .vm-type-badge.qemu {
+        background: var(--info);
+        color: white;
+    }
+    
+    .vm-type-badge.lxc {
+        background: var(--purple);
+        color: white;
+    }
+    
+    .vm-cluster-link {
+        color: var(--primary);
+        text-decoration: none;
+        font-size: 0.85rem;
+    }
+    
+    .vm-cluster-link:hover {
+        text-decoration: underline;
+    }
+    
+    .vm-node-link {
+        color: var(--text-secondary);
+        text-decoration: none;
+        font-size: 0.85rem;
+    }
+    
+    .vm-node-link:hover {
+        color: var(--primary);
+    }
+    
+    .vm-actions-cell {
+        text-align: right;
+    }
+    
+    .vm-action-menu {
+        position: relative;
+        display: inline-block;
+    }
+    
+    .vm-action-btn {
+        background: none;
+        border: none;
+        color: var(--text-muted);
+        cursor: pointer;
+        padding: 0.25rem;
+        font-size: 1.25rem;
+        line-height: 1;
+    }
+    
+    .vm-action-btn:hover {
+        color: var(--text-primary);
+    }
+    
+    /* Context menu styles */
+    .vm-context-menu {
+        position: fixed;
+        background: var(--bg-surface);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        z-index: 1000;
+        min-width: 180px;
+        padding: 0.5rem 0;
+    }
+    
+    .vm-context-menu-item {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.6rem 1rem;
+        color: var(--text-primary);
+        cursor: pointer;
+        transition: background 0.15s ease;
+        font-size: 0.9rem;
+    }
+    
+    .vm-context-menu-item:hover {
+        background: var(--bg-hover);
+    }
+    
+    .vm-context-menu-item.danger {
+        color: var(--danger);
+    }
+    
+    .vm-context-menu-item.danger:hover {
+        background: rgba(239, 68, 68, 0.1);
+    }
+    
+    .vm-context-menu-item svg {
+        width: 18px;
+        height: 18px;
+        flex-shrink: 0;
+        stroke: currentColor;
+        fill: none;
+    }
+    
+    .vm-context-menu-divider {
+        height: 1px;
+        background: var(--border-color);
+        margin: 0.5rem 0;
+    }
+    
+    .vm-empty {
+        text-align: center;
+        padding: 4rem 2rem;
+        color: var(--text-muted);
+    }
+    
+    .vm-empty-icon {
+        font-size: 3rem;
+        margin-bottom: 1rem;
+        opacity: 0.5;
+    }
+    
+    .vm-checkbox {
+        width: 18px;
+        height: 18px;
+        cursor: pointer;
+    }
+    
+    .settings-gear {
+        background: none;
+        border: none;
+        color: var(--text-muted);
+        cursor: pointer;
+        padding: 0.5rem;
+        font-size: 1rem;
+    }
+    
+    .settings-gear:hover {
+        color: var(--text-primary);
+    }
+    
+    .vm-filter-select {
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        padding: 0.5rem 0.75rem;
+        color: var(--text-primary);
+        font-size: 0.875rem;
+        cursor: pointer;
+        min-width: 120px;
+    }
+    
+    .vm-filter-select:hover {
+        border-color: var(--primary);
+    }
+    
+    .vm-filter-select:focus {
+        outline: none;
+        border-color: var(--primary);
+        box-shadow: 0 0 0 2px rgba(var(--primary-rgb), 0.2);
+    }
+    
+    .vm-search-input {
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        padding: 0.5rem 0.75rem;
+        color: var(--text-primary);
+        font-size: 0.875rem;
+        min-width: 200px;
+    }
+    
+    .vm-search-input:focus {
+        outline: none;
+        border-color: var(--primary);
+        box-shadow: 0 0 0 2px rgba(var(--primary-rgb), 0.2);
+    }
+    
+    .vm-search-input::placeholder {
+        color: var(--text-muted);
+    }
+    
+    /* Bulk actions bar */
+    .bulk-actions-bar {
+        display: none;
+        align-items: center;
+        gap: 1rem;
+        padding: 0.75rem 1.5rem;
+        background: var(--primary);
+        color: white;
+        animation: slideDown 0.2s ease;
+    }
+    
+    .bulk-actions-bar.active {
+        display: flex;
+    }
+    
+    @keyframes slideDown {
+        from { opacity: 0; transform: translateY(-10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    
+    .bulk-actions-bar .selected-count {
+        font-weight: 600;
+    }
+    
+    .bulk-actions-bar .bulk-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.375rem;
+        padding: 0.4rem 0.75rem;
+        border: 1px solid rgba(255,255,255,0.3);
+        border-radius: 6px;
+        background: rgba(255,255,255,0.1);
+        color: white;
+        cursor: pointer;
+        font-size: 0.85rem;
+        transition: all 0.15s ease;
+    }
+    
+    .bulk-actions-bar .bulk-btn:hover {
+        background: rgba(255,255,255,0.2);
+        border-color: rgba(255,255,255,0.5);
+    }
+    
+    .bulk-actions-bar .bulk-btn.danger {
+        background: rgba(239, 68, 68, 0.8);
+        border-color: rgba(239, 68, 68, 0.9);
+    }
+    
+    .bulk-actions-bar .bulk-btn.danger:hover {
+        background: var(--danger);
+    }
+    
+    .bulk-actions-bar .cancel-btn {
+        background: none;
+        border: none;
+        color: white;
+        cursor: pointer;
+        padding: 0.25rem;
+        opacity: 0.8;
+        margin-left: auto;
+    }
+    
+    .bulk-actions-bar .cancel-btn:hover {
+        opacity: 1;
+    }
+    
+    /* Task progress toast */
+    .task-progress-toast {
+        position: fixed;
+        bottom: 1.5rem;
+        right: 1.5rem;
+        background: var(--bg-surface);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+        padding: 1rem 1.5rem;
+        min-width: 320px;
+        z-index: 9999;
+        animation: slideUp 0.3s ease;
+    }
+    
+    @keyframes slideUp {
+        from { opacity: 0; transform: translateY(20px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    
+    .task-progress-toast.hidden {
+        display: none;
+    }
+    
+    .task-progress-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 0.75rem;
+    }
+    
+    .task-progress-title {
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+    
+    .task-progress-close {
+        background: none;
+        border: none;
+        color: var(--text-muted);
+        cursor: pointer;
+        padding: 0.25rem;
+        font-size: 1.25rem;
+    }
+    
+    .task-progress-bar-container {
+        height: 8px;
+        background: var(--bg-tertiary);
+        border-radius: 4px;
+        overflow: hidden;
+        margin-bottom: 0.5rem;
+    }
+    
+    .task-progress-bar {
+        height: 100%;
+        background: var(--primary);
+        border-radius: 4px;
+        transition: width 0.3s ease;
+    }
+    
+    .task-progress-bar.success {
+        background: var(--success);
+    }
+    
+    .task-progress-bar.error {
+        background: var(--danger);
+    }
+    
+    .task-progress-text {
+        font-size: 0.85rem;
+        color: var(--text-secondary);
+    }
+    
+    .task-progress-results {
+        max-height: 150px;
+        overflow-y: auto;
+        margin-top: 0.75rem;
+        font-size: 0.8rem;
+    }
+    
+    .task-result-item {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.25rem 0;
+        color: var(--text-secondary);
+    }
+    
+    .task-result-item.success {
+        color: var(--success);
+    }
+    
+    .task-result-item.error {
+        color: var(--danger);
+    }
+    
+    /* Мобильная адаптация */
+    @media (max-width: 768px) {
+        .vm-tabs {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+        
+        .vm-tab {
+            padding: 0.75rem 1rem;
+            white-space: nowrap;
+            font-size: 0.875rem;
+        }
+        
+        .vm-toolbar {
+            flex-direction: column;
+            align-items: stretch;
+            padding: 0.75rem;
+        }
+        
+        .vm-toolbar-left,
+        .vm-toolbar-right {
+            width: 100%;
+            justify-content: space-between;
+        }
+        
+        .vm-toolbar-right {
+            flex-wrap: wrap;
+        }
+        
+        .vm-pagination {
+            width: 100%;
+            justify-content: center;
+        }
+        
+        .vm-table th,
+        .vm-table td {
+            padding: 0.5rem 0.25rem;
+            font-size: 0.8rem;
+        }
+        
+        /* Скрываем менее важные колонки на мобильных */
+        .vm-table th:nth-child(4),
+        .vm-table td:nth-child(4),
+        .vm-table th:nth-child(8),
+        .vm-table td:nth-child(8),
+        .vm-table th:nth-child(9),
+        .vm-table td:nth-child(9) {
+            display: none;
+        }
+        
+        .bulk-actions-panel {
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 0.5rem;
+            padding: 0.75rem;
+        }
+        
+        .bulk-btn {
+            padding: 0.5rem 0.75rem;
+            font-size: 0.8rem;
+        }
+        
+        .vm-row-actions {
+            gap: 0.25rem;
+        }
+        
+        .vm-action-btn {
+            padding: 0.35rem;
+        }
+        
+        .task-progress-toast {
+            left: 0.5rem;
+            right: 0.5rem;
+            bottom: 0.5rem;
+            max-width: none;
+        }
+    }
+    
+    @media (max-width: 480px) {
+        .vm-toolbar-left {
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+        
+        .vm-search {
+            width: 100%;
+        }
+        
+        .vm-search input {
+            width: 100%;
+        }
+        
+        /* Скрываем ещё больше колонок */
+        .vm-table th:nth-child(5),
+        .vm-table td:nth-child(5),
+        .vm-table th:nth-child(6),
+        .vm-table td:nth-child(6),
+        .vm-table th:nth-child(7),
+        .vm-table td:nth-child(7) {
+            display: none;
+        }
+    }
+</style>
+
+<div class="vm-table-container">
+    <!-- Tabs -->
+    <div class="vm-tabs">
+        <button class="vm-tab active" data-tab="vms" onclick="switchVMTab('vms')">{{ t('virtual_machines') }}</button>
+        <button class="vm-tab" data-tab="snapshots" onclick="switchVMTab('snapshots')">{{ t('vm_snapshots') }}</button>
+    </div>
+    
+    <!-- Bulk Actions Bar -->
+    <div class="bulk-actions-bar" id="bulkActionsBar">
+        <span class="selected-count"><span id="selectedCount">0</span> {{ t('selected') }}</span>
+        <button class="bulk-btn" onclick="bulkAction('start')" title="{{ t('start_all') }}">
+            <i class="fa-solid fa-play"></i> {{ t('start') }}
+        </button>
+        <button class="bulk-btn" onclick="bulkAction('stop')" title="{{ t('stop_all') }}">
+            <i class="fa-solid fa-stop"></i> {{ t('stop') }}
+        </button>
+        <button class="bulk-btn" onclick="bulkAction('restart')" title="{{ t('restart_all') }}">
+            <i class="fa-solid fa-rotate"></i> {{ t('restart') }}
+        </button>
+        <button class="bulk-btn" onclick="bulkAction('shutdown')" title="{{ t('shutdown_all') }}">
+            <i class="fa-solid fa-power-off"></i> {{ t('shutdown') }}
+        </button>
+        <button class="bulk-btn danger" onclick="bulkAction('delete')" title="{{ t('delete_all') }}">
+            <i class="fa-solid fa-trash"></i> {{ t('delete') }}
+        </button>
+        <button class="cancel-btn" onclick="clearSelection()" title="{{ t('cancel') }}"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    
+    <!-- Toolbar -->
+    <div class="vm-toolbar">
+        <div class="vm-toolbar-left">
+            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;" title="{{ t('select_all') }}">
+                <input type="checkbox" id="selectAll" class="vm-checkbox" onclick="toggleSelectAll(event)">
+                <span style="color: var(--text-secondary); font-size: 0.875rem;">
+                    <span id="selectedCountLabel">0</span> {{ t('selected') }}
+                </span>
+            </label>
+            
+            <select id="typeFilter" class="vm-filter-select" onchange="filterByType(this.value)">
+                <option value="">{{ t('all_types') }}</option>
+                <option value="qemu">KVM (QEMU)</option>
+                <option value="lxc">LXC ({{ t('containers') }})</option>
+            </select>
+            
+            <select id="statusFilter" class="vm-filter-select" onchange="filterByStatus(this.value)">
+                <option value="">{{ t('all_statuses') }}</option>
+                <option value="running">{{ t('active') }}</option>
+                <option value="stopped">{{ t('inactive') }}</option>
+            </select>
+            
+            <input type="text" id="searchInput" class="vm-search-input" placeholder="{{ t('search') }}..." oninput="searchVMs(this.value)">
+            
+            <div style="display: flex; align-items: center; gap: 0.75rem; color: var(--text-muted); font-size: 0.875rem;">
+                <span>{{ t('total') }}: <strong id="totalCount">0</strong></span>
+                <span style="color: var(--success);"><i class="fa-solid fa-play"></i> <span id="runningCount">0</span></span>
+                <span style="color: var(--text-muted);"><i class="fa-solid fa-stop"></i> <span id="stoppedCount">0</span></span>
+            </div>
+        </div>
+        
+        <div class="vm-toolbar-right">
+            <div class="vm-pagination">
+                <span>{{ t('per_page') }}:</span>
+                <select id="pageSize" onchange="changePageSize(this.value)">
+                    <option value="25">25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                </select>
+            </div>
+            
+            <div class="vm-pagination-nav">
+                <button class="vm-pagination-btn" id="prevPage" onclick="prevPage()" disabled>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="15 18 9 12 15 6"></polyline>
+                    </svg>
+                </button>
+                <input type="number" id="currentPage" value="1" min="1" style="width: 50px; text-align: center; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 4px; padding: 0.25rem; color: var(--text-primary);" onchange="goToPage(this.value)">
+                <span style="color: var(--text-muted);">{{ t('of') }} <span id="totalPages">1</span></span>
+                <button class="vm-pagination-btn" id="nextPage" onclick="nextPage()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="9 18 15 12 9 6"></polyline>
+                    </svg>
+                </button>
+            </div>
+            
+            <button class="settings-gear" title="{{ t('settings') }}"><i class="fa-solid fa-gear"></i></button>
+            
+            <div style="display: flex; gap: 0.5rem;">
+                <button class="btn btn-secondary" onclick="syncVMs()" id="syncBtn" title="{{ t('sync_from_proxmox') }}">
+                    <span id="syncIcon"><i class="fa-solid fa-rotate"></i></span>
+                </button>
+                <button class="btn btn-primary" onclick="showCreateVMModal()" data-permission="vms.create">{{ t('create_vm') }}</button>
+                <button class="btn btn-success" onclick="showCreateLXCModal()" data-permission="vms.create"><i class="fa-solid fa-cube"></i> {{ t('create_lxc') }}</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Table -->
+    <div class="vm-table-wrapper" style="overflow-x: auto;">
+        <table class="vm-table">
+            <thead>
+                <tr>
+                    <th style="width: 40px;"></th>
+                    <th class="sortable" onclick="sortBy('name')">
+                        {{ t('name') }} <span class="sort-icon">↕</span>
+                    </th>
+                    <th class="sortable" onclick="sortBy('vmid')">
+                        ID <span class="sort-icon">↕</span>
+                    </th>
+                    <th class="sortable" onclick="sortBy('owner')">
+                        {{ t('owner') }} <span class="sort-icon">↕</span>
+                    </th>
+                    <th class="sortable" onclick="sortBy('ip')">
+                        IP-{{ t('address') }} <span class="sort-icon">↕</span>
+                    </th>
+                    <th class="sortable" onclick="sortBy('name')">
+                        {{ t('os_config') }} <span class="sort-icon">↕</span>
+                    </th>
+                    <th class="sortable" onclick="sortBy('cluster')">
+                        {{ t('cluster') }} <span class="sort-icon">↕</span>
+                    </th>
+                    <th>{{ t('type') }}</th>
+                    <th class="sortable" onclick="sortBy('node')">
+                        {{ t('node_storage') }} <span class="sort-icon">↕</span>
+                    </th>
+                    <th class="sortable" onclick="sortBy('status')">
+                        {{ t('status') }} <span class="sort-icon">↕</span>
+                    </th>
+                    <th style="width: 50px;"></th>
+                </tr>
+            </thead>
+            <tbody id="vmTableBody">
+                <tr>
+                    <td colspan="11" class="vm-empty">
+                        <div class="vm-empty-icon"><i class="fa-solid fa-spinner fa-spin"></i></div>
+                        <div>{{ t('loading') }}...</div>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- Snapshots Tab Content -->
+    <div id="snapshotsTabContent" style="display: none;">
+        <div class="vm-toolbar" style="margin-bottom: 1rem;">
+            <div class="vm-toolbar-left">
+                <select id="snapshotServerFilter" class="vm-filter-select" onchange="loadSnapshotsForServer(this.value)">
+                    <option value="">{{ t('select_server') }}</option>
+                </select>
+                <select id="snapshotVMFilter" class="vm-filter-select" onchange="loadSnapshotsForVM(this.value)" disabled>
+                    <option value="">{{ t('select_vm') }}</option>
+                </select>
+                <div class="search-input-wrapper" style="position: relative; flex: 1; min-width: 150px;">
+                    <i class="fa-solid fa-search" style="position: absolute; left: 0.75rem; top: 50%; transform: translateY(-50%); color: var(--text-muted);"></i>
+                    <input type="text" id="snapshotSearchInput" class="vm-search-input" placeholder="{{ t('search') }}..." oninput="filterSnapshots(this.value)" style="padding-left: 2.25rem;">
+                </div>
+            </div>
+            <div class="vm-toolbar-right">
+                <button class="btn btn-secondary btn-icon" onclick="refreshSnapshots()" title="{{ t('refresh') }}">
+                    <i class="fa-solid fa-rotate"></i>
+                </button>
+                <button class="btn btn-primary" onclick="showCreateSnapshotModal()" id="createSnapshotBtn" disabled data-permission="vms.snapshots">
+                    <i class="fa-solid fa-camera"></i> <span class="btn-text">{{ t('create_snapshot') }}</span>
+                </button>
+            </div>
+        </div>
+        
+        <div id="snapshotsContainer" class="snapshots-grid">
+            <div class="snapshots-empty-state" style="grid-column: 1 / -1; text-align: center; padding: 3rem; color: var(--text-muted);">
+                <i class="fa-solid fa-camera" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.3;"></i>
+                <div>{{ t('select_vm_for_snapshots') }}</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Task Progress Toast -->
+<div class="task-progress-toast hidden" id="taskProgressToast">
+    <div class="task-progress-header">
+        <span class="task-progress-title" id="taskProgressTitle">{{ t('processing') }}...</span>
+        <button class="task-progress-close" onclick="hideTaskProgress()">×</button>
+    </div>
+    <div class="task-progress-bar-container">
+        <div class="task-progress-bar" id="taskProgressBar" style="width: 0%"></div>
+    </div>
+    <div class="task-progress-text" id="taskProgressText">0 / 0</div>
+    <div class="task-progress-results" id="taskProgressResults"></div>
+</div>
+
+<script>
+const API_TOKEN = localStorage.getItem('access_token');
+
+// State
+let allVMs = [];
+let filteredVMs = [];
+let currentPageNum = 1;
+let pageSizeNum = 25;
+let sortField = 'name';
+let sortDirection = 'asc';
+let currentTypeFilter = '';
+let currentStatusFilter = '';
+let currentSearchQuery = '';
+
+// URL params helper functions
+function getUrlParams() {
+    return new URLSearchParams(window.location.search);
+}
+
+function updateUrlParams(params) {
+    const url = new URL(window.location);
+    Object.entries(params).forEach(([key, value]) => {
+        if (value) {
+            url.searchParams.set(key, value);
+        } else {
+            url.searchParams.delete(key);
+        }
+    });
+    window.history.replaceState({}, '', url);
+}
+
+function restoreFiltersFromUrl() {
+    const params = getUrlParams();
+    
+    // Restore type filter
+    const type = params.get('type') || '';
+    currentTypeFilter = type;
+    const typeSelect = document.getElementById('typeFilter');
+    if (typeSelect) typeSelect.value = type;
+    
+    // Restore status filter
+    const status = params.get('status') || '';
+    currentStatusFilter = status;
+    const statusSelect = document.getElementById('statusFilter');
+    if (statusSelect) statusSelect.value = status;
+    
+    // Restore search query
+    const search = params.get('search') || '';
+    currentSearchQuery = search;
+    const searchInput = document.getElementById('searchInput');
+    if (searchInput) searchInput.value = search;
+    
+    // Restore page size
+    const pageSize = params.get('pageSize');
+    if (pageSize && ['25', '50', '100'].includes(pageSize)) {
+        pageSizeNum = parseInt(pageSize);
+        const pageSizeSelect = document.getElementById('pageSize');
+        if (pageSizeSelect) pageSizeSelect.value = pageSize;
+    }
+    
+    // Restore current page
+    const page = params.get('page');
+    if (page && parseInt(page) > 0) {
+        currentPageNum = parseInt(page);
+        const currentPageInput = document.getElementById('currentPage');
+        if (currentPageInput) currentPageInput.value = page;
+    }
+    
+    // Restore sort
+    const sort = params.get('sort');
+    if (sort) {
+        sortField = sort;
+    }
+    const dir = params.get('dir');
+    if (dir && ['asc', 'desc'].includes(dir)) {
+        sortDirection = dir;
+    }
+}
+
+// Bulk selection state
+let selectedVMs = new Set();  // Set of "server_id-vmid" keys
+let currentTaskId = null;
+let taskPollInterval = null;
+
+// Bulk action functions
+function getVMKey(vm) {
+    return `${vm.server_id}-${vm.vmid}`;
+}
+
+function toggleVMSelection(event, checkbox, serverId, vmid) {
+    event.stopPropagation();
+    const key = `${serverId}-${vmid}`;
+    
+    if (checkbox.checked) {
+        selectedVMs.add(key);
+    } else {
+        selectedVMs.delete(key);
+    }
+    
+    // Update row highlight
+    const row = checkbox.closest('tr');
+    if (row) {
+        row.classList.toggle('selected', checkbox.checked);
+    }
+    
+    updateBulkActionsBar();
+    updateSelectAllCheckbox();
+}
+
+function toggleSelectAll(event) {
+    // Останавливаем всплытие события, но НЕ preventDefault - иначе чекбокс не изменит состояние
+    event?.stopPropagation();
+    
+    const checkbox = event.target;
+    // checked уже изменён браузером к моменту вызова onclick
+    const isChecked = checkbox.checked;
+    
+    console.log('toggleSelectAll:', { isChecked, selectedVMsSize: selectedVMs.size });
+    
+    const checkboxes = document.querySelectorAll('.vm-row-checkbox');
+    
+    if (isChecked) {
+        // Выделяем все элементы на текущей странице
+        checkboxes.forEach(cb => {
+            const key = `${cb.dataset.serverId}-${cb.dataset.vmid}`;
+            selectedVMs.add(key);
+            cb.checked = true;
+            const row = cb.closest('tr');
+            if (row) row.classList.add('selected');
+        });
+    } else {
+        // Снимаем выделение со всех элементов
+        selectedVMs.clear();
+        checkboxes.forEach(cb => {
+            cb.checked = false;
+            const row = cb.closest('tr');
+            if (row) row.classList.remove('selected');
+        });
+    }
+    
+    console.log('After toggleSelectAll:', { selectedVMsSize: selectedVMs.size, isChecked });
+    
+    updateBulkActionsBar();
+}
+
+function clearSelection() {
+    selectedVMs.clear();
+    updateBulkActionsBar();
+    // Just update checkboxes without full re-render
+    document.querySelectorAll('.vm-checkbox').forEach(cb => {
+        cb.checked = false;
+    });
+    document.getElementById('selectAll').checked = false;
+    document.getElementById('selectedCountLabel').textContent = '0';
+}
+
+function updateBulkActionsBar() {
+    const bar = document.getElementById('bulkActionsBar');
+    const count = selectedVMs.size;
+    
+    // Update bar visibility
+    if (bar) {
+        if (count > 0) {
+            bar.classList.add('active');
+        } else {
+            bar.classList.remove('active');
+        }
+    }
+    
+    // Update count display
+    const selectedCountEl = document.getElementById('selectedCount');
+    if (selectedCountEl) {
+        selectedCountEl.textContent = count;
+    }
+    
+    // Update counter next to checkbox
+    const counterSpan = document.getElementById('selectedCountLabel');
+    if (counterSpan) {
+        counterSpan.textContent = count;
+        counterSpan.style.color = count > 0 ? 'var(--primary)' : 'var(--text-secondary)';
+        counterSpan.style.fontWeight = count > 0 ? '600' : '400';
+    }
+    
+    // Update select all checkbox state
+    updateSelectAllCheckbox();
+}
+
+function updateSelectAllCheckbox() {
+    const currentPageVMs = getCurrentPageVMs();
+    const allSelected = currentPageVMs.length > 0 && 
+        currentPageVMs.every(vm => selectedVMs.has(getVMKey(vm)));
+    const hasSelectedOnPage = currentPageVMs.length > 0 && 
+        currentPageVMs.some(vm => selectedVMs.has(getVMKey(vm)));
+    
+    // Update select all checkbox in toolbar
+    const selectAllCb = document.getElementById('selectAll');
+    if (selectAllCb) {
+        // Если все элементы на странице выбраны - чекбокс отмечен
+        // Если есть выбранные на странице, но не все - чекбокс в промежуточном состоянии (indeterminate)
+        // Если ничего не выбрано на странице - чекбокс не отмечен
+        selectAllCb.checked = allSelected;
+        selectAllCb.indeterminate = hasSelectedOnPage && !allSelected;
+    }
+}
+
+function getCurrentPageVMs() {
+    const start = (currentPageNum - 1) * pageSizeNum;
+    const end = start + pageSizeNum;
+    return filteredVMs.slice(start, end);
+}
+
+function getSelectedVMsData() {
+    return allVMs.filter(vm => selectedVMs.has(getVMKey(vm))).map(vm => ({
+        server_id: vm.server_id,
+        vmid: vm.vmid,
+        vm_type: vm.type,
+        name: vm.name,
+        node: vm.node
+    }));
+}
+
+// Track bulk operation items for status animation
+let bulkOperationItems = [];
+let bulkOperationAction = null;
+
+async function bulkAction(action) {
+    const items = getSelectedVMsData();
+    if (items.length === 0) {
+        showToast('{{ t("no_items_selected") }}', 'warning');
+        return;
+    }
+    
+    // Confirm for dangerous actions
+    const actionNames = {
+        start: '{{ t("start") }}',
+        stop: '{{ t("stop") }}',
+        restart: '{{ t("restart") }}',
+        shutdown: '{{ t("shutdown") }}',
+        delete: '{{ t("delete") }}'
+    };
+    
+    if (action === 'delete') {
+        const confirmed = await showConfirm(
+            `{{ t("confirm_bulk_delete") }}`,
+            `{{ t("confirm_bulk_delete_msg") }} ${items.length} {{ t("items") }}?`,
+            { isDanger: true }
+        );
+        if (!confirmed) return;
+    } else {
+        const confirmed = await showConfirm(
+            `${actionNames[action]} ${items.length} {{ t("items") }}?`,
+            `{{ t("confirm_bulk_operation_msg") }}`,
+            { isDanger: action === 'stop' }
+        );
+        if (!confirmed) return;
+    }
+    
+    try {
+        const response = await fetchWithAuth('/proxmox/api/bulk-operation', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action, items })
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to create bulk operation');
+        }
+        
+        const result = await response.json();
+        currentTaskId = result.task_id;
+        
+        // Store items and action for status animation
+        bulkOperationItems = items;
+        bulkOperationAction = action;
+        
+        // Show pending status with spinner for all selected items
+        console.log('[bulkAction] Setting pending status for items:', items);
+        items.forEach(item => {
+            console.log(`[bulkAction] Calling updateVMStatusUI for server_id=${item.server_id}, vmid=${item.vmid}, action=${action}`);
+            updateVMStatusUI(item.server_id, item.vmid, 'pending', action);
+        });
+        
+        // Show progress toast
+        showTaskProgress(action, items.length);
+        
+        // Start polling for progress
+        startTaskPolling(currentTaskId);
+        
+        // Clear selection
+        clearSelection();
+        
+    } catch (error) {
+        console.error('Bulk operation error:', error);
+        showToast(error.message, 'error');
+    }
+}
+
+function showTaskProgress(action, totalItems) {
+    const toast = document.getElementById('taskProgressToast');
+    const title = document.getElementById('taskProgressTitle');
+    const bar = document.getElementById('taskProgressBar');
+    const text = document.getElementById('taskProgressText');
+    const results = document.getElementById('taskProgressResults');
+    
+    const actionNames = {
+        start: '{{ t("starting") }}',
+        stop: '{{ t("stopping") }}',
+        restart: '{{ t("restarting") }}',
+        shutdown: '{{ t("shutting_down") }}',
+        delete: '{{ t("deleting") }}'
+    };
+    
+    title.textContent = `${actionNames[action] || action}...`;
+    bar.style.width = '0%';
+    bar.className = 'task-progress-bar';
+    text.textContent = `0 / ${totalItems}`;
+    results.innerHTML = '';
+    
+    toast.classList.remove('hidden');
+}
+
+// Track which VMs have already been updated in UI
+let processedBulkResults = new Set();
+
+function updateTaskProgress(task) {
+    const bar = document.getElementById('taskProgressBar');
+    const text = document.getElementById('taskProgressText');
+    const results = document.getElementById('taskProgressResults');
+    
+    const percent = task.progress_percent;
+    bar.style.width = `${percent}%`;
+    
+    const completed = task.completed_items + task.failed_items;
+    text.textContent = `${completed} / ${task.total_items} (${task.completed_items} ✓, ${task.failed_items} ✗)`;
+    
+    // Update VM statuses in real-time as results come in
+    if (task.results && task.results.length > 0) {
+        task.results.forEach(r => {
+            const resultKey = `${r.server_id}-${r.vmid}`;
+            if (!processedBulkResults.has(resultKey)) {
+                processedBulkResults.add(resultKey);
+                
+                // Determine final status based on action and success
+                if (r.success) {
+                    let newStatus;
+                    if (bulkOperationAction === 'start') {
+                        newStatus = 'running';
+                    } else if (bulkOperationAction === 'stop' || bulkOperationAction === 'shutdown') {
+                        newStatus = 'stopped';
+                    } else if (bulkOperationAction === 'restart') {
+                        newStatus = 'running';
+                    } else if (bulkOperationAction === 'delete') {
+                        // VM deleted, will be removed on refresh
+                        newStatus = 'stopped';
+                    }
+                    
+                    if (newStatus && r.server_id) {
+                        updateVMStatusUI(r.server_id, r.vmid, newStatus);
+                        // Also update action button
+                        const vm = allVMs.find(v => v.server_id === r.server_id && v.vmid === r.vmid);
+                        if (vm) {
+                            updateVMActionButton(r.server_id, r.vmid, vm.type, vm.node, newStatus);
+                        }
+                    }
+                } else {
+                    // Failed - revert to previous status
+                    if (r.server_id) {
+                        revertVMStatus(r.server_id, r.vmid);
+                    }
+                }
+            }
+        });
+        
+        // Update results list
+        results.innerHTML = task.results.map(r => `
+            <div class="task-result-item ${r.success ? 'success' : 'error'}">
+                ${r.success ? '✓' : '✗'} ${r.name} (${r.vmid}): ${r.message}
+            </div>
+        `).join('');
+    }
+    
+    if (task.status === 'completed') {
+        bar.classList.add(task.failed_items > 0 ? 'error' : 'success');
+        document.getElementById('taskProgressTitle').textContent = 
+            task.failed_items > 0 ? '{{ t("completed_with_errors") }}' : '{{ t("completed") }}';
+        stopTaskPolling();
+        // Clear bulk operation tracking
+        bulkOperationItems = [];
+        bulkOperationAction = null;
+        processedBulkResults.clear();
+        // Auto-hide progress toast after 3 seconds
+        setTimeout(() => {
+            hideTaskProgress();
+        }, 3000);
+        // Only reload for delete operations to remove deleted VMs from list
+        if (task.task_type && task.task_type.includes('delete')) {
+            loadAllVMs();
+        }
+    } else if (task.status === 'failed') {
+        bar.classList.add('error');
+        document.getElementById('taskProgressTitle').textContent = '{{ t("failed") }}';
+        stopTaskPolling();
+        // Revert all pending statuses
+        bulkOperationItems.forEach(item => {
+            revertVMStatus(item.server_id, item.vmid);
+        });
+        bulkOperationItems = [];
+        bulkOperationAction = null;
+        processedBulkResults.clear();
+        // Auto-hide progress toast after 3 seconds
+        setTimeout(() => {
+            hideTaskProgress();
+        }, 3000);
+    }
+}
+
+function hideTaskProgress() {
+    document.getElementById('taskProgressToast').classList.add('hidden');
+    stopTaskPolling();
+}
+
+function startTaskPolling(taskId) {
+    stopTaskPolling();
+    taskPollInterval = setInterval(async () => {
+        try {
+            const response = await fetchWithAuth(`/proxmox/api/tasks/${taskId}`);
+            if (response.ok) {
+                const task = await response.json();
+                updateTaskProgress(task);
+            }
+        } catch (error) {
+            console.error('Error polling task:', error);
+        }
+    }, 1000);
+}
+
+function stopTaskPolling() {
+    if (taskPollInterval) {
+        clearInterval(taskPollInterval);
+        taskPollInterval = null;
+    }
+}
+
+// Sync VMs from Proxmox servers
+async function syncVMs() {
+    const btn = document.getElementById('syncBtn');
+    const icon = document.getElementById('syncIcon');
+    
+    // Disable button and show loading
+    btn.disabled = true;
+    icon.style.animation = 'spin 1s linear infinite';
+    
+    try {
+        const response = await fetchWithAuth('/proxmox/api/sync-vms', {
+            method: 'POST'
+        });
+        
+        if (!response.ok) {
+            throw new Error('Sync failed');
+        }
+        
+        const result = await response.json();
+        showToast('success', '{{ t("success") }}', '{{ t("sync_completed") }}');
+        
+        // Reload VM list
+        await loadAllVMs();
+    } catch (error) {
+        console.error('Sync error:', error);
+        showToast('error', '{{ t("error") }}', '{{ t("sync_failed") }}');
+    } finally {
+        btn.disabled = false;
+        icon.style.animation = '';
+    }
+}
+
+// Load all VMs from all servers
+async function loadAllVMs() {
+    const tbody = document.getElementById('vmTableBody');
+    tbody.innerHTML = `
+        <tr>
+            <td colspan="11" class="vm-empty">
+                <div class="vm-empty-icon"><i class="fa-solid fa-spinner fa-spin"></i></div>
+                <div>{{ t('loading') }}...</div>
+            </td>
+        </tr>
+    `;
+    
+    try {
+        const response = await fetchWithAuth('/api/virtual-machines');
+        if (!response.ok) {
+            throw new Error('Failed to load VMs');
+        }
+        
+        allVMs = await response.json();
+        
+        // Apply filters without resetting page (page is restored from URL)
+        applyFilters(false);
+    } catch (error) {
+        console.error('Error loading VMs:', error);
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="11" class="vm-empty">
+                    <div class="vm-empty-icon"><i class="fa-solid fa-circle-xmark"></i></div>
+                    <div>${t('error_loading_data')}</div>
+                </td>
+            </tr>
+        `;
+    }
+}
+
+function updateTotalCount() {
+    document.getElementById('totalCount').textContent = filteredVMs.length;
+    const totalPages = Math.ceil(filteredVMs.length / pageSizeNum) || 1;
+    document.getElementById('totalPages').textContent = totalPages;
+    
+    // Update pagination buttons
+    document.getElementById('prevPage').disabled = currentPageNum <= 1;
+    document.getElementById('nextPage').disabled = currentPageNum >= totalPages;
+    
+    // Update stats
+    updateStats();
+}
+
+// Update running/stopped stats
+function updateStats() {
+    const running = allVMs.filter(vm => vm.status === 'running').length;
+    const stopped = allVMs.filter(vm => vm.status !== 'running').length;
+    document.getElementById('runningCount').textContent = running;
+    document.getElementById('stoppedCount').textContent = stopped;
+}
+
+function renderTable() {
+    const tbody = document.getElementById('vmTableBody');
+    
+    // Sort
+    const sorted = [...filteredVMs].sort((a, b) => {
+        let aVal = a[sortField] || '';
+        let bVal = b[sortField] || '';
+        
+        if (typeof aVal === 'string') aVal = aVal.toLowerCase();
+        if (typeof bVal === 'string') bVal = bVal.toLowerCase();
+        
+        if (sortDirection === 'asc') {
+            return aVal > bVal ? 1 : -1;
+        } else {
+            return aVal < bVal ? 1 : -1;
+        }
+    });
+    
+    // Paginate
+    const start = (currentPageNum - 1) * pageSizeNum;
+    const end = start + pageSizeNum;
+    const pageItems = sorted.slice(start, end);
+    
+    if (pageItems.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="11" class="vm-empty">
+                    <div class="vm-empty-icon">📭</div>
+                    <div>${t('no_vms_found')}</div>
+                </td>
+            </tr>
+        `;
+        return;
+    }
+    
+    tbody.innerHTML = pageItems.map(vm => {
+        const vmKey = `${vm.server_id}-${vm.vmid}`;
+        const isSelected = selectedVMs.has(vmKey);
+        return `
+        <tr id="vm-row-${vm.server_id}-${vm.vmid}" onclick="openVM(${vm.server_id}, ${vm.vmid}, '${vm.type}', '${vm.node}')" style="cursor: pointer;" class="${isSelected ? 'selected' : ''}">
+            <td onclick="event.stopPropagation();">
+                <input type="checkbox" class="vm-checkbox vm-row-checkbox" 
+                    data-vmid="${vm.vmid}" 
+                    data-server-id="${vm.server_id}"
+                    ${isSelected ? 'checked' : ''}
+                    onclick="toggleVMSelection(event, this, ${vm.server_id}, ${vm.vmid})">
+            </td>
+            <td>
+                <a href="/virtual-machines/${vm.server_id}/${vm.vmid}?type=${vm.type}&node=${vm.node}" class="vm-name" onclick="event.stopPropagation();">
+                    ${vm.name || 'VM-' + vm.vmid}
+                </a>
+            </td>
+            <td>${vm.vmid}</td>
+            <td>
+                <div class="vm-name-cell">
+                    <span>${vm.owner || '-'}</span>
+                    <span class="vm-hostname">${vm.owner_hostname || ''}</span>
+                </div>
+            </td>
+            <td>
+                <div class="vm-name-cell">
+                    <span>${vm.ip || '-'}</span>
+                    <span class="vm-hostname">${vm.ip_hostname || ''}</span>
+                </div>
+            </td>
+            <td>
+                <div class="vm-config">
+                    ${vm.os_template || vm.os || '-'}<br>
+                    <span style="color: var(--text-muted);">${vm.cores || 0} vCPU / ${formatMemory(vm.memory)} RAM / ${formatDisk(vm.disk)} (${t('total')})</span>
+                </div>
+            </td>
+            <td>
+                <a href="#" class="vm-cluster-link">${vm.server_name || vm.cluster || '-'}</a>
+            </td>
+            <td>
+                <span class="vm-type-badge ${vm.type}">${vm.type === 'qemu' ? 'KVM' : 'LXC'}</span>
+            </td>
+            <td>
+                <div class="vm-name-cell">
+                    <a href="#" class="vm-node-link">${vm.node}</a>
+                    <span class="vm-hostname">${vm.storage || 'Storage1 (DIR)'}</span>
+                </div>
+            </td>
+            <td>
+                <span id="vm-status-${vm.server_id}-${vm.vmid}" class="vm-status-badge ${vm.status}" data-status="${vm.status}">${vm.status === 'running' ? t('active') : t('inactive')}</span>
+            </td>
+            <td class="vm-actions-cell" onclick="event.stopPropagation();">
+                <button id="vm-action-btn-${vm.server_id}-${vm.vmid}" class="vm-action-btn" onclick="showVMActions(event, ${vm.server_id}, ${vm.vmid}, '${vm.type}', '${vm.node}', '${(vm.name || 'VM-' + vm.vmid).replace(/'/g, "\\'")}', '${vm.status}')">⋯</button>
+            </td>
+        </tr>
+    `}).join('');
+    
+    updateTotalCount();
+    updateSelectAllCheckbox();
+    updateBulkActionsBar();
+}
+
+function formatMemory(bytes) {
+    if (!bytes) return '0 MB';
+    const mb = bytes / (1024 * 1024);
+    if (mb >= 1024) {
+        return (mb / 1024).toFixed(0) + 'GB';
+    }
+    return mb.toFixed(0) + 'MB';
+}
+
+function formatDisk(bytes) {
+    if (!bytes) return '0 GB';
+    const gb = bytes / (1024 * 1024 * 1024);
+    return gb.toFixed(0) + 'GB';
+}
+
+function openVM(serverId, vmid, type, node) {
+    window.location.href = `/virtual-machines/${serverId}/${vmid}?type=${type}&node=${node}`;
+}
+
+function sortBy(field) {
+    if (sortField === field) {
+        sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+    } else {
+        sortField = field;
+        sortDirection = 'asc';
+    }
+    
+    // Save to URL
+    updateUrlParams({ sort: sortField, dir: sortDirection });
+    
+    // Update sort indicators
+    document.querySelectorAll('.vm-table th').forEach(th => {
+        th.classList.remove('sorted');
+    });
+    
+    renderTable();
+}
+
+function changePageSize(size) {
+    pageSizeNum = parseInt(size);
+    currentPageNum = 1;
+    document.getElementById('currentPage').value = 1;
+    updateUrlParams({ pageSize: size, page: '1' });
+    renderTable();
+}
+
+function prevPage() {
+    if (currentPageNum > 1) {
+        currentPageNum--;
+        document.getElementById('currentPage').value = currentPageNum;
+        updateUrlParams({ page: String(currentPageNum) });
+        renderTable();
+    }
+}
+
+function nextPage() {
+    const totalPages = Math.ceil(filteredVMs.length / pageSizeNum);
+    if (currentPageNum < totalPages) {
+        currentPageNum++;
+        document.getElementById('currentPage').value = currentPageNum;
+        updateUrlParams({ page: String(currentPageNum) });
+        renderTable();
+    }
+}
+
+function goToPage(page) {
+    const totalPages = Math.ceil(filteredVMs.length / pageSizeNum);
+    page = parseInt(page);
+    if (page >= 1 && page <= totalPages) {
+        currentPageNum = page;
+        updateUrlParams({ page: String(currentPageNum) });
+        renderTable();
+    }
+}
+
+
+
+function applyFilters(resetPage = true) {
+    filteredVMs = allVMs.filter(vm => {
+        // Type filter
+        if (currentTypeFilter && vm.type !== currentTypeFilter) {
+            return false;
+        }
+        
+        // Status filter
+        if (currentStatusFilter && vm.status !== currentStatusFilter) {
+            return false;
+        }
+        
+        // Search filter
+        if (currentSearchQuery) {
+            const query = currentSearchQuery.toLowerCase();
+            const searchFields = [
+                vm.name,
+                vm.hostname,
+                String(vm.vmid),
+                vm.ip,
+                vm.owner,
+                vm.node,
+                vm.cluster,
+                vm.server_name
+            ].filter(Boolean).map(f => f.toLowerCase());
+            
+            if (!searchFields.some(f => f.includes(query))) {
+                return false;
+            }
+        }
+        
+        return true;
+    });
+    
+    if (resetPage) {
+        currentPageNum = 1;
+        document.getElementById('currentPage').value = 1;
+    } else {
+        // Ensure current page is valid after filtering
+        const totalPages = Math.ceil(filteredVMs.length / pageSizeNum) || 1;
+        if (currentPageNum > totalPages) {
+            currentPageNum = totalPages;
+            document.getElementById('currentPage').value = currentPageNum;
+        }
+    }
+    updateTotalCount();
+    renderTable();
+}
+
+function filterByType(type) {
+    currentTypeFilter = type;
+    updateUrlParams({ type: type, page: '1' });
+    applyFilters();
+}
+
+function filterByStatus(status) {
+    currentStatusFilter = status;
+    updateUrlParams({ status: status, page: '1' });
+    applyFilters();
+}
+
+function searchVMs(query) {
+    currentSearchQuery = query;
+    updateUrlParams({ search: query, page: '1' });
+    applyFilters();
+}
+
+function toggleFilters() {
+    // Legacy - now using inline filters
+}
+
+function switchVMTab(tab) {
+    document.querySelectorAll('.vm-tab').forEach(t => t.classList.remove('active'));
+    document.querySelector(`.vm-tab[data-tab="${tab}"]`).classList.add('active');
+    
+    const vmContent = document.querySelector('.vm-toolbar');
+    const vmTable = document.querySelector('.vm-table-wrapper');
+    const bulkBar = document.getElementById('bulkActionsBar');
+    const snapshotsContent = document.getElementById('snapshotsTabContent');
+    
+    if (tab === 'vms') {
+        // Show VMs content
+        if (vmContent) vmContent.style.display = '';
+        if (vmTable) vmTable.style.display = '';
+        if (bulkBar) bulkBar.style.display = '';
+        if (snapshotsContent) snapshotsContent.style.display = 'none';
+        loadAllVMs();
+    } else if (tab === 'snapshots') {
+        // Show Snapshots content
+        if (vmContent) vmContent.style.display = 'none';
+        if (vmTable) vmTable.style.display = 'none';
+        if (bulkBar) bulkBar.style.display = 'none';
+        if (snapshotsContent) snapshotsContent.style.display = 'block';
+        initSnapshotsTab();
+    }
+}
+
+function showVMActions(event, serverId, vmid, type, node, vmName, status) {
+    event.stopPropagation();
+    
+    // Close any existing menu
+    const existingMenu = document.getElementById('vmContextMenu');
+    if (existingMenu) {
+        existingMenu.remove();
+    }
+    
+    // Create context menu
+    const menu = document.createElement('div');
+    menu.id = 'vmContextMenu';
+    menu.className = 'vm-context-menu';
+    
+    const isRunning = status === 'running';
+    
+    menu.innerHTML = `
+        ${isRunning ? `
+            <div class="vm-context-menu-item" onclick="vmAction('stop', ${serverId}, ${vmid}, '${type}', '${node}', '${vmName}')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12"></rect></svg>
+                <span>{{ t('stop') }}</span>
+            </div>
+            <div class="vm-context-menu-item" onclick="vmAction('restart', ${serverId}, ${vmid}, '${type}', '${node}', '${vmName}')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+                <span>{{ t('restart') }}</span>
+            </div>
+        ` : `
+            <div class="vm-context-menu-item" onclick="vmAction('start', ${serverId}, ${vmid}, '${type}', '${node}', '${vmName}')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                <span>{{ t('start') }}</span>
+            </div>
+        `}
+        <div class="vm-context-menu-divider"></div>
+        <div class="vm-context-menu-item" onclick="openVNCConsole(${serverId}, ${vmid}, '${type}', '${node}', '${vmName}')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+            <span>VNC {{ t('console') }}</span>
+        </div>
+        <div class="vm-context-menu-item" onclick="openVMSettings(${serverId}, ${vmid}, '${type}', '${node}')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+            <span>{{ t('settings') }}</span>
+        </div>
+        <div class="vm-context-menu-divider"></div>
+        <div class="vm-context-menu-item" onclick="reinstallVM(${serverId}, ${vmid}, '${type}', '${node}', '${vmName}')" data-permission="vms.reinstall">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><polyline points="23 20 23 14 17 14"></polyline><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path></svg>
+            <span>{{ t('reinstall') }}</span>
+        </div>
+        <div class="vm-context-menu-item danger" onclick="confirmDeleteVM(${serverId}, ${vmid}, '${type}', '${node}', '${vmName}')" data-permission="vms.delete">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
+            <span>{{ t('delete') }}</span>
+        </div>
+    `;
+    
+    document.body.appendChild(menu);
+    
+    // Apply permissions to menu items
+    if (window.applyPermissions) {
+        window.applyPermissions();
+    }
+    
+    // Position menu
+    const rect = event.target.getBoundingClientRect();
+    menu.style.top = `${rect.bottom + 5}px`;
+    menu.style.left = `${rect.left - menu.offsetWidth + rect.width}px`;
+    
+    // Adjust if menu goes off screen
+    const menuRect = menu.getBoundingClientRect();
+    if (menuRect.right > window.innerWidth) {
+        menu.style.left = `${window.innerWidth - menuRect.width - 10}px`;
+    }
+    if (menuRect.bottom > window.innerHeight) {
+        menu.style.top = `${rect.top - menuRect.height - 5}px`;
+    }
+    
+    // Close menu when clicking outside
+    setTimeout(() => {
+        document.addEventListener('click', closeVMContextMenu);
+    }, 10);
+}
+
+function closeVMContextMenu() {
+    const menu = document.getElementById('vmContextMenu');
+    if (menu) {
+        menu.remove();
+    }
+    document.removeEventListener('click', closeVMContextMenu);
+}
+
+async function vmAction(action, serverId, vmid, type, node, vmName) {
+    closeVMContextMenu();
+    
+    const actionLabels = {
+        'start': '{{ t("starting") }}',
+        'stop': '{{ t("stopping") }}',
+        'restart': '{{ t("restarting") }}'
+    };
+    
+    // Show pending status
+    updateVMStatusUI(serverId, vmid, 'pending', action);
+    showToast('info', '{{ t("info") }}', `${actionLabels[action] || action} ${vmName}...`);
+    
+    try {
+        // Use correct API path based on type (qemu->vm, lxc->container)
+        const apiType = type === 'lxc' ? 'container' : 'vm';
+        const response = await fetchWithAuth(`/proxmox/api/${serverId}/${apiType}/${vmid}/${action}?node=${node}`, {
+            method: 'POST'
+        });
+        
+        if (response.ok) {
+            showToast('success', '{{ t("success") }}', `${vmName} - ${action} {{ t("completed") }}`);
+            // Poll for actual status update instead of reloading whole table
+            pollVMStatus(serverId, vmid, type, node, action);
+        } else {
+            const data = await response.json();
+            showToast('error', '{{ t("error") }}', data.detail || '{{ t("operation_failed") }}');
+            // Revert to previous status on error
+            revertVMStatus(serverId, vmid);
+        }
+    } catch (error) {
+        console.error('VM action error:', error);
+        showToast('error', '{{ t("error") }}', '{{ t("operation_failed") }}');
+        revertVMStatus(serverId, vmid);
+    }
+}
+
+// Update VM status in UI without reloading table
+function updateVMStatusUI(serverId, vmid, status, action = null) {
+    const elementId = `vm-status-${serverId}-${vmid}`;
+    const statusEl = document.getElementById(elementId);
+    console.log(`[updateVMStatusUI] Looking for element: ${elementId}, found: ${!!statusEl}, status: ${status}, action: ${action}`);
+    if (!statusEl) {
+        console.warn(`[updateVMStatusUI] Element not found: ${elementId}`);
+        return;
+    }
+    
+    // Store previous status for revert
+    if (!statusEl.dataset.prevStatus && statusEl.dataset.status) {
+        statusEl.dataset.prevStatus = statusEl.dataset.status;
+    }
+    
+    // Update status badge
+    statusEl.className = `vm-status-badge ${status}`;
+    statusEl.dataset.status = status;
+    
+    if (status === 'pending') {
+        const actionLabel = action === 'start' ? '{{ t("starting") }}' : 
+                           action === 'stop' ? '{{ t("stopping") }}' : 
+                           action === 'restart' ? '{{ t("restarting") }}' :
+                           action === 'shutdown' ? '{{ t("shutting_down") }}' : '...';
+        statusEl.innerHTML = `<span class="status-spinner"></span> ${actionLabel}`;
+        console.log(`[updateVMStatusUI] Set pending with spinner: ${statusEl.innerHTML}`);
+    } else if (status === 'running') {
+        statusEl.textContent = t('active');
+    } else {
+        statusEl.textContent = t('inactive');
+    }
+    
+    // Also update in allVMs array
+    const vm = allVMs.find(v => v.server_id === serverId && v.vmid === vmid);
+    if (vm && status !== 'pending') {
+        vm.status = status;
+        // Re-apply filters to update filtered list and stats
+        applyFiltersWithoutReset();
+    }
+}
+
+// Apply filters without resetting page
+function applyFiltersWithoutReset() {
+    filteredVMs = allVMs.filter(vm => {
+        // Type filter
+        if (currentTypeFilter && vm.type !== currentTypeFilter) {
+            return false;
+        }
+        
+        // Status filter
+        if (currentStatusFilter && vm.status !== currentStatusFilter) {
+            return false;
+        }
+        
+        // Search filter
+        if (currentSearchQuery) {
+            const query = currentSearchQuery.toLowerCase();
+            const searchFields = [
+                vm.name,
+                vm.hostname,
+                String(vm.vmid),
+                vm.ip,
+                vm.owner,
+                vm.node,
+                vm.cluster,
+                vm.server_name
+            ].filter(Boolean).map(f => f.toLowerCase());
+            
+            if (!searchFields.some(f => f.includes(query))) {
+                return false;
+            }
+        }
+        
+        return true;
+    });
+    
+    // Just update counts and stats, keep current page
+    document.getElementById('totalCount').textContent = filteredVMs.length;
+    updateStats();
+    // Re-render table to update visible rows
+    renderTable();
+}
+
+// Revert VM status on error
+function revertVMStatus(serverId, vmid) {
+    const statusEl = document.getElementById(`vm-status-${serverId}-${vmid}`);
+    if (!statusEl || !statusEl.dataset.prevStatus) return;
+    
+    updateVMStatusUI(serverId, vmid, statusEl.dataset.prevStatus);
+    delete statusEl.dataset.prevStatus;
+}
+
+// Poll VM status until it changes
+async function pollVMStatus(serverId, vmid, type, node, action, attempts = 0, phase = 'initial') {
+    const maxAttempts = 30;
+    const pollInterval = 1500;
+    
+    if (attempts >= maxAttempts) {
+        loadAllVMs();
+        return;
+    }
+    
+    try {
+        const apiType = type === 'lxc' ? 'container' : 'vm';
+        const response = await fetchWithAuth(`/proxmox/api/${serverId}/${apiType}/${vmid}/status?node=${node}`);
+        
+        if (response && response.ok) {
+            const data = await response.json();
+            const newStatus = data.status || 'stopped';
+            
+            // For restart, we need to wait for stopped first, then running
+            if (action === 'restart') {
+                if (phase === 'initial' && newStatus === 'stopped') {
+                    updateVMStatusUI(serverId, vmid, 'pending', 'restart');
+                    setTimeout(() => pollVMStatus(serverId, vmid, type, node, action, 0, 'restarting'), pollInterval);
+                    return;
+                } else if (phase === 'restarting' && newStatus === 'running') {
+                    updateVMStatusUI(serverId, vmid, newStatus);
+                    updateVMActionButton(serverId, vmid, type, node, newStatus);
+                    return;
+                }
+            } else {
+                const expectedStatus = action === 'start' ? 'running' : 
+                                       action === 'stop' ? 'stopped' : null;
+                
+                if (expectedStatus && newStatus === expectedStatus) {
+                    updateVMStatusUI(serverId, vmid, newStatus);
+                    updateVMActionButton(serverId, vmid, type, node, newStatus);
+                    return;
+                }
+            }
+            
+            // Continue polling
+            setTimeout(() => pollVMStatus(serverId, vmid, type, node, action, attempts + 1, phase), pollInterval);
+        } else {
+            setTimeout(() => pollVMStatus(serverId, vmid, type, node, action, attempts + 1, phase), pollInterval);
+        }
+    } catch (error) {
+        setTimeout(() => pollVMStatus(serverId, vmid, type, node, action, attempts + 1, phase), pollInterval);
+    }
+}
+
+// Update action button with new status for context menu
+function updateVMActionButton(serverId, vmid, type, node, newStatus) {
+    const btn = document.getElementById(`vm-action-btn-${serverId}-${vmid}`);
+    if (btn) {
+        const vm = allVMs.find(v => v.server_id === serverId && v.vmid === vmid);
+        const vmName = vm ? (vm.name || 'VM-' + vmid).replace(/'/g, "\\'") : 'VM-' + vmid;
+        btn.onclick = function(event) {
+            showVMActions(event, serverId, vmid, type, node, vmName, newStatus);
+        };
+    }
+}
+
+async function openVNCConsole(serverId, vmid, type, node, vmName) {
+    closeVMContextMenu();
+    
+    const modal = document.getElementById('vncModal');
+    const vncContent = document.getElementById('vncContent');
+    
+    modal.style.display = 'flex';
+    document.getElementById('vncTitle').innerHTML = `<i class="fa-solid fa-display"></i> VNC: ${vmName}`;
+    vncContent.innerHTML = `<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i>&nbsp; {{ t('connecting') }}...</div>`;
+    
+    try {
+        // Wait for RFB to be loaded
+        const RFBClass = await window.waitForRFB();
+        if (!RFBClass) {
+            throw new Error('noVNC not loaded');
+        }
+        
+        // Use correct API path based on type (qemu->vm, lxc->container)
+        const apiType = type === 'lxc' ? 'container' : 'vm';
+        const response = await fetchWithAuth(`/proxmox/api/${serverId}/${apiType}/${vmid}/vnc?node=${node}`);
+        
+        if (!response) {
+            throw new Error('Not authenticated');
+        }
+        
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail || `HTTP ${response.status}`);
+        }
+        
+        const vncData = await response.json();
+        vncContent.innerHTML = '';
+        
+        // Create WebSocket URL
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsHost = window.location.host;
+        const resourceType = vncData.type === 'qemu' ? 'vm' : 'container';
+        
+        const wsUrl = `${protocol}//${wsHost}/proxmox/ws/vnc/${serverId}/${vncData.node}/${resourceType}/${vmid}?port=${vncData.port}&vncticket=${encodeURIComponent(vncData.ticket)}&auth_ticket=${encodeURIComponent(vncData.auth_ticket)}&vnc_password=${encodeURIComponent(vncData.password || '')}`;
+        
+        const ws = new WebSocket(wsUrl);
+        
+        ws.addEventListener('message', function onFirstMessage(event) {
+            const vncPassword = event.data;
+            ws.removeEventListener('message', onFirstMessage);
+            
+            window.vncConnection = new RFBClass(vncContent, ws, {
+                credentials: { password: vncPassword }
+            });
+            
+            window.vncConnection.scaleViewport = true;
+            window.vncConnection.resizeSession = true;
+            
+            window.vncConnection.addEventListener('connect', () => {
+                setTimeout(() => {
+                    if (window.vncConnection && window.vncConnection._display) {
+                        window.vncConnection._display.autoscale(vncContent.clientWidth, vncContent.clientHeight);
+                    }
+                }, 500);
+            });
+            
+            window.vncConnection.addEventListener('credentialsrequired', (e) => {
+                window.vncConnection.sendCredentials({ password: vncPassword });
+            });
+            
+            window.vncConnection.addEventListener('disconnect', (e) => {
+                vncContent.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-muted);">{{ t("connection_closed") }}</div>';
+            });
+        });
+        
+        ws.addEventListener('error', (err) => {
+            vncContent.innerHTML = `<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: var(--danger);">{{ t("connection_error") }}</div>`;
+        });
+        
+    } catch (error) {
+        console.error('VNC error:', error);
+        vncContent.innerHTML = `<div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: var(--text-muted); gap: 1rem;">
+            <div style="color: var(--danger);"><i class="fa-solid fa-triangle-exclamation"></i> ${error.message}</div>
+            <button onclick="closeVNCModal()" class="btn btn-secondary">{{ t('close') }}</button>
+        </div>`;
+    }
+}
+
+function closeVNCModal() {
+    const modal = document.getElementById('vncModal');
+    modal.style.display = 'none';
+    
+    if (window.vncConnection) {
+        window.vncConnection.disconnect();
+        window.vncConnection = null;
+    }
+}
+
+function openVMSettings(serverId, vmid, type, node) {
+    closeVMContextMenu();
+    // Store context for modal
+    window.currentVMContext = { serverId, vmid, type, node };
+    showSettingsModal(serverId, vmid, type, node);
+}
+
+function reinstallVM(serverId, vmid, type, node, vmName) {
+    closeVMContextMenu();
+    // Store context for modal
+    window.currentVMContext = { serverId, vmid, type, node, vmName };
+    showReinstallModal(serverId, vmid, type, node, vmName);
+}
+
+function confirmDeleteVM(serverId, vmid, type, node, vmName) {
+    closeVMContextMenu();
+    
+    // Check permission before showing modal
+    if (!window.hasPermission('vms.delete')) {
+        showToast('error', '{{ t("error") }}', '{{ t("no_permission") }}');
+        return;
+    }
+    
+    // Store context for modal
+    window.currentVMContext = { serverId, vmid, type, node, vmName };
+    showDeleteConfirmModal(vmName, vmid);
+}
+
+function showDeleteConfirmModal(vmName, vmid) {
+    document.getElementById('deleteConfirmVMName').textContent = vmName;
+    document.getElementById('deleteConfirmVMID').textContent = vmid;
+    document.getElementById('deleteConfirmModal').style.display = 'flex';
+}
+
+function closeDeleteConfirmModal() {
+    document.getElementById('deleteConfirmModal').style.display = 'none';
+}
+
+async function executeDelete() {
+    const ctx = window.currentVMContext;
+    
+    if (!ctx) {
+        showToast('error', '{{ t("error") }}', 'No VM context');
+        return;
+    }
+    
+    // Double-check permission
+    if (!window.hasPermission('vms.delete')) {
+        closeDeleteConfirmModal();
+        showToast('error', '{{ t("error") }}', '{{ t("no_permission") }}');
+        return;
+    }
+    
+    closeDeleteConfirmModal();
+    showToast('info', '{{ t("info") }}', `{{ t("deleting") }} ${ctx.vmName}...`);
+    
+    try {
+        const apiType = ctx.type === 'lxc' ? 'container' : 'vm';
+        const url = `/proxmox/api/${ctx.serverId}/${apiType}/${ctx.vmid}?node=${ctx.node}`;
+        
+        const response = await fetchWithAuth(url, {
+            method: 'DELETE'
+        });
+        
+        if (response && response.ok) {
+            showToast('success', '{{ t("success") }}', `${ctx.vmName} {{ t("deleted") }}`);
+            // Remove from local arrays and re-render (use == for type coercion)
+            allVMs = allVMs.filter(vm => !(vm.server_id == ctx.serverId && vm.vmid == ctx.vmid));
+            filteredVMs = filteredVMs.filter(vm => !(vm.server_id == ctx.serverId && vm.vmid == ctx.vmid));
+            renderTable();
+        } else if (response) {
+            const data = await response.json().catch(() => ({}));
+            let errorMsg = data.detail || '{{ t("delete_failed") }}';
+            
+            // Check for permission error from server
+            if (response.status === 403) {
+                errorMsg = '{{ t("no_permission") }}';
+            }
+            
+            showToast('error', '{{ t("error") }}', errorMsg);
+        } else {
+            showToast('error', '{{ t("error") }}', '{{ t("delete_failed") }}');
+        }
+    } catch (error) {
+        showToast('error', '{{ t("error") }}', error.message || '{{ t("delete_failed") }}');
+    }
+}
+
+// Get unique servers from loaded VMs
+function getUniqueServers() {
+    const serversMap = new Map();
+    allVMs.forEach(vm => {
+        if (!serversMap.has(vm.server_id)) {
+            serversMap.set(vm.server_id, {
+                id: vm.server_id,
+                name: vm.server_name || vm.cluster
+            });
+        }
+    });
+    return Array.from(serversMap.values());
+}
+
+// ============================================
+// IPAM NETWORKS (shared for both VM and LXC)
+// ============================================
+let ipamNetworks = [];
+
+async function loadIPAMNetworks() {
+    try {
+        const response = await fetchWithAuth('/ipam/api/networks?is_active=true', { hideOnForbidden: true });
+        if (response && response.ok) {
+            ipamNetworks = await response.json();
+        } else {
+            ipamNetworks = [];
+        }
+    } catch (error) {
+        console.warn('Failed to load IPAM networks:', error);
+        ipamNetworks = [];
+    }
+    return ipamNetworks;
+}
+
+function buildIPAMNetworkOptions() {
+    if (!ipamNetworks || ipamNetworks.length === 0) {
+        return '<option value="">{{ t("no_ipam") }}</option>';
+    }
+    let options = '<option value="">{{ t("no_ipam") }}</option>';
+    for (const net of ipamNetworks) {
+        const available = net.available_ips || 0;
+        const utilization = net.utilization_percent || 0;
+        const cidr = net.network || net.cidr || '';
+        options += `<option value="${net.id}" data-gateway="${net.gateway || ''}" data-cidr="${cidr}">${net.name} (${cidr}) - ${available} {{ t("available") }} (${utilization}%)</option>`;
+    }
+    return options;
+}
+
+// Check if server is in cluster mode (HA available)
+async function checkServerClusterMode(serverId) {
+    try {
+        const response = await fetchWithAuth(`/proxmox/api/servers/${serverId}/cluster-info`);
+        if (response.ok) {
+            const data = await response.json();
+            return data.is_cluster === true;
+        }
+    } catch (e) {
+        console.warn('Could not check cluster mode:', e);
+    }
+    return false;
+}
+
+// Update HA option visibility based on cluster mode
+function updateHAOptionVisibility(isCluster, prefix = 'vm') {
+    const haOption = document.getElementById(`${prefix}HAOption`);
+    if (haOption) {
+        haOption.style.display = isCluster ? 'flex' : 'none';
+    }
+    // Uncheck HA if not in cluster
+    if (!isCluster) {
+        const haCheckbox = document.getElementById(`${prefix}EnableHA`);
+        if (haCheckbox) haCheckbox.checked = false;
+    }
+}
+
+// ============================================
+// CREATE VM MODAL
+// ============================================
+let createVMServerId = null;
+let createVMStorages = [];
+let createVMNodes = [];
+
+function showCreateVMModal() {
+    const modal = document.getElementById('createVMModal');
+    document.getElementById('createVMModalTitle').innerHTML = '<i class="fa-solid fa-plus"></i> {{ t("create_vm") }}';
+    document.getElementById('createVMContent').innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> {{ t("loading") }}...</div>';
+    modal.style.display = 'flex';
+    
+    loadCreateVMForm();
+}
+
+async function loadCreateVMForm() {
+    const content = document.getElementById('createVMContent');
+    
+    try {
+        // Load templates for all servers FIRST
+        const templatesResponse = await fetchWithAuth('/templates/api/templates');
+        const allTemplates = templatesResponse.ok ? await templatesResponse.json() : [];
+        
+        // Load template groups
+        const groupsResponse = await fetchWithAuth('/templates/api/groups');
+        const groups = groupsResponse.ok ? await groupsResponse.json() : [];
+        
+        if (allTemplates.length === 0) {
+            content.innerHTML = `
+                <div style="text-align: center; padding: 2rem;">
+                    <div style="font-size: 3rem; margin-bottom: 1rem; color: var(--text-muted);"><i class="fa-solid fa-box-open"></i></div>
+                    <p style="color: var(--text-secondary);">{{ t('no_templates') }}</p>
+                    <p style="color: var(--text-muted); font-size: 0.875rem; margin-top: 0.5rem;">
+                        {{ t('go_to') }} <a href="/templates" style="color: var(--accent);">{{ t('nav_templates') }}</a> {{ t('and_add_templates') }}
+                    </p>
+                    <button onclick="closeCreateVMModal()" class="btn" style="margin-top: 1rem;">{{ t('close') }}</button>
+                </div>`;
+            return;
+        }
+        
+        // Build servers map from templates (only servers with templates)
+        const serversMap = new Map();
+        allTemplates.forEach(t => {
+            if (!serversMap.has(t.server_id)) {
+                serversMap.set(t.server_id, {
+                    id: t.server_id,
+                    name: t.server_name || `Server ${t.server_id}`
+                });
+            }
+        });
+        const allServers = Array.from(serversMap.values());
+        
+        // Use first server with templates
+        createVMServerId = allServers[0].id;
+        
+        // Filter templates for selected server
+        const vmTemplates = allTemplates.filter(t => t.server_id === createVMServerId);
+        
+        // Build server options
+        let serverOptions = allServers.map(s => 
+            `<option value="${s.id}" ${s.id === createVMServerId ? 'selected' : ''}>${s.name}</option>`
+        ).join('');
+        
+        // Build template options grouped by category
+        let templateOptions = buildTemplateOptions(groups, vmTemplates);
+        
+        // Load nodes for first server
+        await loadNodesForServer(createVMServerId);
+        
+        // Determine the node where templates are located
+        const templateNodes = [...new Set(vmTemplates.map(t => t.node || t.source_node).filter(Boolean))];
+        const preferredNode = templateNodes.length > 0 ? templateNodes[0] : null;
+        
+        let nodeOptions = createVMNodes.map((n) => {
+            const isPreferred = preferredNode && n.node === preferredNode;
+            return `<option value="${n.node}" ${isPreferred ? 'selected' : ''}>${n.node} ${n.status === 'online' ? '' : '(offline)'}</option>`;
+        }).join('');
+        if (!nodeOptions) nodeOptions = '<option value="">{{ t("auto") }}</option>';
+        
+        // Store preferred node for later use
+        window.templatePreferredNode = preferredNode;
+        
+        // Load storages for the preferred node
+        await loadStoragesForServer(createVMServerId, preferredNode);
+        let storageOptions = createVMStorages.map((s, idx) => 
+            `<option value="${s.storage}" ${idx === 0 ? 'selected' : ''}>${s.storage}</option>`
+        ).join('');
+        if (!storageOptions) storageOptions = '<option value="local-lvm">local-lvm</option>';
+        
+        // Load IPAM networks
+        await loadIPAMNetworks();
+        let ipamOptions = buildIPAMNetworkOptions();
+        
+        // Check if server is in cluster mode (for HA option visibility)
+        let isCluster = await checkServerClusterMode(createVMServerId);
+        window.currentServerIsCluster = isCluster;
+        
+        content.innerHTML = `
+            <form id="createVMForm" onsubmit="executeCreateVM(event)">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                    <div class="form-group">
+                        <label>{{ t('server') }} *</label>
+                        <select id="vmServerSelect" onchange="onVMServerChange(this.value)" class="form-control">
+                            ${serverOptions}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>{{ t('target_node') }}</label>
+                        <select id="vmNodeSelect" class="form-control">
+                            <option value="">{{ t('auto') }}</option>
+                            ${nodeOptions}
+                        </select>
+                    </div>
+                    <div class="form-group" style="grid-column: 1 / -1;">
+                        <label>{{ t('os_template') }} *</label>
+                        <select id="vmTemplateSelect" required onchange="onVMTemplateChange()" class="form-control">
+                            ${templateOptions}
+                        </select>
+                    </div>
+                    <div class="form-group" style="grid-column: 1 / -1;">
+                        <label>{{ t('vm_name') }} *</label>
+                        <input type="text" id="vmNameInput" required placeholder="my-server" pattern="[a-zA-Z0-9\\-_]+" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label>CPU ({{ t('cores') }})</label>
+                        <input type="number" id="vmCoresInput" min="1" max="128" value="1" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label>{{ t('memory') }} (MB)</label>
+                        <input type="number" id="vmMemoryInput" min="128" step="128" value="1024" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label>{{ t('disk') }} (GB)</label>
+                        <input type="number" id="vmDiskInput" min="1" value="10" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label>{{ t('storage') }}</label>
+                        <select id="vmStorageSelect" class="form-control">
+                            ${storageOptions}
+                        </select>
+                    </div>
+                    <div class="form-group" style="grid-column: 1 / -1;">
+                        <label><i class="fa-solid fa-network-wired"></i> {{ t('ipam_network') }}</label>
+                        <select id="vmIPAMNetworkSelect" onchange="onVMIPAMNetworkChange()" class="form-control">
+                            ${ipamOptions}
+                        </select>
+                        <small style="color: var(--text-muted); font-size: 0.8rem;">{{ t('select_network_for_auto_ip') }}</small>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 1rem; display: flex; flex-direction: column; gap: 0.75rem;">
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                        <input type="checkbox" id="vmStartAfterCreate" checked>
+                        {{ t('start_after_create') }}
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                        <input type="checkbox" id="vmOnboot">
+                        <i class="fa-solid fa-power-off" style="color: var(--text-muted);"></i>
+                        {{ t('autostart_on_boot') }}
+                    </label>
+                    <label id="vmHAOption" style="display: ${isCluster ? 'flex' : 'none'}; align-items: center; gap: 0.5rem; cursor: pointer;">
+                        <input type="checkbox" id="vmEnableHA">
+                        <i class="fa-solid fa-shield-halved" style="color: var(--text-muted);"></i>
+                        {{ t('high_availability') }}
+                        <small style="color: var(--success); font-size: 0.75rem; margin-left: 0.5rem;"><i class="fa-solid fa-check-circle"></i> {{ t('cluster_detected') }}</small>
+                    </label>
+                </div>
+                
+                <div id="createVMStatus" style="display: none; margin-top: 1rem; padding: 1rem; border-radius: 6px;"></div>
+                
+                <div style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
+                    <button type="button" onclick="closeCreateVMModal()" class="btn btn-secondary">{{ t('cancel') }}</button>
+                    <button type="submit" id="createVMBtn" class="btn btn-success"><i class="fa-solid fa-rocket"></i> {{ t('create') }}</button>
+                </div>
+            </form>
+        `;
+        
+        // Store templates for later use
+        window.allVMTemplates = allTemplates;
+        window.templateGroups = groups;
+        
+    } catch (error) {
+        console.error('Error loading create VM form:', error);
+        content.innerHTML = `
+            <div style="text-align: center; padding: 2rem;">
+                <div style="font-size: 2rem; margin-bottom: 1rem; color: var(--warning);"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                <p style="color: var(--text-secondary);">${error.message}</p>
+                <button onclick="closeCreateVMModal()" class="btn" style="margin-top: 1rem;">{{ t('close') }}</button>
+            </div>`;
+    }
+}
+
+function buildTemplateOptions(groups, templates) {
+    if (!templates || templates.length === 0) {
+        return '<option value="">{{ t("no_templates") }}</option>';
+    }
+    
+    // Group templates by group_id
+    const grouped = {};
+    const usedTemplateIds = new Set();
+    
+    templates.forEach(t => {
+        const gid = t.group_id || 'other';
+        if (!grouped[gid]) grouped[gid] = [];
+        grouped[gid].push(t);
+    });
+    
+    let html = '<option value="">{{ t("select_template") }}</option>';
+    
+    // Add templates by groups
+    if (groups && groups.length > 0) {
+        groups.forEach(g => {
+            if (grouped[g.id] && grouped[g.id].length > 0) {
+                html += `<optgroup label="${g.name}">`;
+                grouped[g.id].forEach(t => {
+                    html += `<option value="${t.id}" data-cores="${t.default_cores}" data-memory="${t.default_memory}" data-disk="${t.default_disk}">${t.name}</option>`;
+                    usedTemplateIds.add(t.id);
+                });
+                html += '</optgroup>';
+            }
+        });
+    }
+    
+    // Add ungrouped templates (group_id is null or group not found)
+    const ungroupedTemplates = templates.filter(t => !usedTemplateIds.has(t.id));
+    if (ungroupedTemplates.length > 0) {
+        html += '<optgroup label="{{ t("other") }}">';
+        ungroupedTemplates.forEach(t => {
+            html += `<option value="${t.id}" data-cores="${t.default_cores}" data-memory="${t.default_memory}" data-disk="${t.default_disk}">${t.name}</option>`;
+        });
+        html += '</optgroup>';
+    }
+    
+    return html;
+}
+
+async function onVMServerChange(serverId) {
+    createVMServerId = parseInt(serverId);
+    
+    // Reload templates for this server first to determine the node
+    const vmTemplates = (window.allVMTemplates || []).filter(t => t.server_id === createVMServerId);
+    
+    // Determine the node where templates are located
+    const templateNodes = [...new Set(vmTemplates.map(t => t.node || t.source_node).filter(Boolean))];
+    const preferredNode = templateNodes.length > 0 ? templateNodes[0] : null;
+    window.templatePreferredNode = preferredNode;
+    
+    // Check cluster mode and update HA option visibility
+    const isCluster = await checkServerClusterMode(createVMServerId);
+    window.currentServerIsCluster = isCluster;
+    updateHAOptionVisibility(isCluster, 'vm');
+    
+    // Reload nodes
+    await loadNodesForServer(createVMServerId);
+    const nodeSelect = document.getElementById('vmNodeSelect');
+    nodeSelect.innerHTML = '<option value="">{{ t("auto") }}</option>' + 
+        createVMNodes.map((n) => {
+            const isPreferred = preferredNode && n.node === preferredNode;
+            return `<option value="${n.node}" ${isPreferred ? 'selected' : ''}>${n.node} ${n.status === 'online' ? '' : '(offline)'}</option>`;
+        }).join('');
+    
+    // Reload storages for the preferred node
+    await loadStoragesForServer(createVMServerId, preferredNode);
+    const storageSelect = document.getElementById('vmStorageSelect');
+    storageSelect.innerHTML = createVMStorages.length > 0 
+        ? createVMStorages.map((s, idx) => `<option value="${s.storage}" ${idx === 0 ? 'selected' : ''}>${s.storage}</option>`).join('')
+        : '<option value="local-lvm">local-lvm</option>';
+    
+    // Reload templates for this server
+    const templateSelect = document.getElementById('vmTemplateSelect');
+    templateSelect.innerHTML = buildTemplateOptions(window.templateGroups || [], vmTemplates);
+}
+
+async function loadNodesForServer(serverId) {
+    try {
+        const response = await fetchWithAuth(`/proxmox/api/${serverId}/nodes`);
+        if (response.ok) {
+            const data = await response.json();
+            createVMNodes = data.nodes || data || [];
+        }
+    } catch (e) {
+        createVMNodes = [];
+    }
+}
+
+async function loadStoragesForServer(serverId, preferredNode = null) {
+    try {
+        const node = preferredNode || (createVMNodes.length > 0 ? createVMNodes[0].node : null);
+        if (node) {
+            const response = await fetchWithAuth(`/proxmox/api/${serverId}/storages?node=${node}`);
+            if (response.ok) {
+                const data = await response.json();
+                createVMStorages = (data.storages || []).filter(s => s.content && s.content.includes('images'));
+            }
+        }
+    } catch (e) {
+        createVMStorages = [];
+    }
+}
+
+function onVMTemplateChange() {
+    const select = document.getElementById('vmTemplateSelect');
+    const opt = select.options[select.selectedIndex];
+    if (opt && opt.value) {
+        document.getElementById('vmCoresInput').value = opt.dataset.cores || 1;
+        document.getElementById('vmMemoryInput').value = opt.dataset.memory || 1024;
+        document.getElementById('vmDiskInput').value = opt.dataset.disk || 10;
+    }
+}
+
+function onVMIPAMNetworkChange() {
+    // Could add preview of selected network info here if needed
+}
+
+async function executeCreateVM(event) {
+    event.preventDefault();
+    
+    const templateId = document.getElementById('vmTemplateSelect').value;
+    const name = document.getElementById('vmNameInput').value.trim();
+    
+    if (!templateId || !name) {
+        showToast('warning', '{{ t("warning") }}', '{{ t("fill_required_fields") }}');
+        return;
+    }
+    
+    const btn = document.getElementById('createVMBtn');
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> {{ t("creating") }}...';
+    btn.disabled = true;
+    
+    const statusEl = document.getElementById('createVMStatus');
+    statusEl.style.display = 'block';
+    statusEl.style.background = 'var(--accent-dark)';
+    statusEl.style.color = 'var(--text-primary)';
+    statusEl.innerHTML = '<i class="fa-solid fa-rotate fa-spin"></i> {{ t("cloning_template") }}...';
+    
+    // Check if IPAM network selected for auto IP allocation
+    const ipamNetworkId = document.getElementById('vmIPAMNetworkSelect')?.value;
+    let allocatedIP = null;
+    let allocatedGateway = null;
+    let allocationId = null;
+    
+    if (ipamNetworkId) {
+        statusEl.innerHTML = '<i class="fa-solid fa-rotate fa-spin"></i> {{ t("allocating_ip") }}...';
+        try {
+            const allocResponse = await fetchWithAuth('/ipam/api/allocations/auto', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    network_id: parseInt(ipamNetworkId),
+                    resource_type: 'vm',
+                    resource_name: name,
+                    hostname: name,
+                    notes: 'Auto-allocated during VM creation'
+                })
+            });
+            
+            if (allocResponse.ok) {
+                const allocation = await allocResponse.json();
+                allocatedIP = allocation.ip_address;
+                allocationId = allocation.id;
+                // Get gateway from network
+                const netSelect = document.getElementById('vmIPAMNetworkSelect');
+                const selectedOpt = netSelect.options[netSelect.selectedIndex];
+                allocatedGateway = selectedOpt.dataset.gateway;
+                statusEl.innerHTML = `<i class="fa-solid fa-rotate fa-spin"></i> {{ t("cloning_template") }}... (IP: ${allocatedIP})`;
+            } else {
+                const err = await allocResponse.json();
+                throw new Error(err.detail || 'Failed to allocate IP');
+            }
+        } catch (error) {
+            console.error('IP allocation error:', error);
+            statusEl.style.background = 'var(--danger-dark)';
+            statusEl.innerHTML = `<i class="fa-solid fa-circle-xmark"></i> {{ t("ip_allocation_failed") }}: ${error.message}`;
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+            return;
+        }
+    }
+    
+    const deployData = {
+        template_id: parseInt(templateId),
+        name: name,
+        cores: parseInt(document.getElementById('vmCoresInput').value) || null,
+        memory: parseInt(document.getElementById('vmMemoryInput').value) || null,
+        disk: parseInt(document.getElementById('vmDiskInput').value) || null,
+        target_storage: document.getElementById('vmStorageSelect').value || null,
+        target_node: document.getElementById('vmNodeSelect').value || null,
+        start_after_create: document.getElementById('vmStartAfterCreate').checked,
+        onboot: document.getElementById('vmOnboot').checked,
+        enable_ha: document.getElementById('vmEnableHA').checked,
+        ipam_ip: allocatedIP,
+        ipam_gateway: allocatedGateway,
+        ipam_allocation_id: allocationId
+    };
+    
+    try {
+        const response = await fetchWithAuth('/templates/api/deploy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(deployData)
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok) {
+            statusEl.style.background = 'var(--success-dark)';
+            statusEl.innerHTML = `<i class="fa-solid fa-circle-check"></i> VM "${result.name}" {{ t("created") }}!<br>VMID: ${result.vmid}`;
+            showToast('success', '{{ t("success") }}', `VM ${result.name} {{ t("created") }}`);
+            
+            setTimeout(() => {
+                closeCreateVMModal();
+                loadAllVMs();
+            }, 1500);
+        } else {
+            statusEl.style.background = 'var(--danger-dark)';
+            statusEl.innerHTML = `<i class="fa-solid fa-circle-xmark"></i> ${result.detail || '{{ t("create_failed") }}'}`;
+        }
+    } catch (error) {
+        console.error('Create VM error:', error);
+        statusEl.style.background = 'var(--danger-dark)';
+        statusEl.innerHTML = `<i class="fa-solid fa-circle-xmark"></i> {{ t("error") }}: ${error.message}`;
+    } finally {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    }
+}
+
+function closeCreateVMModal() {
+    document.getElementById('createVMModal').style.display = 'none';
+}
+
+// ============================================
+// CREATE LXC MODAL  
+// ============================================
+let createLXCServerId = null;
+let createLXCTemplates = [];
+let createLXCStorages = [];
+let createLXCNodes = [];
+
+function showCreateLXCModal() {
+    const modal = document.getElementById('createLXCModal');
+    document.getElementById('createLXCContent').innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> {{ t("loading") }}...</div>';
+    modal.style.display = 'flex';
+    
+    loadCreateLXCForm();
+}
+
+async function loadCreateLXCForm() {
+    const content = document.getElementById('createLXCContent');
+    
+    // Load all servers from API instead of just from loaded VMs
+    let servers = [];
+    try {
+        const serversResponse = await fetchWithAuth('/proxmox/api/servers');
+        if (serversResponse.ok) {
+            servers = await serversResponse.json();
+        }
+    } catch (e) {
+        console.error('Failed to load servers:', e);
+    }
+    
+    // Fallback to unique servers from VMs if API fails
+    if (servers.length === 0) {
+        servers = getUniqueServers();
+    }
+    
+    if (servers.length === 0) {
+        content.innerHTML = `
+            <div style="text-align: center; padding: 2rem;">
+                <div style="font-size: 3rem; margin-bottom: 1rem; color: var(--text-muted);"><i class="fa-solid fa-server"></i></div>
+                <p style="color: var(--text-secondary);">{{ t('no_servers_available') }}</p>
+                <button onclick="closeCreateLXCModal()" class="btn" style="margin-top: 1rem;">{{ t('close') }}</button>
+            </div>`;
+        return;
+    }
+    
+    try {
+        // Use first server and load ALL templates from all nodes
+        createLXCServerId = servers[0].id;
+        
+        // Load nodes and ALL templates from cluster
+        await loadLXCNodesForServer(createLXCServerId);
+        await loadAllLXCTemplatesForServer(createLXCServerId);
+        
+        const selectedNode = createLXCNodes.length > 0 ? createLXCNodes[0].node : null;
+        
+        // Load storages for selected node
+        if (selectedNode) {
+            await loadLXCStoragesForServer(createLXCServerId, selectedNode);
+        }
+        
+        // Build options
+        let serverOptions = servers.map(s => 
+            `<option value="${s.id}" ${s.id === createLXCServerId ? 'selected' : ''}>${s.name}</option>`
+        ).join('');
+        
+        let nodeOptions = createLXCNodes.map((n, idx) => 
+            `<option value="${n.node}" ${idx === 0 ? 'selected' : ''}>${n.node} ${n.status === 'online' ? '' : '(offline)'}</option>`
+        ).join('');
+        
+        // Template options with node info
+        let templateOptions = createLXCTemplates.map(t => {
+            const name = t.volid.split('/').pop();
+            const nodeInfo = t.shared ? '(shared)' : `(${t.node})`;
+            return `<option value="${t.volid}" data-node="${t.node}" data-shared="${t.shared}" data-storage="${t.storage}">${name} ${nodeInfo}</option>`;
+        }).join('');
+        if (!templateOptions) templateOptions = '<option value="">{{ t("no_templates") }}</option>';
+        
+        let storageOptions = createLXCStorages.map((s, idx) => 
+            `<option value="${s.storage}" ${idx === 0 ? 'selected' : ''}>${s.storage}</option>`
+        ).join('');
+        if (!storageOptions) storageOptions = '<option value="local-lvm">local-lvm</option>';
+        
+        // Load IPAM networks (reuse already loaded or load fresh)
+        if (!ipamNetworks || ipamNetworks.length === 0) {
+            await loadIPAMNetworks();
+        }
+        let ipamOptions = buildIPAMNetworkOptions();
+        
+        // Check if server is in cluster mode (for HA option visibility)
+        let isCluster = await checkServerClusterMode(createLXCServerId);
+        window.currentLXCServerIsCluster = isCluster;
+        
+        content.innerHTML = `
+            <form id="createLXCForm" onsubmit="executeCreateLXC(event)">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                    <div class="form-group">
+                        <label>{{ t('server') }} *</label>
+                        <select id="lxcServerSelect" onchange="onLXCServerChange(this.value)" class="form-control">
+                            ${serverOptions}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>{{ t('node') }} *</label>
+                        <select id="lxcNodeSelect" required onchange="onLXCNodeChange(this.value)" class="form-control">
+                            ${nodeOptions}
+                        </select>
+                    </div>
+                    <div class="form-group" style="grid-column: 1 / -1;">
+                        <label>{{ t('lxc_template') }} *</label>
+                        <select id="lxcTemplateSelect" required class="form-control">
+                            <option value="">{{ t('select_template') }}</option>
+                            ${templateOptions}
+                        </select>
+                    </div>
+                    <div class="form-group" style="grid-column: 1 / -1;">
+                        <label>{{ t('hostname') }} *</label>
+                        <input type="text" id="lxcHostnameInput" required placeholder="my-container" pattern="[a-zA-Z0-9\\-]+" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label>{{ t('root_password') }}</label>
+                        <input type="password" id="lxcPasswordInput" placeholder="••••••••" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label>{{ t('storage') }}</label>
+                        <select id="lxcStorageSelect" class="form-control">
+                            ${storageOptions}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>CPU ({{ t('cores') }})</label>
+                        <input type="number" id="lxcCoresInput" min="1" max="128" value="1" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label>{{ t('memory') }} (MB)</label>
+                        <input type="number" id="lxcMemoryInput" min="128" step="128" value="512" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label>{{ t('disk') }} (GB)</label>
+                        <input type="number" id="lxcDiskInput" min="1" value="8" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label>Swap (MB)</label>
+                        <input type="number" id="lxcSwapInput" min="0" step="128" value="512" class="form-control">
+                    </div>
+                    <div class="form-group" style="grid-column: 1 / -1;">
+                        <label><i class="fa-solid fa-network-wired"></i> {{ t('ipam_network') }}</label>
+                        <select id="lxcIPAMNetworkSelect" class="form-control">
+                            ${ipamOptions}
+                        </select>
+                        <small style="color: var(--text-muted); font-size: 0.8rem;">{{ t('select_network_for_auto_ip') }}</small>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 1rem; display: flex; flex-direction: column; gap: 0.75rem;">
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                        <input type="checkbox" id="lxcStartAfterCreate" checked>
+                        {{ t('start_after_create') }}
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                        <input type="checkbox" id="lxcOnboot">
+                        <i class="fa-solid fa-power-off" style="color: var(--text-muted);"></i>
+                        {{ t('autostart_on_boot') }}
+                    </label>
+                    <label id="lxcHAOption" style="display: ${isCluster ? 'flex' : 'none'}; align-items: center; gap: 0.5rem; cursor: pointer;">
+                        <input type="checkbox" id="lxcEnableHA">
+                        <i class="fa-solid fa-shield-halved" style="color: var(--text-muted);"></i>
+                        {{ t('high_availability') }}
+                        <small style="color: var(--success); font-size: 0.75rem; margin-left: 0.5rem;"><i class="fa-solid fa-check-circle"></i> {{ t('cluster_detected') }}</small>
+                    </label>
+                </div>
+                
+                <div id="createLXCStatus" style="display: none; margin-top: 1rem; padding: 1rem; border-radius: 6px;"></div>
+                
+                <div style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
+                    <button type="button" onclick="closeCreateLXCModal()" class="btn btn-secondary">{{ t('cancel') }}</button>
+                    <button type="submit" id="createLXCBtn" class="btn" style="background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%); color: white;"><i class="fa-solid fa-cube"></i> {{ t('create') }}</button>
+                </div>
+            </form>
+        `;
+        
+    } catch (error) {
+        console.error('Error loading create LXC form:', error);
+        content.innerHTML = `
+            <div style="text-align: center; padding: 2rem;">
+                <div style="font-size: 2rem; margin-bottom: 1rem; color: var(--warning);"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                <p style="color: var(--text-secondary);">${error.message}</p>
+                <button onclick="closeCreateLXCModal()" class="btn" style="margin-top: 1rem;">{{ t('close') }}</button>
+            </div>`;
+    }
+}
+
+async function onLXCServerChange(serverId) {
+    createLXCServerId = parseInt(serverId);
+    
+    // Check cluster mode and update HA option visibility
+    const isCluster = await checkServerClusterMode(createLXCServerId);
+    window.currentLXCServerIsCluster = isCluster;
+    updateHAOptionVisibility(isCluster, 'lxc');
+    
+    // Load nodes and ALL templates from this server/cluster
+    await loadLXCNodesForServer(createLXCServerId);
+    await loadAllLXCTemplatesForServer(createLXCServerId);
+    
+    const nodeSelect = document.getElementById('lxcNodeSelect');
+    nodeSelect.innerHTML = createLXCNodes.map((n, idx) => 
+        `<option value="${n.node}" ${idx === 0 ? 'selected' : ''}>${n.node} ${n.status === 'online' ? '' : '(offline)'}</option>`
+    ).join('');
+    
+    // Update template select with all templates
+    updateLXCTemplateSelect();
+    
+    if (createLXCNodes.length > 0) {
+        // Only load storages for selected node
+        await loadLXCStoragesForServer(createLXCServerId, createLXCNodes[0].node);
+        const storageSelect = document.getElementById('lxcStorageSelect');
+        if (storageSelect) {
+            storageSelect.innerHTML = createLXCStorages.length > 0 
+                ? createLXCStorages.map((s, idx) => `<option value="${s.storage}" ${idx === 0 ? 'selected' : ''}>${s.storage}</option>`).join('')
+                : '<option value="local-lvm">local-lvm</option>';
+        }
+    }
+}
+
+async function onLXCNodeChange(node) {
+    // Шаблоны уже загружены со всех нод, просто обновляем storages для выбранной ноды
+    await loadLXCStoragesForServer(createLXCServerId, node);
+    
+    // Обновляем список шаблонов - показываем все доступные
+    updateLXCTemplateSelect();
+    
+    const storageSelect = document.getElementById('lxcStorageSelect');
+    storageSelect.innerHTML = createLXCStorages.length > 0 
+        ? createLXCStorages.map((s, idx) => `<option value="${s.storage}" ${idx === 0 ? 'selected' : ''}>${s.storage}</option>`).join('')
+        : '<option value="local-lvm">local-lvm</option>';
+}
+
+function updateLXCTemplateSelect() {
+    const templateSelect = document.getElementById('lxcTemplateSelect');
+    if (!templateSelect) return;
+    
+    // Показываем все шаблоны с информацией откуда они
+    templateSelect.innerHTML = '<option value="">{{ t("select_template") }}</option>' + 
+        createLXCTemplates.map(t => {
+            const name = t.volid.split('/').pop();
+            const nodeInfo = t.shared ? '(shared)' : `(${t.node})`;
+            return `<option value="${t.volid}" data-node="${t.node}" data-shared="${t.shared}" data-storage="${t.storage}">${name} ${nodeInfo}</option>`;
+        }).join('');
+}
+
+async function loadLXCNodesForServer(serverId) {
+    try {
+        const response = await fetchWithAuth(`/proxmox/api/${serverId}/nodes`);
+        if (response.ok) {
+            const data = await response.json();
+            createLXCNodes = data.nodes || data || [];
+        }
+    } catch (e) {
+        createLXCNodes = [];
+    }
+}
+
+async function loadAllLXCTemplatesForServer(serverId) {
+    // Загружаем шаблоны со ВСЕХ нод кластера
+    try {
+        const response = await fetchWithAuth(`/proxmox/api/${serverId}/all-lxc-templates`);
+        if (response.ok) {
+            const data = await response.json();
+            createLXCTemplates = data.templates || [];
+        }
+    } catch (e) {
+        createLXCTemplates = [];
+    }
+}
+
+async function loadLXCTemplatesForServer(serverId, node) {
+    try {
+        const response = await fetchWithAuth(`/proxmox/api/${serverId}/lxc-templates?node=${node}`);
+        if (response.ok) {
+            const data = await response.json();
+            createLXCTemplates = data.templates || data || [];
+        }
+    } catch (e) {
+        createLXCTemplates = [];
+    }
+}
+
+async function loadLXCStoragesForServer(serverId, node) {
+    try {
+        const response = await fetchWithAuth(`/proxmox/api/${serverId}/storages?node=${node}`);
+        if (response.ok) {
+            const data = await response.json();
+            createLXCStorages = (data.storages || []).filter(s => s.content && s.content.includes('rootdir'));
+        }
+    } catch (e) {
+        createLXCStorages = [];
+    }
+}
+
+async function executeCreateLXC(event) {
+    event.preventDefault();
+    
+    const templateSelect = document.getElementById('lxcTemplateSelect');
+    const template = templateSelect.value;
+    const hostname = document.getElementById('lxcHostnameInput').value.trim();
+    const targetNode = document.getElementById('lxcNodeSelect').value;
+    
+    if (!template || !hostname || !targetNode) {
+        showToast('warning', '{{ t("warning") }}', '{{ t("fill_required_fields") }}');
+        return;
+    }
+    
+    const password = document.getElementById('lxcPasswordInput').value;
+    if (!password) {
+        showToast('warning', '{{ t("warning") }}', '{{ t("password_required") }}');
+        return;
+    }
+    
+    // Get template metadata from selected option
+    const selectedOption = templateSelect.options[templateSelect.selectedIndex];
+    const templateNode = selectedOption.dataset.node;
+    const isShared = selectedOption.dataset.shared === 'true';
+    const templateStorage = selectedOption.dataset.storage;
+    
+    const btn = document.getElementById('createLXCBtn');
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> {{ t("creating") }}...';
+    btn.disabled = true;
+    
+    const statusEl = document.getElementById('createLXCStatus');
+    statusEl.style.display = 'block';
+    statusEl.style.background = 'var(--accent-dark)';
+    statusEl.style.color = 'var(--text-primary)';
+    statusEl.innerHTML = '<i class="fa-solid fa-rotate fa-spin"></i> {{ t("creating_container") }}...';
+    
+    // Check if IPAM network selected for auto IP allocation
+    const ipamNetworkId = document.getElementById('lxcIPAMNetworkSelect')?.value;
+    let allocatedIP = null;
+    let allocatedGateway = null;
+    let allocationId = null;
+    let net0Config = null;
+    
+    if (ipamNetworkId) {
+        statusEl.innerHTML = '<i class="fa-solid fa-rotate fa-spin"></i> {{ t("allocating_ip") }}...';
+        try {
+            const allocResponse = await fetchWithAuth('/ipam/api/allocations/auto', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    network_id: parseInt(ipamNetworkId),
+                    resource_type: 'lxc',
+                    resource_name: hostname,
+                    hostname: hostname,
+                    notes: 'Auto-allocated during LXC creation'
+                })
+            });
+            
+            if (allocResponse.ok) {
+                const allocation = await allocResponse.json();
+                allocatedIP = allocation.ip_address;
+                allocationId = allocation.id;
+                // Get gateway and CIDR from network
+                const netSelect = document.getElementById('lxcIPAMNetworkSelect');
+                const selectedNetOpt = netSelect.options[netSelect.selectedIndex];
+                allocatedGateway = selectedNetOpt.dataset.gateway;
+                const cidr = selectedNetOpt.dataset.cidr || '';
+                // Extract prefix length from CIDR (e.g., "10.0.0.0/24" -> "24")
+                const prefixLen = (cidr && cidr.includes('/')) ? cidr.split('/')[1] : '24';
+                // Build net0 config for Proxmox
+                net0Config = `name=eth0,bridge=vmbr0,ip=${allocatedIP}/${prefixLen},gw=${allocatedGateway}`;
+                statusEl.innerHTML = `<i class="fa-solid fa-rotate fa-spin"></i> {{ t("creating_container") }}... (IP: ${allocatedIP})`;
+            } else {
+                const err = await allocResponse.json();
+                throw new Error(err.detail || 'Failed to allocate IP');
+            }
+        } catch (error) {
+            console.error('IP allocation error:', error);
+            statusEl.style.background = 'var(--danger-dark)';
+            statusEl.innerHTML = `<i class="fa-solid fa-circle-xmark"></i> {{ t("ip_allocation_failed") }}: ${error.message}`;
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+            return;
+        }
+    }
+    
+    // Determine creation strategy
+    // If template is on shared storage OR template is on target node -> create directly on target
+    // If template is on local storage of different node -> create on template's node, then migrate
+    const needsMigration = !isShared && templateNode !== targetNode;
+    const createNode = needsMigration ? templateNode : targetNode;
+    
+    if (needsMigration) {
+        statusEl.innerHTML = `<i class="fa-solid fa-rotate fa-spin"></i> {{ t("creating_container") }} on ${templateNode}, then migrating to ${targetNode}...`;
+    }
+    
+    try {
+        const response = await fetchWithAuth(`/proxmox/api/${createLXCServerId}/create-lxc-smart`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                template_node: templateNode,
+                target_node: targetNode,
+                ostemplate: template,
+                hostname: hostname,
+                password: password,
+                storage: document.getElementById('lxcStorageSelect').value,
+                rootfs_size: parseInt(document.getElementById('lxcDiskInput').value),
+                cores: parseInt(document.getElementById('lxcCoresInput').value),
+                memory: parseInt(document.getElementById('lxcMemoryInput').value),
+                swap: parseInt(document.getElementById('lxcSwapInput').value),
+                start_after_create: document.getElementById('lxcStartAfterCreate').checked,
+                onboot: document.getElementById('lxcOnboot').checked,
+                enable_ha: document.getElementById('lxcEnableHA').checked,
+                is_shared: isShared,
+                net0: net0Config,
+                ipam_allocation_id: allocationId
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok && result.success) {
+            statusEl.style.background = 'var(--success-dark)';
+            statusEl.innerHTML = `<i class="fa-solid fa-circle-check"></i> ${result.message}`;
+            showToast('success', '{{ t("success") }}', result.message);
+            
+            setTimeout(() => {
+                closeCreateLXCModal();
+                loadAllVMs();
+            }, 1500);
+        } else {
+            statusEl.style.background = 'var(--danger-dark)';
+            statusEl.innerHTML = `<i class="fa-solid fa-circle-xmark"></i> ${result.detail || '{{ t("create_failed") }}'}`;
+        }
+    } catch (error) {
+        console.error('Create LXC error:', error);
+        statusEl.style.background = 'var(--danger-dark)';
+        statusEl.innerHTML = `<i class="fa-solid fa-circle-xmark"></i> {{ t("error") }}: ${error.message}`;
+    } finally {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    }
+}
+
+function closeCreateLXCModal() {
+    document.getElementById('createLXCModal').style.display = 'none';
+}
+
+// Initialize
+window.addEventListener('DOMContentLoaded', () => {
+    // Restore filters from URL first
+    restoreFiltersFromUrl();
+    
+    // Wait for permissions
+    if (window.userPermissions && Object.keys(window.userPermissions).length > 0) {
+        loadAllVMs();
+    } else {
+        window.addEventListener('permissionsLoaded', () => {
+            loadAllVMs();
+        }, { once: true });
+        
+        setTimeout(() => {
+            if (allVMs.length === 0) {
+                loadAllVMs();
+            }
+        }, 1000);
+    }
+    
+    // Start real-time status monitoring
+    startStatusMonitoring();
+});
+
+// Real-time status monitoring
+let statusMonitorInterval = null;
+
+function startStatusMonitoring() {
+    // Poll for status changes every 10 seconds
+    statusMonitorInterval = setInterval(async () => {
+        if (allVMs.length === 0) return;
+        
+        // Group VMs by server for efficient API calls
+        const serverGroups = {};
+        allVMs.forEach(vm => {
+            if (!serverGroups[vm.server_id]) {
+                serverGroups[vm.server_id] = [];
+            }
+            serverGroups[vm.server_id].push(vm);
+        });
+        
+        // Check status for each VM
+        for (const [serverId, vms] of Object.entries(serverGroups)) {
+            for (const vm of vms) {
+                try {
+                    const apiType = vm.type === 'lxc' ? 'container' : 'vm';
+                    const response = await fetchWithAuth(`/proxmox/api/${serverId}/${apiType}/${vm.vmid}/status?node=${vm.node}`);
+                    
+                    if (response && response.ok) {
+                        const data = await response.json();
+                        const newStatus = data.status || 'stopped';
+                        
+                        // Only update if status changed
+                        if (vm.status !== newStatus) {
+                            console.log(`[Monitor] Status changed for ${vm.name}: ${vm.status} -> ${newStatus}`);
+                            vm.status = newStatus;
+                            updateVMStatusUI(parseInt(serverId), vm.vmid, newStatus);
+                            updateVMActionButton(parseInt(serverId), vm.vmid, vm.type, vm.node, newStatus);
+                        }
+                    }
+                } catch (error) {
+                    // Silently ignore errors during background monitoring
+                }
+            }
+        }
+    }, 10000); // Every 10 seconds
+}
+
+function stopStatusMonitoring() {
+    if (statusMonitorInterval) {
+        clearInterval(statusMonitorInterval);
+        statusMonitorInterval = null;
+    }
+}
+
+// Clean up on page unload
+window.addEventListener('beforeunload', () => {
+    stopStatusMonitoring();
+});
+</script>
+
+<!-- Create VM Modal -->
+<div id="createVMModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 2000; align-items: center; justify-content: center; padding: 1rem;">
+    <div class="card" style="max-width: 700px; width: 95%; max-height: 95vh; overflow-y: auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border-color);">
+            <h3 id="createVMModalTitle" style="margin: 0;"><i class="fa-solid fa-plus"></i> {{ t('create_vm') }}</h3>
+            <button onclick="closeCreateVMModal()" style="background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer;">&times;</button>
+        </div>
+        <div id="createVMContent">{{ t('loading') }}...</div>
+    </div>
+</div>
+
+<!-- Create LXC Modal -->
+<div id="createLXCModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 2000; align-items: center; justify-content: center; padding: 1rem;">
+    <div class="card" style="max-width: 700px; width: 95%; max-height: 95vh; overflow-y: auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border-color);">
+            <h3 style="margin: 0;"><i class="fa-solid fa-cube"></i> {{ t('create_lxc') }}</h3>
+            <button onclick="closeCreateLXCModal()" style="background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer;">&times;</button>
+        </div>
+        <div id="createLXCContent">{{ t('loading') }}...</div>
+    </div>
+</div>
+
+<!-- VNC Modal -->
+<div id="vncModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.95); z-index: 2000; align-items: center; justify-content: center; padding: 1rem;">
+    <div class="card" style="max-width: 1400px; width: 95%; max-height: 95vh; display: flex; flex-direction: column;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border-color);">
+            <h3 id="vncTitle" style="margin: 0;"><i class="fa-solid fa-display"></i> VNC Console</h3>
+            <button onclick="closeVNCModal()" style="background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer; padding: 0.5rem;">&times;</button>
+        </div>
+        <div id="vncContent" style="flex: 1; min-height: 600px; background: #000; border-radius: 4px; overflow: hidden;"></div>
+    </div>
+</div>
+
+<!-- Delete Confirm Modal -->
+<div id="deleteConfirmModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 2000; align-items: center; justify-content: center; padding: 1rem;">
+    <div class="card" style="max-width: 450px; width: 95%;">
+        <div style="text-align: center; padding: 1.5rem;">
+            <div style="font-size: 3rem; margin-bottom: 1rem; color: var(--warning);"><i class="fa-solid fa-triangle-exclamation"></i></div>
+            <h3 style="margin: 0 0 1rem 0; color: var(--text-primary);">{{ t('confirm_delete') }}</h3>
+            <p style="color: var(--text-secondary); margin-bottom: 1.5rem;">
+                {{ t('confirm_delete_vm') }} "<span id="deleteConfirmVMName" style="font-weight: 600;"></span>" (ID: <span id="deleteConfirmVMID"></span>)?
+            </p>
+            <div style="display: flex; gap: 1rem; justify-content: center;">
+                <button onclick="closeDeleteConfirmModal()" class="btn btn-secondary" style="min-width: 100px;">{{ t('cancel') }}</button>
+                <button onclick="executeDelete()" class="btn btn-danger" style="min-width: 100px;">{{ t('delete') }}</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Settings Modal -->
+<div id="settingsModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 2000; align-items: center; justify-content: center; padding: 1rem;">
+    <div class="card" style="max-width: 700px; width: 95%; max-height: 95vh; overflow-y: auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border-color);">
+            <h3 style="margin: 0;"><i class="fa-solid fa-gear"></i> {{ t('settings') }}</h3>
+            <button onclick="closeSettingsModal()" style="background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer;">&times;</button>
+        </div>
+        <div id="settingsContent">{{ t('loading') }}</div>
+    </div>
+</div>
+
+<!-- Reinstall Modal -->
+<div id="reinstallModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 2000; align-items: center; justify-content: center; padding: 1rem;">
+    <div class="card" style="max-width: 600px; width: 95%; max-height: 95vh; overflow-y: auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border-color);">
+            <h3 style="margin: 0;"><i class="fa-solid fa-compact-disc"></i> {{ t('reinstall') }}</h3>
+            <button onclick="closeReinstallModal()" style="background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer;">&times;</button>
+        </div>
+        <div id="reinstallContent">{{ t('loading') }}</div>
+    </div>
+</div>
+
+<!-- noVNC scripts -->
+<script type="module">
+    import RFB from '/static/novnc/core/rfb.js';
+    window.RFB = RFB;
+    window.noVNCLoaded = true;
+</script>
+<script>
+    // Wait for noVNC to load
+    window.waitForRFB = function() {
+        return new Promise((resolve) => {
+            if (window.RFB) {
+                resolve(window.RFB);
+                return;
+            }
+            
+            let attempts = 0;
+            const maxAttempts = 50;
+            const interval = setInterval(() => {
+                attempts++;
+                if (window.RFB) {
+                    clearInterval(interval);
+                    resolve(window.RFB);
+                } else if (attempts >= maxAttempts) {
+                    clearInterval(interval);
+                    resolve(null);
+                }
+            }, 100);
+        });
+    };
+    
+    // Settings Modal
+    async function showSettingsModal(serverId, vmid, type, node) {
+        document.getElementById('settingsModal').style.display = 'flex';
+        const content = document.getElementById('settingsContent');
+        content.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> {{ t("loading") }}...</div>';
+        
+        try {
+            const apiType = type === 'lxc' ? 'container' : 'vm';
+            const configRes = await fetchWithAuth(`/proxmox/api/${serverId}/${apiType}/${vmid}/config?node=${node}`);
+            
+            if (!configRes.ok) {
+                throw new Error('{{ t("error_loading_config") }}');
+            }
+            
+            const config = await configRes.json();
+            
+            // For LXC: hostname instead of name, memory in MB
+            // For QEMU: name, memory in bytes (convert to MB)
+            let displayName, displayCores, displayMemory;
+            
+            if (type === 'lxc') {
+                displayName = config.hostname || '';
+                displayCores = config.cores || 1;
+                displayMemory = config.memory || 512;
+            } else {
+                displayName = config.name || '';
+                displayCores = config.cores || 1;
+                // QEMU memory is in bytes, convert to MB
+                displayMemory = config.memory ? Math.round(config.memory) : 512;
+            }
+            
+            const onboot = config.onboot || 0;
+            
+            content.innerHTML = `
+                <form onsubmit="saveVMConfig(event)">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+                        <div>
+                            <label style="display: block; color: var(--text-secondary); font-size: 0.875rem; margin-bottom: 0.25rem;">{{ t('name') }}</label>
+                            <input type="text" id="edit-name" value="${displayName}" style="width: 100%; padding: 0.5rem; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                        </div>
+                        <div>
+                            <label style="display: block; color: var(--text-secondary); font-size: 0.875rem; margin-bottom: 0.25rem;">{{ t('cpu_cores') }}</label>
+                            <input type="number" id="edit-cores" value="${displayCores}" min="1" max="128" style="width: 100%; padding: 0.5rem; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                        </div>
+                        <div>
+                            <label style="display: block; color: var(--text-secondary); font-size: 0.875rem; margin-bottom: 0.25rem;">{{ t('memory_mb') }}</label>
+                            <input type="number" id="edit-memory" value="${displayMemory}" min="128" step="128" style="width: 100%; padding: 0.5rem; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                        </div>
+                        <div style="display: flex; align-items: center;">
+                            <label style="display: flex; align-items: center; gap: 0.5rem; color: var(--text-secondary); font-size: 0.875rem; cursor: pointer;">
+                                <input type="checkbox" id="edit-onboot" ${onboot ? 'checked' : ''}>
+                                {{ t('autostart_on_boot') }}
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div style="display: flex; gap: 1rem; justify-content: flex-end;">
+                        <button type="button" onclick="closeSettingsModal()" class="btn btn-secondary">{{ t('cancel') }}</button>
+                        <button type="submit" class="btn btn-success"><i class="fa-solid fa-floppy-disk"></i> {{ t('save') }}</button>
+                    </div>
+                </form>
+            `;
+        } catch (error) {
+            content.innerHTML = `<div style="text-align: center; padding: 2rem; color: var(--danger);"><i class="fa-solid fa-circle-xmark"></i> ${error.message}</div>`;
+        }
+    }
+    
+    function closeSettingsModal() {
+        document.getElementById('settingsModal').style.display = 'none';
+    }
+    
+    async function saveVMConfig(event) {
+        event.preventDefault();
+        
+        const ctx = window.currentVMContext;
+        if (!ctx) return;
+        
+        const nameValue = document.getElementById('edit-name').value.trim();
+        const cores = parseInt(document.getElementById('edit-cores').value);
+        const memory = parseInt(document.getElementById('edit-memory').value);
+        const onboot = document.getElementById('edit-onboot').checked ? 1 : 0;
+        
+        closeSettingsModal();
+        showToast('info', '{{ t("info") }}', '{{ t("saving") }}...');
+        
+        try {
+            const apiType = ctx.type === 'lxc' ? 'container' : 'vm';
+            
+            // For LXC use 'hostname', for QEMU use 'name'
+            const configData = { cores, memory, onboot };
+            if (ctx.type === 'lxc') {
+                configData.hostname = nameValue;
+            } else {
+                configData.name = nameValue;
+            }
+            
+            const response = await fetchWithAuth(`/proxmox/api/${ctx.serverId}/${apiType}/${ctx.vmid}/config?node=${ctx.node}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(configData)
+            });
+            
+            if (response.ok) {
+                showToast('success', '{{ t("success") }}', '{{ t("settings_saved") }}');
+                setTimeout(() => loadAllVMs(), 1000);
+            } else {
+                const data = await response.json();
+                showToast('error', '{{ t("error") }}', data.detail || '{{ t("save_failed") }}');
+            }
+        } catch (error) {
+            console.error('Save config error:', error);
+            showToast('error', '{{ t("error") }}', '{{ t("save_failed") }}');
+        }
+    }
+    
+    // Reinstall Modal
+    async function showReinstallModal(serverId, vmid, type, node, vmName) {
+        document.getElementById('reinstallModal').style.display = 'flex';
+        const content = document.getElementById('reinstallContent');
+        content.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> {{ t("loading") }}...</div>';
+        
+        try {
+            const [groupsRes, templatesRes] = await Promise.all([
+                fetchWithAuth('/templates/api/groups'),
+                fetchWithAuth(`/templates/api/templates?active_only=true`)
+            ]);
+            
+            const groups = groupsRes.ok ? await groupsRes.json() : [];
+            const templates = templatesRes.ok ? await templatesRes.json() : [];
+            
+            if (templates.length === 0) {
+                content.innerHTML = `
+                    <div style="text-align: center; padding: 2rem;">
+                        <div style="font-size: 2rem; margin-bottom: 1rem; color: var(--text-muted);"><i class="fa-solid fa-box-open"></i></div>
+                        <p style="color: var(--text-secondary);">{{ t('no_templates') }}</p>
+                        <a href="/templates" class="btn" style="margin-top: 1rem;">{{ t('add_templates') }}</a>
+                    </div>
+                `;
+                return;
+            }
+            
+            // Group templates
+            const grouped = {};
+            templates.forEach(tpl => {
+                const gid = tpl.group_id || 'other';
+                if (!grouped[gid]) grouped[gid] = [];
+                grouped[gid].push(tpl);
+            });
+            
+            let options = '<option value="">{{ t("select_template") }}</option>';
+            groups.forEach(g => {
+                if (grouped[g.id]) {
+                    options += '<optgroup label="' + (g.icon || '') + ' ' + g.name + '">';
+                    grouped[g.id].forEach(tpl => {
+                        options += '<option value="' + tpl.id + '" data-vmid="' + tpl.vmid + '" data-node="' + tpl.node + '">' + tpl.name + '</option>';
+                    });
+                    options += '</optgroup>';
+                }
+            });
+            
+            content.innerHTML = `
+                <div style="margin-bottom: 1rem; padding: 1rem; background: rgba(255, 170, 0, 0.1); border-radius: 8px; border-left: 4px solid var(--warning);">
+                    <p style="color: var(--warning); margin: 0;"><i class="fa-solid fa-triangle-exclamation"></i> {{ t('reinstall_warning') }}</p>
+                </div>
+                
+                <form onsubmit="executeReinstall(event)">
+                    <div style="margin-bottom: 1rem;">
+                        <label style="display: block; color: var(--text-secondary); margin-bottom: 0.5rem;">{{ t('os_template') }}:</label>
+                        <select id="reinstall-template" required class="form-select">
+                            ${options}
+                        </select>
+                    </div>
+                    
+                    <div style="margin-bottom: 1rem; padding: 1rem; background: var(--bg-tertiary); border-radius: 8px;">
+                        <h4 style="margin: 0 0 0.75rem 0; color: var(--text-primary); font-size: 0.9rem;"><i class="fa-solid fa-lock"></i> {{ t('cloud_init_settings') }}</h4>
+                        
+                        <div style="margin-bottom: 0.75rem;">
+                            <label style="display: block; color: var(--text-secondary); margin-bottom: 0.25rem; font-size: 0.875rem;">{{ t('username') }}:</label>
+                            <input type="text" id="reinstall-user" placeholder="root" class="form-input">
+                        </div>
+                        
+                        <div style="margin-bottom: 0.75rem;">
+                            <label style="display: block; color: var(--text-secondary); margin-bottom: 0.25rem; font-size: 0.875rem;">{{ t('password') }}:</label>
+                            <input type="password" id="reinstall-password" placeholder="{{ t('leave_empty_for_ssh') }}" class="form-input">
+                        </div>
+                        
+                        <div>
+                            <label style="display: block; color: var(--text-secondary); margin-bottom: 0.25rem; font-size: 0.875rem;">{{ t('ssh_public_key') }}:</label>
+                            <textarea id="reinstall-sshkey" placeholder="ssh-rsa AAAAB3..." rows="2" class="form-input" style="font-family: monospace; font-size: 0.75rem;"></textarea>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-bottom: 1.5rem;">
+                        <label style="display: flex; align-items: center; gap: 0.5rem; color: var(--text-secondary); cursor: pointer;">
+                            <input type="checkbox" id="reinstall-confirm" required>
+                            {{ t('confirm_data_loss') }}
+                        </label>
+                    </div>
+                    
+                    <div style="display: flex; gap: 1rem; justify-content: flex-end;">
+                        <button type="button" onclick="closeReinstallModal()" class="btn btn-secondary">{{ t('cancel') }}</button>
+                        <button type="submit" class="btn btn-warning"><i class="fa-solid fa-compact-disc"></i> {{ t('do_reinstall') }}</button>
+                    </div>
+                </form>
+            `;
+        } catch (error) {
+            content.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--danger);"><i class="fa-solid fa-circle-xmark"></i> ' + error.message + '</div>';
+        }
+    }
+    
+    function closeReinstallModal() {
+        document.getElementById('reinstallModal').style.display = 'none';
+    }
+    
+    async function executeReinstall(event) {
+        event.preventDefault();
+        
+        const ctx = window.currentVMContext;
+        if (!ctx) return;
+        
+        const templateId = document.getElementById('reinstall-template').value;
+        if (!templateId) {
+            showToast('warning', '{{ t("warning") }}', '{{ t("select_template") }}');
+            return;
+        }
+        
+        const cloudInitUser = document.getElementById('reinstall-user').value.trim();
+        const cloudInitPassword = document.getElementById('reinstall-password').value;
+        const sshKeys = document.getElementById('reinstall-sshkey').value.trim();
+        
+        closeReinstallModal();
+        showToast('info', '{{ t("info") }}', '{{ t("reinstalling") }}...');
+        
+        try {
+            const response = await fetchWithAuth('/templates/api/deploy', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    template_id: parseInt(templateId),
+                    name: ctx.vmName,
+                    vmid: ctx.vmid,
+                    target_node: ctx.node,
+                    cloud_init_user: cloudInitUser || undefined,
+                    cloud_init_password: cloudInitPassword || undefined,
+                    ssh_keys: sshKeys || undefined,
+                    start_after_create: true
+                })
+            });
+            
+            if (response.ok) {
+                const result = await response.json();
+                showToast('success', '{{ t("success") }}', '{{ t("reinstall_complete") }}');
+                setTimeout(() => loadAllVMs(), 2000);
+            } else {
+                const data = await response.json();
+                showToast('error', '{{ t("error") }}', data.detail || '{{ t("reinstall_failed") }}');
+            }
+        } catch (error) {
+            console.error('Reinstall error:', error);
+            showToast('error', '{{ t("error") }}', '{{ t("reinstall_failed") }}');
+        }
+    }
+</script>
+
+<style>
+    .create-vm-form {
+        display: flex;
+        flex-direction: column;
+        gap: 1.25rem;
+    }
+    
+    .create-vm-form .form-group {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+    
+    .create-vm-form label {
+        color: var(--text-secondary);
+        font-weight: 500;
+        font-size: 0.9rem;
+    }
+    
+    .create-vm-form .form-select,
+    .create-vm-form .form-input {
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 0.75rem 1rem;
+        color: var(--text-primary);
+        font-size: 0.95rem;
+        width: 100%;
+    }
+    
+    .create-vm-form .form-select:focus,
+    .create-vm-form .form-input:focus {
+        outline: none;
+        border-color: var(--primary);
+        box-shadow: 0 0 0 2px rgba(var(--primary-rgb), 0.2);
+    }
+    
+    .create-vm-form .form-input::placeholder {
+        color: var(--text-muted);
+    }
+    
+    /* Snapshots styles */
+    .snapshot-card {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 1rem;
+        margin-bottom: 0.75rem;
+        transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    
+    .snapshot-card:hover {
+        border-color: var(--primary);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    .snapshot-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.5rem;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+    
+    .snapshot-name {
+        font-weight: 600;
+        color: var(--text-primary);
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    
+    .snapshot-name i {
+        color: var(--primary);
+    }
+    
+    .snapshot-title {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+    }
+    
+    .badge-info {
+        background: var(--info);
+        color: white;
+        padding: 0.2rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+    }
+    
+    .snapshot-actions {
+        display: flex;
+        gap: 0.5rem;
+        flex-shrink: 0;
+    }
+    
+    .snapshot-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1rem;
+        color: var(--text-secondary);
+        font-size: 0.875rem;
+    }
+    
+    .snapshot-meta span {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+    }
+    
+    .snapshot-description {
+        color: var(--text-muted);
+        font-size: 0.875rem;
+        margin-top: 0.5rem;
+        padding-top: 0.5rem;
+        border-top: 1px solid var(--border-color);
+    }
+    
+    /* Snapshots container - grid layout for larger screens */
+    #snapshotsContainer {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 0.75rem;
+        padding: 0.5rem;
+    }
+    
+    @media (min-width: 992px) {
+        #snapshotsContainer {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+    
+    @media (min-width: 1400px) {
+        #snapshotsContainer {
+            grid-template-columns: repeat(3, 1fr);
+        }
+    }
+    
+    /* Snapshots toolbar responsive */
+    #snapshotsTabContent .vm-toolbar {
+        flex-wrap: wrap;
+        gap: 0.75rem;
+    }
+    
+    #snapshotsTabContent .vm-toolbar-left {
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        flex: 1;
+        min-width: 280px;
+    }
+    
+    #snapshotsTabContent .vm-toolbar-left select,
+    #snapshotsTabContent .vm-toolbar-left input {
+        min-width: 140px;
+        flex: 1;
+    }
+    
+    @media (max-width: 768px) {
+        #snapshotsTabContent .vm-toolbar {
+            flex-direction: column;
+        }
+        
+        #snapshotsTabContent .vm-toolbar-left,
+        #snapshotsTabContent .vm-toolbar-right {
+            width: 100%;
+        }
+        
+        #snapshotsTabContent .vm-toolbar-right {
+            justify-content: flex-end;
+        }
+        
+        .snapshot-header {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+        
+        .snapshot-actions {
+            width: 100%;
+            justify-content: flex-end;
+            margin-top: 0.5rem;
+        }
+        
+        /* Hide button text on small screens */
+        #createSnapshotBtn .btn-text {
+            display: none;
+        }
+    }
+    
+    /* Empty state styling */
+    .snapshots-empty-state {
+        grid-column: 1 / -1;
+        text-align: center;
+        padding: 3rem;
+        color: var(--text-muted);
+    }
+    
+    .snapshots-empty-state i {
+        font-size: 3rem;
+        margin-bottom: 1rem;
+        opacity: 0.3;
+        display: block;
+    }
+    
+    /* Icon button style */
+    .btn-icon {
+        padding: 0.5rem 0.75rem;
+    }
+    
+    /* Snapshot queue indicator */
+    .snapshot-queue-indicator {
+        display: none;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.5rem 1rem;
+        background: var(--bg-secondary);
+        border: 1px solid var(--primary);
+        border-radius: 6px;
+        color: var(--primary);
+        font-size: 0.875rem;
+        animation: pulse 2s infinite;
+    }
+    
+    .snapshot-queue-indicator i {
+        color: var(--primary);
+    }
+    
+    .snapshot-queue-indicator .badge {
+        background: var(--primary);
+        color: white;
+        padding: 0.15rem 0.5rem;
+        border-radius: 10px;
+        font-size: 0.75rem;
+    }
+    
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.7; }
+    }
+</style>
+
+<script>
+// ==================== Snapshots Functions ====================
+
+let snapshotsServers = [];
+let snapshotsVMs = [];
+let currentSnapshots = [];
+let selectedSnapshotVM = null;
+
+// ==================== Operation Queue System ====================
+const snapshotOperationQueue = {
+    queue: [],           // Array of pending operations
+    isProcessing: false, // Is queue being processed
+    currentOp: null,     // Current operation being executed
+    pollInterval: null,  // Interval for polling task status
+    
+    // Add operation to queue
+    add(operation) {
+        this.queue.push({
+            ...operation,
+            id: Date.now() + Math.random(),
+            status: 'pending',
+            addedAt: new Date()
+        });
+        this.updateUI();
+        this.process();
+    },
+    
+    // Process queue
+    async process() {
+        if (this.isProcessing || this.queue.length === 0) return;
+        
+        this.isProcessing = true;
+        
+        while (this.queue.length > 0) {
+            const op = this.queue[0];
+            op.status = 'running';
+            this.currentOp = op;
+            this.updateUI();
+            
+            try {
+                const result = await this.executeOperation(op);
+                op.status = result.success ? 'completed' : 'failed';
+                op.result = result;
+                
+                if (result.success) {
+                    showToast('success', t('success'), result.message);
+                } else {
+                    showToast('error', t('error'), result.message);
+                }
+            } catch (e) {
+                op.status = 'failed';
+                op.result = { success: false, message: e.message };
+                showToast('error', t('error'), e.message);
+            }
+            
+            // Remove completed operation from queue
+            this.queue.shift();
+            this.currentOp = null;
+            this.updateUI();
+            
+            // Small delay between operations
+            await new Promise(r => setTimeout(r, 500));
+        }
+        
+        this.isProcessing = false;
+        refreshSnapshots();
+    },
+    
+    // Execute single operation
+    async executeOperation(op) {
+        const { serverId, vmid, node, type } = op.vm;
+        let endpoint, method, body = null;
+        
+        switch (op.type) {
+            case 'delete':
+                endpoint = type === 'lxc'
+                    ? `/proxmox/api/${serverId}/container/${vmid}/snapshots/${op.snapname}?node=${node}`
+                    : `/proxmox/api/${serverId}/vm/${vmid}/snapshots/${op.snapname}?node=${node}`;
+                method = 'DELETE';
+                break;
+            case 'rollback':
+                endpoint = type === 'lxc'
+                    ? `/proxmox/api/${serverId}/container/${vmid}/snapshots/${encodeURIComponent(op.snapname)}/rollback?node=${encodeURIComponent(node)}`
+                    : `/proxmox/api/${serverId}/vm/${vmid}/snapshots/${encodeURIComponent(op.snapname)}/rollback?node=${encodeURIComponent(node)}`;
+                method = 'POST';
+                break;
+            case 'create':
+                endpoint = type === 'lxc'
+                    ? `/proxmox/api/${serverId}/container/${vmid}/snapshots?node=${encodeURIComponent(node)}`
+                    : `/proxmox/api/${serverId}/vm/${vmid}/snapshots?node=${encodeURIComponent(node)}`;
+                method = 'POST';
+                body = JSON.stringify({
+                    snapname: op.snapname,
+                    description: op.description || '',
+                    vmstate: op.vmstate || false
+                });
+                break;
+            default:
+                throw new Error('Unknown operation type');
+        }
+        
+        const response = await fetchWithAuth(endpoint, {
+            method,
+            headers: body ? { 'Content-Type': 'application/json' } : {},
+            body
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            
+            // If Proxmox returned UPID, wait for task completion
+            if (data.upid) {
+                return await this.waitForTask(serverId, node, data.upid, op);
+            }
+            
+            return { 
+                success: true, 
+                message: this.getSuccessMessage(op.type, op.snapname) 
+            };
+        } else {
+            const error = await response.json();
+            return { 
+                success: false, 
+                message: error.detail || this.getFailMessage(op.type, op.snapname)
+            };
+        }
+    },
+    
+    // Wait for Proxmox task to complete
+    async waitForTask(serverId, node, upid, op) {
+        const maxAttempts = 60; // 60 attempts * 2 seconds = 2 minutes max
+        let attempts = 0;
+        
+        while (attempts < maxAttempts) {
+            try {
+                const response = await fetchWithAuth(
+                    `/proxmox/api/${serverId}/task/${encodeURIComponent(upid)}/status?node=${node}`
+                );
+                
+                if (response.ok) {
+                    const status = await response.json();
+                    
+                    if (status.status === 'stopped') {
+                        // Task completed
+                        if (status.exitstatus === 'OK') {
+                            return { 
+                                success: true, 
+                                message: this.getSuccessMessage(op.type, op.snapname)
+                            };
+                        } else {
+                            return { 
+                                success: false, 
+                                message: `${this.getFailMessage(op.type, op.snapname)}: ${status.exitstatus}`
+                            };
+                        }
+                    }
+                    
+                    // Task still running, update progress
+                    op.taskStatus = status;
+                    this.updateUI();
+                }
+            } catch (e) {
+                console.error('Error checking task status:', e);
+            }
+            
+            await new Promise(r => setTimeout(r, 2000));
+            attempts++;
+        }
+        
+        return { 
+            success: false, 
+            message: t('task_timeout') || 'Operation timed out'
+        };
+    },
+    
+    getSuccessMessage(type, snapname) {
+        switch (type) {
+            case 'delete': return t('snapshot_deleted') || 'Snapshot deleted';
+            case 'rollback': return t('snapshot_rollback_started') || 'Rollback completed';
+            case 'create': return t('snapshot_created') || 'Snapshot created';
+            default: return 'Operation completed';
+        }
+    },
+    
+    getFailMessage(type, snapname) {
+        switch (type) {
+            case 'delete': return t('snapshot_delete_failed') || 'Failed to delete snapshot';
+            case 'rollback': return t('snapshot_rollback_failed') || 'Failed to rollback';
+            case 'create': return t('snapshot_create_failed') || 'Failed to create snapshot';
+            default: return 'Operation failed';
+        }
+    },
+    
+    // Update UI to show queue status
+    updateUI() {
+        let queueIndicator = document.getElementById('snapshotQueueIndicator');
+        
+        if (!queueIndicator) {
+            // Create queue indicator
+            queueIndicator = document.createElement('div');
+            queueIndicator.id = 'snapshotQueueIndicator';
+            queueIndicator.className = 'snapshot-queue-indicator';
+            const toolbar = document.querySelector('#snapshotsTabContent .vm-toolbar-right');
+            if (toolbar) {
+                toolbar.insertBefore(queueIndicator, toolbar.firstChild);
+            }
+        }
+        
+        if (this.queue.length === 0 && !this.currentOp) {
+            queueIndicator.style.display = 'none';
+            // Enable buttons
+            document.querySelectorAll('.snapshot-actions button').forEach(btn => btn.disabled = false);
+            if (selectedSnapshotVM) {
+                document.getElementById('createSnapshotBtn').disabled = false;
+            }
+        } else {
+            queueIndicator.style.display = 'flex';
+            
+            const currentLabel = this.currentOp 
+                ? `${this.getOpLabel(this.currentOp.type)}: ${this.currentOp.snapname}`
+                : '';
+            const queueCount = this.queue.length;
+            
+            queueIndicator.innerHTML = `
+                <i class="fa-solid fa-spinner fa-spin"></i>
+                <span>${currentLabel}</span>
+                ${queueCount > 1 ? `<span class="badge">${queueCount} ${t('in_queue') || 'in queue'}</span>` : ''}
+            `;
+            
+            // Disable buttons while processing
+            document.querySelectorAll('.snapshot-actions button').forEach(btn => btn.disabled = true);
+            document.getElementById('createSnapshotBtn').disabled = true;
+        }
+    },
+    
+    getOpLabel(type) {
+        switch (type) {
+            case 'delete': return t('deleting') || 'Deleting';
+            case 'rollback': return t('rolling_back') || 'Rolling back';
+            case 'create': return t('creating') || 'Creating';
+            default: return 'Processing';
+        }
+    }
+};
+
+async function initSnapshotsTab() {
+    const serverSelect = document.getElementById('snapshotServerFilter');
+    
+    // Load servers if not loaded
+    if (snapshotsServers.length === 0) {
+        try {
+            const response = await fetchWithAuth('/proxmox/api/servers');
+            if (response.ok) {
+                snapshotsServers = await response.json();
+                serverSelect.innerHTML = '<option value="">{{ t("select_server") }}</option>';
+                snapshotsServers.forEach(s => {
+                    serverSelect.innerHTML += `<option value="${s.id}">${s.name}</option>`;
+                });
+            }
+        } catch (e) {
+            console.error('Error loading servers:', e);
+        }
+    }
+}
+
+async function loadSnapshotsForServer(serverId) {
+    const vmSelect = document.getElementById('snapshotVMFilter');
+    const createBtn = document.getElementById('createSnapshotBtn');
+    
+    if (!serverId) {
+        vmSelect.innerHTML = '<option value="">{{ t("select_vm") }}</option>';
+        vmSelect.disabled = true;
+        createBtn.disabled = true;
+        return;
+    }
+    
+    vmSelect.innerHTML = '<option value="">{{ t("loading") }}...</option>';
+    vmSelect.disabled = true;
+    
+    try {
+        const response = await fetchWithAuth(`/proxmox/api/${serverId}/resources`);
+        if (response.ok) {
+            const data = await response.json();
+            // Combine VMs and containers into one array
+            const vms = (data.vms || []).map(vm => ({ ...vm, type: 'qemu' }));
+            const containers = (data.containers || []).map(ct => ({ ...ct, type: 'lxc' }));
+            snapshotsVMs = [...vms, ...containers];
+            
+            vmSelect.innerHTML = '<option value="">{{ t("select_vm") }}</option>';
+            snapshotsVMs.forEach(vm => {
+                const typeIcon = vm.type === 'qemu' ? 'fa-desktop' : 'fa-cube';
+                const statusClass = vm.status === 'running' ? 'text-success' : 'text-muted';
+                const statusDot = vm.status === 'running' ? '●' : '○';
+                vmSelect.innerHTML += `<option value="${vm.vmid}" data-node="${vm.node}" data-type="${vm.type}">${statusDot} ${vm.name || vm.vmid} (${vm.vmid})</option>`;
+            });
+            vmSelect.disabled = false;
+        } else {
+            console.error('Error response:', await response.text());
+            vmSelect.innerHTML = '<option value="">{{ t("error") }}</option>';
+        }
+    } catch (e) {
+        console.error('Error loading VMs:', e);
+        vmSelect.innerHTML = '<option value="">{{ t("error") }}</option>';
+    }
+}
+
+async function loadSnapshotsForVM(vmid) {
+    const container = document.getElementById('snapshotsContainer');
+    const createBtn = document.getElementById('createSnapshotBtn');
+    const vmSelect = document.getElementById('snapshotVMFilter');
+    const serverId = document.getElementById('snapshotServerFilter').value;
+    
+    if (!vmid || !serverId) {
+        createBtn.disabled = true;
+        container.innerHTML = `
+            <div class="snapshots-empty-state">
+                <i class="fa-solid fa-camera"></i>
+                <div>{{ t('select_vm_for_snapshots') }}</div>
+            </div>
+        `;
+        return;
+    }
+    
+    const selectedOption = vmSelect.options[vmSelect.selectedIndex];
+    const node = selectedOption.dataset.node;
+    const type = selectedOption.dataset.type;
+    
+    selectedSnapshotVM = { serverId, vmid, node, type };
+    createBtn.disabled = false;
+    
+    container.innerHTML = `
+        <div class="snapshots-empty-state">
+            <i class="fa-solid fa-spinner fa-spin" style="opacity: 1;"></i>
+            <div>{{ t('loading') }}...</div>
+        </div>
+    `;
+    
+    try {
+        const endpoint = type === 'lxc' 
+            ? `/proxmox/api/${serverId}/container/${vmid}/snapshots?node=${node}`
+            : `/proxmox/api/${serverId}/vm/${vmid}/snapshots?node=${node}`;
+            
+        const response = await fetchWithAuth(endpoint);
+        if (response.ok) {
+            const data = await response.json();
+            currentSnapshots = data.snapshots || [];
+            renderSnapshots();
+        } else {
+            container.innerHTML = `
+                <div class="snapshots-empty-state" style="color: var(--danger);">
+                    <i class="fa-solid fa-exclamation-triangle" style="opacity: 1;"></i>
+                    <div>{{ t('error_loading_snapshots') }}</div>
+                </div>
+                </div>
+            `;
+        }
+    } catch (e) {
+        console.error('Error loading snapshots:', e);
+        container.innerHTML = `
+            <div style="text-align: center; padding: 2rem; color: var(--danger);">
+                <i class="fa-solid fa-exclamation-triangle"></i> ${e.message}
+            </div>
+        `;
+    }
+}
+
+function renderSnapshots() {
+    const container = document.getElementById('snapshotsContainer');
+    
+    if (currentSnapshots.length === 0) {
+        container.innerHTML = `
+            <div class="snapshots-empty-state">
+                <i class="fa-solid fa-camera"></i>
+                <div>{{ t('no_snapshots') }}</div>
+                <button class="btn btn-primary" onclick="showCreateSnapshotModal()" style="margin-top: 1rem;">
+                    <i class="fa-solid fa-plus"></i> {{ t('create_first_snapshot') }}
+                </button>
+            </div>
+        `;
+        return;
+    }
+    
+    let html = '';
+    currentSnapshots.forEach(snap => {
+        const date = snap.snaptime ? new Date(snap.snaptime * 1000).toLocaleString() : '-';
+        const hasRam = snap.vmstate ? '<span class="badge badge-info"><i class="fa-solid fa-memory"></i> RAM</span>' : '';
+        
+        html += `
+            <div class="snapshot-card">
+                <div class="snapshot-header">
+                    <div class="snapshot-title">
+                        <span class="snapshot-name"><i class="fa-solid fa-camera"></i> ${snap.name}</span>
+                        ${hasRam}
+                    </div>
+                    <div class="snapshot-actions">
+                        <button class="btn btn-sm btn-secondary" onclick="rollbackSnapshot('${snap.name}')" title="{{ t('rollback') }}">
+                            <i class="fa-solid fa-rotate-left"></i>
+                        </button>
+                        <button class="btn btn-sm btn-danger" onclick="deleteSnapshot('${snap.name}')" title="{{ t('delete') }}">
+                            <i class="fa-solid fa-trash"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="snapshot-meta">
+                    <span><i class="fa-regular fa-calendar"></i> ${date}</span>
+                    ${snap.parent ? `<span><i class="fa-solid fa-code-branch"></i> {{ t('parent') }}: ${snap.parent}</span>` : ''}
+                </div>
+                ${snap.description ? `<div class="snapshot-description"><i class="fa-solid fa-align-left"></i> ${snap.description}</div>` : ''}
+            </div>
+        `;
+    });
+    
+    container.innerHTML = html;
+}
+
+function filterSnapshots(query) {
+    const cards = document.querySelectorAll('.snapshot-card');
+    const q = query.toLowerCase();
+    
+    cards.forEach(card => {
+        const name = card.querySelector('.snapshot-name').textContent.toLowerCase();
+        card.style.display = name.includes(q) ? '' : 'none';
+    });
+}
+
+function refreshSnapshots() {
+    if (selectedSnapshotVM) {
+        loadSnapshotsForVM(selectedSnapshotVM.vmid);
+    }
+}
+
+function showCreateSnapshotModal() {
+    if (!selectedSnapshotVM) {
+        showToast('warning', t('warning'), t('select_vm_first'));
+        return;
+    }
+    
+    const modal = document.createElement('div');
+    modal.id = 'createSnapshotModal';
+    modal.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 2000; display: flex; align-items: center; justify-content: center;';
+    
+    modal.innerHTML = `
+        <div class="card" style="max-width: 500px; width: 95%;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                <h3 style="margin: 0;"><i class="fa-solid fa-camera"></i> {{ t('create_snapshot') }}</h3>
+                <button onclick="this.closest('#createSnapshotModal').remove()" style="background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer;">&times;</button>
+            </div>
+            
+            <form onsubmit="createSnapshot(event)">
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <label style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary);">{{ t('snapshot_name') }} *</label>
+                    <input type="text" id="snapshotName" required pattern="[a-zA-Z0-9_\-]+" 
+                           placeholder="snapshot-1" 
+                           style="width: 100%; padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                    <small style="color: var(--text-muted);">{{ t('snapshot_name_hint') }}</small>
+                </div>
+                
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <label style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary);">{{ t('description') }}</label>
+                    <textarea id="snapshotDescription" rows="2"
+                              style="width: 100%; padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary); resize: vertical;"></textarea>
+                </div>
+                
+                ${selectedSnapshotVM.type === 'qemu' ? `
+                <div class="form-group" style="margin-bottom: 1.5rem;">
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                        <input type="checkbox" id="snapshotIncludeRAM">
+                        <span>{{ t('include_ram_state') }}</span>
+                    </label>
+                    <small style="color: var(--text-muted);">{{ t('include_ram_hint') }}</small>
+                </div>
+                ` : ''}
+                
+                <div style="display: flex; gap: 1rem; justify-content: flex-end;">
+                    <button type="button" class="btn btn-secondary" onclick="this.closest('#createSnapshotModal').remove()">{{ t('cancel') }}</button>
+                    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-camera"></i> {{ t('create') }}</button>
+                </div>
+            </form>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    document.getElementById('snapshotName').focus();
+}
+
+async function createSnapshot(event) {
+    event.preventDefault();
+    
+    const name = document.getElementById('snapshotName').value.trim();
+    const description = document.getElementById('snapshotDescription').value.trim();
+    const includeRAM = document.getElementById('snapshotIncludeRAM')?.checked || false;
+    
+    if (!name) return;
+    
+    const modal = document.getElementById('createSnapshotModal');
+    modal.remove();
+    
+    // Add to operation queue
+    snapshotOperationQueue.add({
+        type: 'create',
+        snapname: name,
+        description: description,
+        vmstate: includeRAM,
+        vm: { ...selectedSnapshotVM }
+    });
+}
+
+async function deleteSnapshot(snapname) {
+    const confirmed = await showDeleteConfirm(
+        t('delete_snapshot'),
+        t('delete_snapshot_confirm').replace('{name}', snapname)
+    );
+    
+    if (!confirmed) return;
+    
+    // Add to operation queue
+    snapshotOperationQueue.add({
+        type: 'delete',
+        snapname: snapname,
+        vm: { ...selectedSnapshotVM }
+    });
+}
+
+async function rollbackSnapshot(snapname) {
+    const confirmed = await showDeleteConfirm(
+        t('rollback_snapshot'),
+        t('rollback_snapshot_confirm').replace('{name}', snapname)
+    );
+    
+    if (!confirmed) return;
+    
+    // Add to operation queue
+    snapshotOperationQueue.add({
+        type: 'rollback',
+        snapname: snapname,
+        vm: { ...selectedSnapshotVM }
+    });
+}
+</script>
+
+{% endblock %}

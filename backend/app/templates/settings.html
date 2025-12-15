@@ -1,0 +1,1943 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="settings-container">
+    <!-- Tabs Navigation -->
+    <div class="tabs-nav">
+        <button class="tab-btn active" data-tab="account">
+            <i class="fas fa-user"></i>
+            <span>{{ t('settings_account') }}</span>
+        </button>
+        <button class="tab-btn" data-tab="notifications">
+            <i class="fas fa-bell"></i>
+            <span>{{ t('notifications') }}</span>
+        </button>
+        <button class="tab-btn" data-tab="panel">
+            <i class="fas fa-cog"></i>
+            <span>{{ t('settings_panel') }}</span>
+        </button>
+    </div>
+
+    <!-- Account Settings Tab -->
+    <div id="account-tab" class="tab-content active">
+        <div class="settings-section">
+            <h2><i class="fa-solid fa-user"></i> {{ t('user_profile') }}</h2>
+            
+            <div class="profile-info" id="profile-info">
+                <!-- Loading spinner -->
+                <div class="spinner"></div>
+            </div>
+
+            <form id="profile-form" class="settings-form" style="display: none;">
+                <div class="form-group">
+                    <label for="username">{{ t('username') }}</label>
+                    <input type="text" id="username" disabled>
+                    <small>{{ t('username_readonly') }}</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="full_name">{{ t('full_name') }}</label>
+                    <input type="text" id="full_name" maxlength="100" placeholder="{{ t('placeholder_full_name') }}">
+                </div>
+
+                <div class="form-group">
+                    <label for="email">{{ t('email') }}</label>
+                    <input type="email" id="email" placeholder="{{ t('placeholder_email') }}">
+                </div>
+
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save"></i> {{ t('save_changes') }}
+                </button>
+            </form>
+        </div>
+
+        <div class="settings-section">
+            <h2><i class="fa-solid fa-lock"></i> {{ t('change_password') }}</h2>
+            
+            <form id="password-form" class="settings-form">
+                <div class="form-group">
+                    <label for="current_password">{{ t('current_password') }}</label>
+                    <input type="password" id="current_password" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="new_password">{{ t('new_password') }}</label>
+                    <input type="password" id="new_password" required minlength="6">
+                    <small>{{ t('password_min_length') }}</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="confirm_password">{{ t('confirm_password') }}</label>
+                    <input type="password" id="confirm_password" required minlength="6">
+                </div>
+
+                <button type="submit" class="btn btn-warning">
+                    <i class="fas fa-key"></i> {{ t('change_password') }}
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Notifications Settings Tab -->
+    <div id="notifications-tab" class="tab-content">
+        <!-- Admin Channel Settings Section -->
+        <div class="settings-section admin-only-section" id="channel-settings-section" style="display: none;">
+            <h2><i class="fas fa-cogs"></i> {{ t('notification_channel_config') or 'Настройка каналов уведомлений' }}</h2>
+            
+            <!-- SMTP Settings -->
+            <div class="channel-config-card">
+                <div class="channel-config-header">
+                    <i class="fas fa-envelope" style="color: var(--warning);"></i>
+                    <span>SMTP (Email)</span>
+                </div>
+                <form id="smtp-settings-form" class="settings-form">
+                    <div class="form-row">
+                        <div class="form-group" style="flex: 2;">
+                            <label for="smtp_host">{{ t('smtp_host') or 'SMTP сервер' }}</label>
+                            <input type="text" id="smtp_host" placeholder="smtp.yandex.ru">
+                            <small>Yandex: smtp.yandex.ru | Gmail: smtp.gmail.com | Mail.ru: smtp.mail.ru</small>
+                        </div>
+                        <div class="form-group" style="flex: 1;">
+                            <label for="smtp_port">{{ t('smtp_port') or 'Порт' }}</label>
+                            <input type="number" id="smtp_port" placeholder="465" value="465">
+                            <small>465 (SSL) или 587 (TLS)</small>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group" style="flex: 1;">
+                            <label for="smtp_user">{{ t('smtp_user') or 'Пользователь' }}</label>
+                            <input type="text" id="smtp_user" placeholder="user@example.com">
+                        </div>
+                        <div class="form-group" style="flex: 1;">
+                            <label for="smtp_password">{{ t('smtp_password') or 'Пароль' }}</label>
+                            <input type="password" id="smtp_password" placeholder="••••••••">
+                            <small>{{ t('smtp_password_help') or 'Используйте пароль приложения' }}</small>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group" style="flex: 2;">
+                            <label for="smtp_from">{{ t('smtp_from') or 'Email отправителя' }}</label>
+                            <input type="email" id="smtp_from" placeholder="noreply@example.com">
+                        </div>
+                        <div class="form-group" style="flex: 1;">
+                            <label class="toggle-label" style="margin-top: 25px;">
+                                <input type="checkbox" id="smtp_tls" checked>
+                                <span class="toggle-text">TLS/SSL</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-save"></i> {{ t('save') or 'Сохранить' }}
+                        </button>
+                        <button type="button" id="test-smtp-settings-btn" class="btn btn-secondary">
+                            <i class="fas fa-paper-plane"></i> {{ t('test_connection') or 'Тест' }}
+                        </button>
+                    </div>
+                </form>
+            </div>
+            
+            <!-- Telegram Settings -->
+            <div class="channel-config-card" style="margin-top: 20px;">
+                <div class="channel-config-header">
+                    <i class="fab fa-telegram" style="color: #0088cc;"></i>
+                    <span>Telegram Bot</span>
+                </div>
+                <form id="telegram-settings-form" class="settings-form">
+                    <div class="form-group">
+                        <label for="telegram_bot_token">{{ t('telegram_token') or 'Токен бота' }}</label>
+                        <input type="password" id="telegram_bot_token" placeholder="123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ">
+                        <small>{{ t('telegram_token_help') or 'Получите токен у @BotFather в Telegram' }}</small>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-save"></i> {{ t('save') or 'Сохранить' }}
+                        </button>
+                        <button type="button" id="test-telegram-settings-btn" class="btn btn-secondary">
+                            <i class="fas fa-paper-plane"></i> {{ t('test_connection') or 'Тест' }}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div class="settings-section">
+            <h2><i class="fas fa-bell"></i> {{ t('notification_channels') }}</h2>
+            
+            <div id="channels-status" class="info-grid">
+                <div class="spinner"></div>
+            </div>
+        </div>
+
+        <div class="settings-section">
+            <h2><i class="fas fa-sliders-h"></i> {{ t('notification_settings') }}</h2>
+            
+            <form id="notification-settings-form" class="settings-form">
+                <div class="form-group">
+                    <label class="toggle-label">
+                        <input type="checkbox" id="notify_email_enabled">
+                        <span class="toggle-text"><i class="fas fa-envelope"></i> {{ t('email_notifications') }}</span>
+                    </label>
+                    <small>{{ t('email_notifications_help') }}</small>
+                </div>
+
+                <div class="form-group">
+                    <label class="toggle-label">
+                        <input type="checkbox" id="notify_telegram_enabled">
+                        <span class="toggle-text"><i class="fab fa-telegram"></i> {{ t('telegram_notifications') }}</span>
+                    </label>
+                    <small>{{ t('telegram_notifications_help') }}</small>
+                </div>
+
+                <div class="form-group" id="telegram-chat-id-group" style="display: none;">
+                    <label for="telegram_chat_id">{{ t('telegram_chat_id') }}</label>
+                    <div style="display: flex; gap: 10px;">
+                        <input type="text" id="telegram_chat_id" placeholder="123456789" style="flex: 1;">
+                        <button type="button" id="verify-telegram-btn" class="btn btn-secondary" style="white-space: nowrap; flex-shrink: 0; padding: 10px 16px;">
+                            <i class="fas fa-check-circle"></i> {{ t('verify') }}
+                        </button>
+                    </div>
+                    <small>{{ t('telegram_chat_id_help') }} <a href="https://t.me/userinfobot" target="_blank" style="color: var(--info);">@userinfobot</a></small>
+                </div>
+
+                <div class="form-group">
+                    <label class="toggle-label">
+                        <input type="checkbox" id="notify_critical_only">
+                        <span class="toggle-text"><i class="fas fa-exclamation-triangle"></i> {{ t('critical_only') }}</span>
+                    </label>
+                    <small>{{ t('critical_only_help') }}</small>
+                </div>
+
+                <div class="form-group">
+                    <label>{{ t('quiet_hours') }}</label>
+                    <div style="display: flex; gap: 15px; align-items: center;">
+                        <input type="time" id="quiet_hours_start" style="width: auto;">
+                        <span style="color: var(--text-secondary);">{{ t('to') }}</span>
+                        <input type="time" id="quiet_hours_end" style="width: auto;">
+                    </div>
+                    <small>{{ t('quiet_hours_help') }}</small>
+                </div>
+
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save"></i> {{ t('save_settings') }}
+                </button>
+            </form>
+        </div>
+
+        <div class="settings-section">
+            <h2><i class="fas fa-vial"></i> {{ t('testing') }}</h2>
+            
+            <div class="settings-actions" style="flex-wrap: wrap;">
+                <button id="test-inapp-btn" class="btn btn-secondary">
+                    <i class="fas fa-desktop"></i> {{ t('test_inapp') }}
+                </button>
+                <button id="test-email-btn" class="btn btn-secondary">
+                    <i class="fas fa-envelope"></i> {{ t('test_email') }}
+                </button>
+                <button id="test-telegram-btn" class="btn btn-secondary">
+                    <i class="fab fa-telegram"></i> {{ t('test_telegram') }}
+                </button>
+                <button id="test-all-btn" class="btn btn-primary">
+                    <i class="fas fa-paper-plane"></i> {{ t('test_all_channels') }}
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Panel Settings Tab -->
+    <div id="panel-tab" class="tab-content">
+        <div class="settings-section">
+            <h2><i class="fa-solid fa-desktop"></i> {{ t('panel_info') }}</h2>
+            
+            <div id="panel-info" class="info-grid">
+                <!-- Loading spinner -->
+                <div class="spinner"></div>
+            </div>
+        </div>
+
+        <div class="settings-section" id="panel-settings-form-section">
+            <h2><i class="fa-solid fa-gear"></i> {{ t('panel_settings') }}</h2>
+            
+            <form id="panel-form" class="settings-form">
+                <div class="form-group">
+                    <label for="refresh_interval">{{ t('refresh_interval_label') }}</label>
+                    <input type="number" id="refresh_interval" min="1" max="60" value="5">
+                    <small>{{ t('refresh_interval_help') }}</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="log_retention_days">{{ t('log_retention_label') }}</label>
+                    <input type="number" id="log_retention_days" min="1" max="365" value="30">
+                    <small>{{ t('log_retention_help') }}</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="language">{{ t('language') }}</label>
+                    <select id="language">
+                        <option value="ru">🇷🇺 Русский</option>
+                        <option value="en">🇺🇸 English (US)</option>
+                    </select>
+                    <small>{{ t('language_help') }}</small>
+                </div>
+
+                <!-- Session Settings (for administrators only) -->
+                <div class="form-group admin-only-section" id="session-settings-section" style="display: none;">
+                    <label class="toggle-label">
+                        <input type="checkbox" id="single_session_enabled">
+                        <span class="toggle-text"><i class="fas fa-user-lock"></i> {{ t('single_session_mode') or 'Режим одной сессии' }}</span>
+                    </label>
+                    <small>{{ t('single_session_help') or 'Если включено, пользователь может быть авторизован только на одном устройстве. При входе с нового устройства старая сессия будет завершена.' }}</small>
+                </div>
+
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save"></i> {{ t('save_settings') }}
+                </button>
+            </form>
+
+            <div class="settings-actions" style="margin-top: 20px;">
+                <button id="cleanup-logs-btn" class="btn btn-danger">
+                    <i class="fas fa-trash"></i> {{ t('cleanup_logs') }}
+                </button>
+            </div>
+        </div>
+        
+        <!-- System Updates Section -->
+        <div class="settings-section admin-only-section" id="system-updates-section">
+            <h2><i class="fa-solid fa-cloud-arrow-down"></i> {{ t('system_updates') }}</h2>
+            
+            <div class="update-info-card">
+                <div class="update-version-row">
+                    <div class="version-item">
+                        <span class="version-label">{{ t('current_version') }}</span>
+                        <span class="version-value" id="current-version">-</span>
+                    </div>
+                    <div class="version-item">
+                        <span class="version-label">{{ t('latest_version') }}</span>
+                        <span class="version-value" id="latest-version">-</span>
+                    </div>
+                    <div class="version-item" id="commits-behind-item" style="display: none;">
+                        <span class="version-label">{{ t('commits_behind') }}</span>
+                        <span class="version-value text-warning" id="commits-behind">0</span>
+                    </div>
+                </div>
+                
+                <div id="update-status-box" class="update-status-box" style="display: none;">
+                    <div id="update-status-message"></div>
+                </div>
+                
+                <div id="update-changelog-box" class="update-changelog-box" style="display: none;">
+                    <h4><i class="fas fa-list"></i> {{ t('update_changelog') }}</h4>
+                    <div id="update-changelog-content" class="changelog-content"></div>
+                </div>
+                
+                <div class="update-actions">
+                    <button id="check-updates-btn" class="btn btn-secondary" onclick="checkForUpdates()">
+                        <i class="fas fa-sync-alt"></i> {{ t('check_updates') }}
+                    </button>
+                    <button id="update-now-btn" class="btn btn-success" style="display: none;" onclick="performUpdate()">
+                        <i class="fas fa-download"></i> {{ t('update_now') }}
+                    </button>
+                </div>
+                
+                <small class="update-warning">
+                    <i class="fas fa-exclamation-triangle"></i> {{ t('update_warning') }}
+                </small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.settings-container {
+    max-width: 900px;
+    margin: 0 auto;
+}
+
+.settings-container h1 {
+    margin-bottom: var(--spacing-xl);
+    color: var(--text-primary);
+}
+
+/* Tabs Navigation */
+.tabs-nav {
+    display: flex;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-xl);
+    padding: var(--spacing-xs);
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-xl);
+    flex-wrap: wrap;
+}
+
+.tab-btn {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: 12px 20px;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-lg);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all var(--transition-normal);
+    white-space: nowrap;
+}
+
+.tab-btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-surface-hover);
+}
+
+.tab-btn.active {
+    color: var(--text-on-primary);
+    background: var(--gradient-primary);
+    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.35);
+}
+
+.tab-btn i {
+    font-size: 16px;
+}
+
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+    animation: fadeIn 0.3s;
+}
+
+@keyframes settingsFadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.settings-section {
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-xl);
+    padding: var(--spacing-xl);
+    margin-bottom: var(--spacing-lg);
+    box-shadow: var(--shadow-lg);
+    animation: settingsFadeIn 0.4s ease-out;
+}
+
+.settings-section h2 {
+    margin: 0 0 var(--spacing-lg) 0;
+    color: var(--text-primary);
+    font-size: 1.25rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+.settings-section h2 i {
+    color: var(--primary);
+}
+
+.settings-form {
+    max-width: 600px;
+}
+
+.form-group {
+    margin-bottom: var(--spacing-lg);
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: var(--spacing-sm);
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+    width: 100%;
+    padding: 12px 16px;
+    background: var(--bg-input);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    font-size: 14px;
+    transition: all var(--transition-fast);
+}
+
+.form-group input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background: var(--bg-surface-hover);
+}
+
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px var(--primary-light);
+}
+
+.form-group small {
+    display: block;
+    margin-top: var(--spacing-xs);
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.form-group small a {
+    color: var(--primary);
+}
+
+.profile-info {
+    margin-bottom: var(--spacing-lg);
+}
+
+.info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: var(--spacing-md);
+}
+
+.info-item {
+    padding: var(--spacing-md);
+    background: var(--bg-surface-hover);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+}
+
+.info-item label {
+    display: block;
+    color: var(--text-muted);
+    font-size: 11px;
+    margin-bottom: var(--spacing-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.info-item .value {
+    color: var(--text-primary);
+    font-size: 15px;
+    font-weight: 500;
+}
+
+.info-item .info-label {
+    color: var(--text-muted);
+    font-size: 12px;
+    margin-bottom: 4px;
+}
+
+.info-item .info-value {
+    color: var(--text-primary);
+    font-size: 15px;
+    font-weight: 500;
+}
+
+.info-item .badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: var(--radius-full);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.badge.admin {
+    background: var(--danger-light);
+    color: var(--danger);
+}
+
+.badge.user {
+    background: var(--success-light);
+    color: var(--success);
+}
+
+.badge.active {
+    background: var(--success-light);
+    color: var(--success);
+}
+
+.badge.inactive {
+    background: var(--bg-surface-hover);
+    color: var(--text-muted);
+}
+
+.settings-actions {
+    display: flex;
+    gap: var(--spacing-sm);
+    flex-wrap: wrap;
+}
+
+/* Override button styles for settings page */
+.settings-section .btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    transition: all var(--transition-fast);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+.settings-section .btn i {
+    margin-right: 0;
+}
+
+.settings-section .btn-primary {
+    background: var(--gradient-primary);
+    color: var(--text-on-primary);
+    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+}
+
+.settings-section .btn-primary:hover {
+    filter: brightness(1.1);
+    box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+}
+
+.settings-section .btn-warning {
+    background: linear-gradient(135deg, var(--warning) 0%, #ea580c 100%);
+    color: var(--text-on-warning);
+    box-shadow: 0 4px 15px rgba(249, 115, 22, 0.4);
+}
+
+.settings-section .btn-warning:hover {
+    filter: brightness(1.1);
+    box-shadow: 0 6px 20px rgba(249, 115, 22, 0.5);
+}
+
+.settings-section .btn-danger {
+    background: linear-gradient(135deg, var(--danger) 0%, #dc2626 100%);
+    color: var(--text-on-danger);
+    box-shadow: 0 4px 15px rgba(239, 68, 68, 0.4);
+}
+
+.settings-section .btn-danger:hover {
+    filter: brightness(1.1);
+    box-shadow: 0 6px 20px rgba(239, 68, 68, 0.5);
+}
+
+.settings-section .btn-secondary {
+    background: var(--bg-surface-hover);
+    color: var(--text-primary);
+    border: 1px solid var(--border-default);
+    box-shadow: none;
+}
+
+.settings-section .btn-secondary:hover {
+    background: var(--bg-surface-active);
+}
+
+.settings-section .btn-success {
+    background: linear-gradient(135deg, var(--success) 0%, #059669 100%);
+    color: var(--text-on-success);
+    box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4);
+}
+
+.settings-section .btn-success:hover {
+    filter: brightness(1.1);
+    box-shadow: 0 6px 20px rgba(16, 185, 129, 0.5);
+}
+
+/* System Updates Styles */
+.update-info-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-xl);
+}
+
+.update-version-row {
+    display: flex;
+    gap: var(--spacing-xl);
+    margin-bottom: var(--spacing-lg);
+    flex-wrap: wrap;
+}
+
+.version-item {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+}
+
+.version-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.version-value {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.version-value.text-success {
+    color: var(--success);
+}
+
+.version-value.text-warning {
+    color: var(--warning);
+}
+
+.update-status-box {
+    padding: var(--spacing-md);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--spacing-lg);
+}
+
+.update-status-box.info {
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    color: #3b82f6;
+}
+
+.update-status-box.success {
+    background: rgba(16, 185, 129, 0.1);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    color: var(--success);
+}
+
+.update-status-box.error {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: var(--danger);
+}
+
+.update-changelog-box {
+    margin-bottom: var(--spacing-lg);
+}
+
+.update-changelog-box h4 {
+    margin: 0 0 var(--spacing-sm) 0;
+    font-size: 14px;
+    color: var(--text-secondary);
+}
+
+.changelog-content {
+    background: var(--bg-input);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-md);
+    max-height: 200px;
+    overflow-y: auto;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    font-family: var(--font-mono);
+}
+
+.update-actions {
+    display: flex;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-md);
+}
+
+.update-warning {
+    display: block;
+    color: var(--warning);
+    font-size: 12px;
+}
+
+.update-warning i {
+    margin-right: 4px;
+}
+
+.toggle-label {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+}
+
+.toggle-label input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
+    accent-color: var(--primary);
+}
+
+.toggle-text {
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.toggle-text i {
+    margin-right: 8px;
+    width: 20px;
+    color: var(--primary);
+}
+
+.channel-card {
+    padding: var(--spacing-md);
+    background: var(--bg-surface-hover);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    min-width: 0;
+    transition: all var(--transition-fast);
+}
+
+.channel-card:hover {
+    filter: brightness(1.02);
+    box-shadow: var(--shadow-md);
+}
+
+.channel-card.configured {
+    border-color: var(--success);
+}
+
+.channel-card.not-configured {
+    border-color: var(--danger);
+    opacity: 0.7;
+}
+
+.channel-icon {
+    font-size: 24px;
+    width: 40px;
+    min-width: 40px;
+    text-align: center;
+}
+
+.channel-icon.email { color: var(--warning); }
+.channel-icon.telegram { color: #0088cc; }
+.channel-icon.inapp { color: var(--success); }
+
+.channel-info {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.channel-name {
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.channel-status {
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.channel-badge {
+    padding: 4px 10px;
+    border-radius: var(--radius-full);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.channel-badge.active {
+    background: var(--success-light);
+    color: var(--success);
+}
+
+.channel-badge.inactive {
+    background: var(--danger-light);
+    color: var(--danger);
+}
+
+/* Channel configuration cards */
+.channel-config-card {
+    background: var(--bg-surface-hover);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-lg);
+}
+
+.channel-config-header {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: var(--spacing-lg);
+    padding-bottom: var(--spacing-sm);
+    border-bottom: 1px solid var(--border-default);
+}
+
+.channel-config-header i {
+    font-size: 20px;
+}
+
+.form-row {
+    display: flex;
+    gap: var(--spacing-md);
+    flex-wrap: wrap;
+}
+
+.form-row .form-group {
+    min-width: 150px;
+}
+
+.form-actions {
+    display: flex;
+    gap: var(--spacing-sm);
+    margin-top: var(--spacing-md);
+    flex-wrap: wrap;
+}
+
+.spinner {
+    border: 3px solid var(--border-default);
+    border-top: 3px solid var(--primary);
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    animation: spin 1s linear infinite;
+    margin: 20px auto;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Notification styles */
+.notification {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    padding: 15px 20px;
+    border-radius: var(--radius-md);
+    color: var(--text-on-primary);
+    font-weight: 500;
+    z-index: 10000;
+    animation: notificationSlideIn 0.3s ease-out;
+    box-shadow: var(--shadow-lg);
+    backdrop-filter: blur(10px);
+}
+
+@keyframes notificationSlideIn {
+    from { 
+        opacity: 0; 
+        transform: translateX(100%); 
+    }
+    to { 
+        opacity: 1; 
+        transform: translateX(0); 
+    }
+}
+
+@keyframes slideOut {
+    from { 
+        opacity: 1; 
+        transform: translateX(0); 
+    }
+    to { 
+        opacity: 0; 
+        transform: translateX(100%); 
+    }
+}
+
+.notification-success {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+}
+
+.notification-error {
+    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+}
+
+.notification-info {
+    background: linear-gradient(135deg, #667eea 0%, #4f46e5 100%);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .tabs-nav {
+        flex-direction: column;
+        gap: var(--spacing-xs);
+        padding: var(--spacing-sm);
+    }
+    
+    .tab-btn {
+        width: 100%;
+        justify-content: flex-start;
+    }
+    
+    .settings-section {
+        padding: var(--spacing-md);
+    }
+    
+    .info-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .settings-actions {
+        flex-direction: column;
+    }
+    
+    .settings-actions .btn {
+        width: 100%;
+        justify-content: center;
+    }
+    
+    .form-row {
+        flex-direction: column;
+        gap: var(--spacing-sm);
+    }
+    
+    .form-group {
+        width: 100% !important;
+        flex: none !important;
+    }
+    
+    .channel-config-card {
+        padding: var(--spacing-md);
+    }
+}
+
+@media (max-width: 480px) {
+    .settings-container {
+        padding: 0;
+    }
+    
+    .settings-section h2 {
+        font-size: 1rem;
+    }
+    
+    .btn {
+        font-size: 0.875rem;
+        padding: 0.5rem 1rem;
+    }
+}
+</style>
+
+<script>
+// Apply translations to dynamic content
+function applyTranslations() {
+    // Update notifications and dynamic messages with translations
+    // This is called after loading panel settings
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    let currentUser = null;
+    let panelSettings = null;
+    let notificationPrefs = null;
+
+    // Tab switching
+    document.querySelectorAll('.tab-btn').forEach(button => {
+        button.addEventListener('click', function() {
+            const tabName = this.dataset.tab;
+            
+            // Update buttons
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+            
+            // Update content
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            document.getElementById(`${tabName}-tab`).classList.add('active');
+            
+            // Load notifications data when tab is opened
+            if (tabName === 'notifications') {
+                loadChannelsStatus();
+                loadNotificationPrefs();
+            }
+        });
+    });
+
+    // Load profile
+    loadProfile();
+
+    // Load panel settings
+    loadPanelSettings();
+
+    // Profile form
+    document.getElementById('profile-form').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const data = {
+            full_name: document.getElementById('full_name').value || null,
+            email: document.getElementById('email').value || null
+        };
+
+        try {
+            const response = await fetchWithAuth('/settings/api/profile', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+
+            if (response.ok) {
+                const result = await response.json();
+                showNotification(t('profile_updated'), 'success');
+                loadProfile(); // Reload
+            } else {
+                const error = await response.json();
+                showNotification(error.detail || t('error_updating_profile'), 'error');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            showNotification(t('error_updating_profile'), 'error');
+        }
+    });
+
+    // Password form
+    document.getElementById('password-form').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const newPassword = document.getElementById('new_password').value;
+        const confirmPassword = document.getElementById('confirm_password').value;
+
+        if (newPassword !== confirmPassword) {
+            showNotification(t('passwords_dont_match'), 'error');
+            return;
+        }
+
+        const data = {
+            current_password: document.getElementById('current_password').value,
+            new_password: newPassword,
+            confirm_password: confirmPassword
+        };
+
+        try {
+            const response = await fetchWithAuth('/settings/api/change-password', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+
+            if (response.ok) {
+                showNotification(t('password_changed'), 'success');
+                document.getElementById('password-form').reset();
+            } else {
+                const error = await response.json();
+                showNotification(error.detail || t('error_changing_password'), 'error');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            showNotification(t('error_changing_password'), 'error');
+        }
+    });
+
+    // Panel form
+    document.getElementById('panel-form').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const currentLang = document.getElementById('language').value;
+        const oldLang = panelSettings ? panelSettings.language : 'ru';
+        
+        const data = {
+            refresh_interval: parseInt(document.getElementById('refresh_interval').value),
+            log_retention_days: parseInt(document.getElementById('log_retention_days').value),
+            language: currentLang
+        };
+
+        try {
+            const response = await fetchWithAuth('/settings/api/panel', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+
+            if (response.ok) {
+                // Also save session settings if admin
+                const sessionSection = document.getElementById('session-settings-section');
+                if (sessionSection && sessionSection.style.display !== 'none') {
+                    const sessionData = {
+                        single_session_enabled: document.getElementById('single_session_enabled').checked
+                    };
+                    await fetchWithAuth('/settings/api/security-settings', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(sessionData)
+                    });
+                }
+                
+                // If language changed, reload page
+                if (currentLang !== oldLang) {
+                    showNotification(t('language_changed_reload'), 'success');
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 1500);
+                } else {
+                    showNotification(t('panel_settings_updated'), 'success');
+                    loadPanelSettings(); // Reload
+                }
+            } else {
+                const error = await response.json();
+                showNotification(error.detail || t('error_updating_settings'), 'error');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            showNotification(t('error_updating_settings'), 'error');
+        }
+    });
+
+    // Cleanup logs
+    document.getElementById('cleanup-logs-btn').addEventListener('click', async function() {
+        const confirmed = await showConfirm(
+            t('confirm_cleanup_logs'), 
+            t('cleanup_logs'),
+            { type: 'warning', confirmText: t('delete') || 'Delete', confirmClass: 'danger', icon: '<i class="fa-solid fa-trash"></i>' }
+        );
+        if (!confirmed) return;
+
+        const days = parseInt(document.getElementById('log_retention_days').value);
+
+        try {
+            const response = await fetchWithAuth(`/settings/api/cleanup-logs?days=${days}`, {
+                method: 'POST'
+            });
+
+            if (response.ok) {
+                const result = await response.json();
+                showNotification(result.message, 'success');
+            } else {
+                const error = await response.json();
+                showNotification(error.detail || t('error_cleanup_logs'), 'error');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            showNotification(t('error_cleanup_logs'), 'error');
+        }
+    });
+
+    async function loadProfile() {
+        try {
+            const response = await fetchWithAuth('/settings/api/profile');
+            
+            if (!response) return; // Redirect happened
+            
+            if (response.ok) {
+                currentUser = await response.json();
+                displayProfile(currentUser);
+            } else if (response.status === 403) {
+                // Forbidden - user doesn't have permission
+                showNotification(t('error_loading_profile'), 'error');
+            }
+            // For other errors, don't show notification (might be temporary)
+        } catch (error) {
+            // Network error - don't spam user with errors on page load
+            console.error('Error loading profile:', error);
+        }
+    }
+
+    function displayProfile(user) {
+        // Show admin sections in Panel tab if user is admin
+        if (user.is_admin) {
+            // Show admin-only sections in Panel tab
+            document.querySelectorAll('.admin-only-section').forEach(section => {
+                section.style.display = '';
+            });
+            // Load session settings for admin
+            loadSessionSettings();
+            // Load channel settings for admin
+            loadChannelSettings();
+        }
+        
+        // Display read-only info
+        const profileInfo = document.getElementById('profile-info');
+        profileInfo.innerHTML = `
+            <div class="info-grid">
+                <div class="info-item">
+                    <label>ID</label>
+                    <div class="value">${user.id}</div>
+                </div>
+                <div class="info-item">
+                    <label>${t('role')}</label>
+                    <div class="value">
+                        <span class="badge ${user.is_admin ? 'admin' : 'user'}">
+                            ${user.is_admin ? t('admin') : t('user')}
+                        </span>
+                    </div>
+                </div>
+                <div class="info-item">
+                    <label>${t('status')}</label>
+                    <div class="value">
+                        <span class="badge ${user.is_active ? 'active' : 'inactive'}">
+                            ${user.is_active ? t('active') : t('inactive')}
+                        </span>
+                    </div>
+                </div>
+                <div class="info-item">
+                    <label>${t('created_date')}</label>
+                    <div class="value">${formatDate(user.created_at)}</div>
+                </div>
+                <div class="info-item">
+                    <label>${t('last_login')}</label>
+                    <div class="value">${formatDateTime(user.last_login)}</div>
+                </div>
+            </div>
+        `;
+
+        // Fill form
+        document.getElementById('username').value = user.username;
+        document.getElementById('full_name').value = user.full_name || '';
+        document.getElementById('email').value = user.email || '';
+        document.getElementById('profile-form').style.display = 'block';
+    }
+
+    async function loadPanelSettings() {
+        try {
+            const response = await fetchWithAuth('/settings/api/panel');
+            
+            if (!response) return; // Redirect happened
+            
+            if (response.ok) {
+                panelSettings = await response.json();
+                displayPanelSettings(panelSettings);
+            } else if (response.status === 403) {
+                // If forbidden, hide the settings form
+                document.getElementById('panel-settings-form-section').style.display = 'none';
+                displayPanelInfo(null);
+            }
+            // For other errors, don't show notification
+        } catch (error) {
+            // Network error - don't spam user with errors
+            console.error('Error loading panel settings:', error);
+        }
+    }
+
+    function displayPanelSettings(settings) {
+        displayPanelInfo(settings);
+        
+        // Fill form (only for admins)
+        document.getElementById('refresh_interval').value = settings.refresh_interval;
+        document.getElementById('log_retention_days').value = settings.log_retention_days;
+        document.getElementById('language').value = settings.language || 'ru';
+    }
+
+    function displayPanelInfo(settings) {
+        const panelInfo = document.getElementById('panel-info');
+        
+        if (!settings) {
+            panelInfo.innerHTML = `<p style="color: var(--text-secondary);">${t('loading')}</p>`;
+            return;
+        }
+
+        panelInfo.innerHTML = `
+            <div class="info-item">
+                <label>${t('refresh_interval')}</label>
+                <div class="value">${settings.refresh_interval} ${t('sec')}</div>
+            </div>
+            <div class="info-item">
+                <label>${t('log_retention_days')}</label>
+                <div class="value">${settings.log_retention_days} ${t('days')}</div>
+            </div>
+            <div class="info-item">
+                <label>${t('language')}</label>
+                <div class="value">${settings.language === 'en' ? '🇺🇸 English' : '🇷🇺 Русский'}</div>
+            </div>
+        `;
+    }
+
+    function showNotification(message, type = 'info') {
+        const notification = document.createElement('div');
+        notification.className = `notification notification-${type}`;
+        notification.textContent = message;
+        notification.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 20px;
+            border-radius: 4px;
+            color: var(--text-on-primary, #fff);
+            font-weight: 500;
+            z-index: 10000;
+            animation: slideIn 0.3s;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        `;
+        
+        if (type === 'success') {
+            notification.style.background = 'linear-gradient(135deg, var(--success) 0%, var(--success-dark) 100%)';
+        } else if (type === 'error') {
+            notification.style.background = 'linear-gradient(135deg, var(--danger) 0%, var(--danger-dark) 100%)';
+        } else {
+            notification.style.background = 'linear-gradient(135deg, var(--purple) 0%, var(--purple-dark) 100%)';
+        }
+        
+        document.body.appendChild(notification);
+        
+        setTimeout(() => {
+            notification.style.animation = 'slideOut 0.3s';
+            setTimeout(() => notification.remove(), 300);
+        }, 3000);
+    }
+
+    // =====================
+    // Notification Settings
+    // =====================
+    
+    async function loadChannelsStatus() {
+        try {
+            const response = await fetchWithAuth('/api/notifications/channels/status');
+            if (!response) return;
+            if (response.ok) {
+                const data = await response.json();
+                displayChannelsStatus(data);
+            }
+        } catch (error) {
+            console.error('Error loading channels status:', error);
+        }
+    }
+
+    function displayChannelsStatus(data) {
+        const container = document.getElementById('channels-status');
+        container.innerHTML = `
+            <div class="channel-card ${data.inapp.configured ? 'configured' : 'not-configured'}">
+                <div class="channel-icon inapp"><i class="fas fa-desktop"></i></div>
+                <div class="channel-info">
+                    <div class="channel-name">${t('inapp_notifications')}</div>
+                    <div class="channel-status">${t('browser_notifications')}</div>
+                </div>
+                <span class="channel-badge ${data.inapp.enabled ? 'active' : 'inactive'}">
+                    ${data.inapp.enabled ? t('enabled') : t('disabled')}
+                </span>
+            </div>
+            
+            <div class="channel-card ${data.email.configured ? 'configured' : 'not-configured'}">
+                <div class="channel-icon email"><i class="fas fa-envelope"></i></div>
+                <div class="channel-info">
+                    <div class="channel-name">Email</div>
+                    <div class="channel-status">${data.email.configured ? t('smtp_configured') : t('smtp_not_configured')}</div>
+                </div>
+                <span class="channel-badge ${data.email.configured ? 'active' : 'inactive'}">
+                    ${data.email.configured ? t('available') : t('unavailable')}
+                </span>
+            </div>
+            
+            <div class="channel-card ${data.telegram.configured ? 'configured' : 'not-configured'}">
+                <div class="channel-icon telegram"><i class="fab fa-telegram"></i></div>
+                <div class="channel-info">
+                    <div class="channel-name">Telegram</div>
+                    <div class="channel-status">${data.telegram.configured ? (data.telegram.bot_info || t('bot_configured')) : t('bot_not_configured')}</div>
+                </div>
+                <span class="channel-badge ${data.telegram.configured ? 'active' : 'inactive'}">
+                    ${data.telegram.configured ? t('available') : t('unavailable')}
+                </span>
+            </div>
+        `;
+    }
+
+    async function loadNotificationPrefs() {
+        try {
+            const response = await fetchWithAuth('/api/notifications/preferences');
+            if (!response) return;
+            if (response.ok) {
+                notificationPrefs = await response.json();
+                displayNotificationPrefs(notificationPrefs);
+            }
+        } catch (error) {
+            console.error('Error loading notification preferences:', error);
+        }
+    }
+
+    function displayNotificationPrefs(prefs) {
+        document.getElementById('notify_email_enabled').checked = prefs.email_enabled;
+        document.getElementById('notify_telegram_enabled').checked = prefs.telegram_enabled;
+        document.getElementById('notify_critical_only').checked = prefs.email_critical_only;
+        document.getElementById('telegram_chat_id').value = prefs.telegram_chat_id || '';
+        document.getElementById('quiet_hours_start').value = prefs.quiet_hours_start || '';
+        document.getElementById('quiet_hours_end').value = prefs.quiet_hours_end || '';
+        
+        // Show/hide telegram chat ID field
+        toggleTelegramChatId();
+    }
+
+    function toggleTelegramChatId() {
+        const enabled = document.getElementById('notify_telegram_enabled').checked;
+        document.getElementById('telegram-chat-id-group').style.display = enabled ? 'block' : 'none';
+    }
+
+    document.getElementById('notify_telegram_enabled').addEventListener('change', toggleTelegramChatId);
+
+    // Notification settings form
+    document.getElementById('notification-settings-form').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const data = {
+            email_enabled: document.getElementById('notify_email_enabled').checked,
+            telegram_enabled: document.getElementById('notify_telegram_enabled').checked,
+            telegram_chat_id: document.getElementById('telegram_chat_id').value || null,
+            email_critical_only: document.getElementById('notify_critical_only').checked,
+            quiet_hours_start: document.getElementById('quiet_hours_start').value || null,
+            quiet_hours_end: document.getElementById('quiet_hours_end').value || null
+        };
+
+        try {
+            const response = await fetchWithAuth('/api/notifications/preferences', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+
+            if (response.ok) {
+                showNotification(t('notification_settings_saved'), 'success');
+                loadChannelsStatus();
+            } else {
+                const error = await response.json();
+                showNotification(error.detail || t('error_saving_settings'), 'error');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            showNotification(t('error_saving_settings'), 'error');
+        }
+    });
+
+    // Verify Telegram
+    document.getElementById('verify-telegram-btn').addEventListener('click', async function() {
+        const chatId = document.getElementById('telegram_chat_id').value;
+        if (!chatId) {
+            showNotification(t('enter_chat_id'), 'error');
+            return;
+        }
+
+        try {
+            const response = await fetchWithAuth(`/api/notifications/telegram/verify?chat_id=${chatId}`, {
+                method: 'POST'
+            });
+
+            if (response.ok) {
+                const result = await response.json();
+                showNotification(result.message || t('telegram_connected'), 'success');
+            } else {
+                const error = await response.json();
+                showNotification(error.detail || t('telegram_verify_error'), 'error');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            showNotification(t('telegram_verify_error'), 'error');
+        }
+    });
+
+    // Test notifications
+    async function testNotification(channel) {
+        // Show loading state
+        const btn = document.getElementById(`test-${channel}-btn`);
+        const originalText = btn ? btn.innerHTML : '';
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + t('testing');
+        }
+        
+        try {
+            const response = await fetchWithAuth(`/api/notifications/test?channel=${channel}`, {
+                method: 'POST'
+            });
+
+            // Check if response exists (fetchWithAuth returns undefined on redirect)
+            if (!response) {
+                return;
+            }
+
+            if (response.ok) {
+                const result = await response.json();
+                let message = t('test_completed') + ': ';
+                let hasSuccess = false;
+                if (result.inapp) { message += '✓ In-App '; hasSuccess = true; }
+                if (result.email) { message += '✓ Email '; hasSuccess = true; }
+                if (result.telegram) { message += '✓ Telegram '; hasSuccess = true; }
+                if (result.errors && result.errors.length > 0) {
+                    message += '\n' + t('errors') + ': ' + result.errors.join(', ');
+                }
+                showNotification(message, result.errors && result.errors.length > 0 ? 'warning' : (hasSuccess ? 'success' : 'error'));
+            } else {
+                const error = await response.json();
+                showNotification(error.detail || t('test_error'), 'error');
+            }
+        } catch (error) {
+            console.error('Test notification error:', error);
+            showNotification(t('test_error') + ': ' + error.message, 'error');
+        } finally {
+            // Restore button state
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            }
+        }
+    }
+
+    document.getElementById('test-inapp-btn').addEventListener('click', () => testNotification('inapp'));
+    document.getElementById('test-email-btn').addEventListener('click', () => testNotification('email'));
+    document.getElementById('test-telegram-btn').addEventListener('click', () => testNotification('telegram'));
+    document.getElementById('test-all-btn').addEventListener('click', () => testNotification('all'));
+
+    // ==================== Session Settings ====================
+    
+    // Load session settings on admin tab
+    async function loadSessionSettings() {
+        try {
+            const response = await fetchWithAuth('/settings/api/security-settings');
+            
+            if (response && response.ok) {
+                const settings = await response.json();
+                document.getElementById('single_session_enabled').checked = settings.single_session_enabled || false;
+            }
+        } catch (error) {
+            console.error('Error loading session settings:', error);
+        }
+    }
+
+    // ==================== Notification Channel Settings ====================
+    
+    async function loadChannelSettings() {
+        try {
+            const response = await fetchWithAuth('/settings/api/notification-channels');
+            if (!response || !response.ok) return;
+            
+            const data = await response.json();
+            
+            // SMTP settings
+            document.getElementById('smtp_host').value = data.smtp.host || '';
+            document.getElementById('smtp_port').value = data.smtp.port || 587;
+            document.getElementById('smtp_user').value = data.smtp.user || '';
+            document.getElementById('smtp_from').value = data.smtp.from || '';
+            document.getElementById('smtp_tls').checked = data.smtp.tls !== false;
+            // Don't fill password field if it's masked
+            if (data.smtp.password && data.smtp.password !== '***') {
+                document.getElementById('smtp_password').value = data.smtp.password;
+            }
+            
+            // Telegram settings - don't show masked token
+            if (data.telegram.bot_token && data.telegram.bot_token !== '***') {
+                document.getElementById('telegram_bot_token').value = data.telegram.bot_token;
+            }
+        } catch (error) {
+            console.error('Error loading channel settings:', error);
+        }
+    }
+
+    // SMTP settings form
+    document.getElementById('smtp-settings-form').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const password = document.getElementById('smtp_password').value;
+        const data = {
+            smtp_host: document.getElementById('smtp_host').value || null,
+            smtp_port: parseInt(document.getElementById('smtp_port').value) || 587,
+            smtp_user: document.getElementById('smtp_user').value || null,
+            smtp_from: document.getElementById('smtp_from').value || null,
+            smtp_tls: document.getElementById('smtp_tls').checked
+        };
+        
+        // Only update password if it was changed (not empty)
+        if (password) {
+            data.smtp_password = password;
+        }
+
+        try {
+            const response = await fetchWithAuth('/settings/api/notification-channels/smtp', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+
+            if (response && response.ok) {
+                showNotification(t('smtp_settings_saved') || 'Настройки SMTP сохранены', 'success');
+                loadChannelsStatus();
+            } else if (response) {
+                const error = await response.json();
+                showNotification(error.detail || t('error_saving_settings'), 'error');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            showNotification(t('error_saving_settings'), 'error');
+        }
+    });
+
+    // Telegram settings form
+    document.getElementById('telegram-settings-form').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const token = document.getElementById('telegram_bot_token').value;
+        if (!token) {
+            showNotification(t('enter_bot_token') || 'Введите токен бота', 'error');
+            return;
+        }
+
+        try {
+            const response = await fetchWithAuth('/settings/api/notification-channels/telegram', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ telegram_bot_token: token })
+            });
+
+            if (response && response.ok) {
+                showNotification(t('telegram_settings_saved') || 'Настройки Telegram сохранены', 'success');
+                loadChannelsStatus();
+            } else if (response) {
+                const error = await response.json();
+                showNotification(error.detail || t('error_saving_settings'), 'error');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            showNotification(t('error_saving_settings'), 'error');
+        }
+    });
+
+    // Test SMTP settings
+    document.getElementById('test-smtp-settings-btn').addEventListener('click', async function() {
+        const testEmail = prompt(t('enter_test_email') || 'Введите email для тестового письма:', currentUser?.email || '');
+        if (!testEmail) return;
+
+        const btn = this;
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + (t('sending') || 'Отправка...');
+
+        try {
+            const response = await fetchWithAuth(`/settings/api/notification-channels/smtp/test?test_email=${encodeURIComponent(testEmail)}`, {
+                method: 'POST'
+            });
+
+            if (response && response.ok) {
+                const result = await response.json();
+                showNotification(result.message || t('test_email_sent'), 'success');
+            } else if (response) {
+                const error = await response.json();
+                showNotification(error.detail || t('test_email_error'), 'error');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            showNotification(t('test_email_error') || 'Ошибка отправки тестового письма', 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-paper-plane"></i> ' + (t('test_connection') || 'Тест');
+        }
+    });
+
+    // Test Telegram settings
+    document.getElementById('test-telegram-settings-btn').addEventListener('click', async function() {
+        const chatId = prompt(t('enter_chat_id_for_test') || 'Введите Chat ID для тестового сообщения:');
+        if (!chatId) return;
+
+        const btn = this;
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + (t('sending') || 'Отправка...');
+
+        try {
+            const response = await fetchWithAuth(`/settings/api/notification-channels/telegram/test?chat_id=${encodeURIComponent(chatId)}`, {
+                method: 'POST'
+            });
+
+            if (response && response.ok) {
+                const result = await response.json();
+                showNotification(result.message || t('test_telegram_sent'), 'success');
+            } else if (response) {
+                const error = await response.json();
+                showNotification(error.detail || t('test_telegram_error'), 'error');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            showNotification(t('test_telegram_error') || 'Ошибка отправки тестового сообщения', 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-paper-plane"></i> ' + (t('test_connection') || 'Тест');
+        }
+    });
+    
+    // Load current version on page load
+    loadCurrentVersion();
+});
+
+// ==================== System Updates ====================
+
+async function loadCurrentVersion() {
+    try {
+        const response = await fetchWithAuth('/settings/api/version');
+        if (response && response.ok) {
+            const data = await response.json();
+            document.getElementById('current-version').textContent = data.version;
+        }
+    } catch (error) {
+        console.error('Error loading version:', error);
+    }
+}
+
+async function checkForUpdates() {
+    const btn = document.getElementById('check-updates-btn');
+    const updateBtn = document.getElementById('update-now-btn');
+    const statusBox = document.getElementById('update-status-box');
+    const changelogBox = document.getElementById('update-changelog-box');
+    const commitsItem = document.getElementById('commits-behind-item');
+    
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + (t('checking_updates') || 'Проверка...');
+    
+    try {
+        const response = await fetchWithAuth('/settings/api/updates/check');
+        
+        if (response && response.ok) {
+            const data = await response.json();
+            
+            // Update version display
+            document.getElementById('current-version').textContent = data.current_version;
+            document.getElementById('latest-version').textContent = data.latest_version || '-';
+            
+            // Show commits behind if available
+            if (data.commits_behind > 0) {
+                document.getElementById('commits-behind').textContent = data.commits_behind;
+                commitsItem.style.display = 'flex';
+            } else {
+                commitsItem.style.display = 'none';
+            }
+            
+            if (data.error) {
+                statusBox.style.display = 'block';
+                statusBox.className = 'update-status-box error';
+                statusBox.querySelector('#update-status-message').innerHTML = 
+                    '<i class="fas fa-exclamation-circle"></i> ' + data.error;
+                updateBtn.style.display = 'none';
+                changelogBox.style.display = 'none';
+            } else if (data.update_available) {
+                statusBox.style.display = 'block';
+                statusBox.className = 'update-status-box info';
+                statusBox.querySelector('#update-status-message').innerHTML = 
+                    '<i class="fas fa-info-circle"></i> ' + (t('update_available') || 'Доступно обновление') + 
+                    ': <strong>v' + data.latest_version + '</strong>';
+                updateBtn.style.display = 'inline-flex';
+                
+                // Show changelog if available
+                if (data.changelog) {
+                    changelogBox.style.display = 'block';
+                    document.getElementById('update-changelog-content').textContent = data.changelog;
+                }
+            } else {
+                statusBox.style.display = 'block';
+                statusBox.className = 'update-status-box success';
+                statusBox.querySelector('#update-status-message').innerHTML = 
+                    '<i class="fas fa-check-circle"></i> ' + (t('no_updates') || 'Установлена последняя версия');
+                updateBtn.style.display = 'none';
+                changelogBox.style.display = 'none';
+            }
+        } else if (response) {
+            const error = await response.json();
+            showNotification(error.detail || 'Error checking updates', 'error');
+        }
+    } catch (error) {
+        console.error('Error checking for updates:', error);
+        showNotification('Error checking for updates', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-sync-alt"></i> ' + (t('check_updates') || 'Проверить обновления');
+    }
+}
+
+async function performUpdate() {
+    // Confirm update
+    if (!confirm((t('update_warning') || 'Панель будет недоступна во время обновления') + '\n\nПродолжить?')) {
+        return;
+    }
+    
+    const updateBtn = document.getElementById('update-now-btn');
+    const statusBox = document.getElementById('update-status-box');
+    
+    updateBtn.disabled = true;
+    updateBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + (t('updating_system') || 'Обновление...');
+    
+    // Store update state in localStorage for banner
+    localStorage.setItem('pve_update_in_progress', 'true');
+    localStorage.setItem('pve_update_started', Date.now().toString());
+    
+    try {
+        const response = await fetchWithAuth('/settings/api/updates/perform', {
+            method: 'POST'
+        });
+        
+        if (response && response.ok) {
+            statusBox.style.display = 'block';
+            statusBox.className = 'update-status-box info';
+            statusBox.querySelector('#update-status-message').innerHTML = 
+                '<i class="fas fa-spinner fa-spin"></i> ' + (t('update_in_progress') || 'Выполняется обновление') + 
+                '... <br><small>Страница обновится автоматически после завершения.</small>';
+            
+            // Start polling for server availability
+            pollForServerRestart();
+        } else if (response) {
+            const error = await response.json();
+            statusBox.style.display = 'block';
+            statusBox.className = 'update-status-box error';
+            statusBox.querySelector('#update-status-message').innerHTML = 
+                '<i class="fas fa-exclamation-circle"></i> ' + (error.error || error.detail || 'Update failed');
+            
+            localStorage.removeItem('pve_update_in_progress');
+            localStorage.removeItem('pve_update_started');
+            
+            updateBtn.disabled = false;
+            updateBtn.innerHTML = '<i class="fas fa-download"></i> ' + (t('update_now') || 'Обновить сейчас');
+        }
+    } catch (error) {
+        console.error('Error performing update:', error);
+        // This is expected if server restarts during update
+        pollForServerRestart();
+    }
+}
+
+async function pollForServerRestart() {
+    const statusBox = document.getElementById('update-status-box');
+    let attempts = 0;
+    const maxAttempts = 60; // 2 minutes (2s * 60)
+    
+    async function checkServer() {
+        attempts++;
+        
+        try {
+            const response = await fetch('/settings/api/version', {
+                method: 'GET',
+                cache: 'no-cache'
+            });
+            
+            if (response.ok) {
+                // Server is back!
+                localStorage.removeItem('pve_update_in_progress');
+                localStorage.removeItem('pve_update_started');
+                
+                statusBox.className = 'update-status-box success';
+                statusBox.querySelector('#update-status-message').innerHTML = 
+                    '<i class="fas fa-check-circle"></i> ' + (t('update_success') || 'Обновление завершено успешно') + 
+                    '<br><small>Перезагрузка страницы...</small>';
+                
+                // Reload page after short delay
+                setTimeout(() => {
+                    window.location.reload();
+                }, 2000);
+                return;
+            }
+        } catch (e) {
+            // Server still down, continue polling
+        }
+        
+        if (attempts < maxAttempts) {
+            statusBox.querySelector('#update-status-message').innerHTML = 
+                '<i class="fas fa-spinner fa-spin"></i> ' + (t('update_in_progress') || 'Выполняется обновление') + 
+                `... (${attempts}/${maxAttempts})`;
+            setTimeout(checkServer, 2000);
+        } else {
+            statusBox.className = 'update-status-box error';
+            statusBox.querySelector('#update-status-message').innerHTML = 
+                '<i class="fas fa-exclamation-circle"></i> ' + 
+                'Превышено время ожидания. Проверьте сервер вручную.';
+            
+            localStorage.removeItem('pve_update_in_progress');
+            localStorage.removeItem('pve_update_started');
+        }
+    }
+    
+    // Start polling after a short delay to allow server to start shutting down
+    setTimeout(checkServer, 3000);
+}
+</script>
+{% endblock %}

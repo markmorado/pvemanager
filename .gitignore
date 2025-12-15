@@ -1,0 +1,124 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment variables
+.env
+backend/.env
+
+# Logs
+logs/
+log/
+*.log
+*.log.zip
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Docker
+docker-compose.override.yml
+
+# SSL certificates
+nginx/ssl/*.crt
+nginx/ssl/*.key
+nginx/ssl/*.pem
+nginx/certbot/
+
+# SSH keys
+*.pem
+*.key
+id_rsa*
+.ssh/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+
+# Coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+
+# pytest
+.pytest_cache/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Private keys - NEVER commit
+*.pem
+private_key*
+*_private_key*
+.logo_hash
+
+# Secrets and sensitive files
+secrets/
+*.secret
+*_secret*
+*.p12
+*.pfx
+
+# Backup files
+*.backup
+*.bkp
+backups/
+
+# Runtime data
+*.pid
+*.seed
+
+# Docker volumes (local data)
+data/
+postgres_data/
+
+# Debug and profiling
+*.prof
+*.profile
+
+# OS generated files
+Thumbs.db
+ehthumbs.db
+Desktop.ini

@@ -1,0 +1,93 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: serverpanel-db
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: serverpanel
+      POSTGRES_USER: serverpanel
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-serverpanel_secure_password}
+      TZ: ${TZ:-Asia/Tashkent}
+      # Оптимизация для быстрого старта
+      POSTGRES_INITDB_ARGS: "--no-sync"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U serverpanel -d serverpanel"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - serverpanel-network
+    # Оптимизация производительности БД
+    command: |
+      postgres 
+      -c shared_buffers=256MB 
+      -c max_connections=200 
+      -c work_mem=4MB 
+      -c maintenance_work_mem=64MB 
+      -c effective_cache_size=512MB 
+      -c checkpoint_completion_target=0.9 
+      -c wal_buffers=16MB 
+      -c random_page_cost=1.1
+
+  app:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    image: server-panel-app:latest
+    pull_policy: build
+    container_name: serverpanel-app
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ~/.ssh:/root/.ssh:ro
+      - ./logs:/app/logs
+      - ./VERSION:/app/VERSION:ro
+      - /etc/localtime:/etc/localtime:ro
+      # For system updates
+      - .:/project:rw
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://serverpanel:${POSTGRES_PASSWORD:-serverpanel_secure_password}@db:5432/serverpanel
+      - PYTHONPATH=/app
+      - TZ=${TZ:-Asia/Tashkent}
+      - PROJECT_ROOT=/project
+      # Оптимизация для production
+      - UVICORN_WORKERS=1
+      - UVICORN_TIMEOUT_KEEP_ALIVE=30
+    networks:
+      - serverpanel-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 2
+      start_period: 5s
+    # Ограничение ресурсов для стабильности
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+volumes:
+  db_data:
+  logs:
+
+networks:
+  serverpanel-network:
+    driver: bridge

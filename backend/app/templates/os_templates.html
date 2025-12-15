@@ -1,0 +1,1477 @@
+{% extends "base.html" %}
+{% set page_title = t('os_templates_management') %}
+{% block content %}
+
+<style>
+/* Emoji icon wrapper - ensure visibility on dark theme */
+.emoji-icon {
+    font-size: 1.5rem;
+    filter: drop-shadow(0 0 1px rgba(255,255,255,0.3));
+}
+/* Apply grayscale filter for better visibility if needed */
+[data-theme="dark"] .template-group-card .emoji-icon {
+    filter: brightness(1.2) contrast(1.1);
+}
+</style>
+
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h3><i class="fa-solid fa-desktop"></i> {{ t('os_templates') }}</h3>
+        <div style="display: flex; gap: 0.5rem;" data-permission="templates.manage">
+            <button onclick="showAutoImportModal()" class="btn" style="background: var(--success); color: var(--text-on-success);"><i class="fa-solid fa-rotate"></i> {{ t('auto_import') }}</button>
+            <button onclick="showAddGroupModal()" class="btn" style="background: var(--primary); color: var(--text-on-primary);"><i class="fa-solid fa-folder"></i> {{ t('new_group') }}</button>
+            <button onclick="showAddTemplateModal()" class="btn btn-primary"><i class="fa-solid fa-plus"></i> {{ t('add_template') }}</button>
+        </div>
+    </div>
+    
+    <p style="color: var(--text-secondary); margin-bottom: 1.5rem;">
+        {{ t('manage_os_templates_description') }}
+    </p>
+</div>
+
+<!-- Группы шаблонов -->
+<div class="card" style="margin-top: 1rem;">
+    <h4 style="margin-bottom: 1rem;"><i class="fa-solid fa-folder"></i> {{ t('template_groups') }}</h4>
+    
+    <div id="groupsContainer" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 1rem;">
+        {% if template_groups %}
+            {% for group in template_groups %}
+            <div class="template-group-card" data-group-id="{{ group.id }}" style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 0.5rem; padding: 1rem;">
+                <div style="display: flex; justify-content: space-between; align-items: start;">
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        <span class="group-icon" style="font-size: 1.5rem;">{{ group.icon|safe if group.icon else '<i class="fa-solid fa-cube"></i>'|safe }}</span>
+                        <div>
+                            <h5 style="margin: 0; color: var(--text-primary);">{{ group.name }}</h5>
+                            <span style="font-size: 0.75rem; color: var(--text-muted);">ID: {{ group.id }}</span>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 0.25rem;" data-permission="templates.manage">
+                        <button onclick="editGroup({{ group.id }})" class="btn btn-sm" style="padding: 0.25rem 0.5rem; background: var(--info);" title="{{ t('edit') }}"><i class="fa-solid fa-pen"></i></button>
+                        <button onclick="deleteGroup({{ group.id }}, '{{ group.name }}')" class="btn btn-sm btn-delete" style="padding: 0.25rem 0.5rem;" title="{{ t('delete') }}"><i class="fa-solid fa-trash"></i></button>
+                    </div>
+                </div>
+                {% if group.description %}
+                <p style="margin: 0.5rem 0 0 0; font-size: 0.875rem; color: var(--text-secondary);">{{ group.description }}</p>
+                {% endif %}
+                <div id="group-templates-count-{{ group.id }}" style="margin-top: 0.5rem; font-size: 0.75rem; color: var(--text-muted);">
+                    {{ t('loading') }}
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <p style="color: var(--text-secondary); grid-column: 1 / -1;">
+                {{ t('no_template_groups') }} <a href="#" onclick="showAddGroupModal(); return false;" style="color: var(--success);">{{ t('create_first_group') }}</a>.
+            </p>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Шаблоны -->
+<div class="card" style="margin-top: 1rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h4><i class="fa-solid fa-compact-disc"></i> {{ t('templates_os') }}</h4>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+            <select id="filterGroup" onchange="filterTemplates()" style="background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-color); padding: 0.5rem; border-radius: 0.375rem;">
+                <option value="">{{ t('all_groups') }}</option>
+                {% for group in template_groups %}
+                <option value="{{ group.id }}">{{ group.name }}</option>
+                {% endfor %}
+            </select>
+            <select id="filterServer" onchange="filterTemplates()" style="background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-color); padding: 0.5rem; border-radius: 0.375rem;">
+                <option value="">{{ t('all_servers') }}</option>
+                {% for server in proxmox_servers %}
+                <option value="{{ server.id }}">{{ server.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </div>
+    
+    <div id="templatesContainer" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem;">
+        <p style="color: var(--text-secondary);" id="templatesLoading"><i class="fa-solid fa-spinner fa-spin"></i> {{ t('loading_templates') }}</p>
+    </div>
+</div>
+
+<!-- Обнаружение шаблонов Proxmox -->
+<div class="card" style="margin-top: 1rem;">
+    <h4 style="margin-bottom: 1rem;"><i class="fa-solid fa-magnifying-glass"></i> {{ t('template_discovery') }}</h4>
+    <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+        {{ t('find_proxmox_templates_description') }}
+    </p>
+    
+    <div style="display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;">
+        <select id="discoverServer" style="background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-color); padding: 0.5rem 1rem; border-radius: 0.375rem; min-width: 200px;">
+            <option value="">{{ t('select_server') }}</option>
+            {% for server in proxmox_servers %}
+            <option value="{{ server.id }}">{{ server.name }} ({{ server.ip_address }})</option>
+            {% endfor %}
+        </select>
+        <button onclick="discoverTemplates()" class="btn" style="background: var(--purple); color: var(--text-on-primary);"><i class="fa-solid fa-magnifying-glass"></i> {{ t('find_templates') }}</button>
+    </div>
+    
+    <div id="discoveredTemplates" style="margin-top: 1rem; display: none;">
+        <h5 style="margin-bottom: 0.5rem; color: var(--text-primary);">{{ t('found_templates') }}:</h5>
+        <div id="discoveredList" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 0.75rem;"></div>
+    </div>
+</div>
+
+<!-- Modal: Авто-импорт шаблонов -->
+<div id="autoImportModal" class="modal" style="display: none;">
+    <div class="modal-content" style="max-width: 700px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+            <h3><i class="fa-solid fa-rotate"></i> {{ t('auto_import_templates') }}</h3>
+            <button onclick="closeModal('autoImportModal')" style="background: none; border: none; color: var(--text-secondary); font-size: 1.5rem; cursor: pointer;">&times;</button>
+        </div>
+        
+        <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+            {{ t('auto_import_description') }}
+        </p>
+        
+        <div style="margin-bottom: 1rem;">
+            <label>{{ t('select_server') }} *</label>
+            <select id="autoImportServerId" required style="width: 100%;">
+                <option value="">{{ t('select_server') }}</option>
+                {% for server in proxmox_servers %}
+                <option value="{{ server.id }}">{{ server.name }} ({{ server.ip_address }})</option>
+                {% endfor %}
+            </select>
+        </div>
+        
+        <div id="autoImportStatus" style="display: none; margin-bottom: 1rem; padding: 1rem; border-radius: 0.5rem;"></div>
+        
+        <div id="autoImportPreview" style="display: none; margin-bottom: 1rem;">
+            <h5 style="margin-bottom: 0.5rem;"><i class="fa-solid fa-clipboard"></i> {{ t('templates_to_import') }}:</h5>
+            <div id="autoImportList" style="max-height: 300px; overflow-y: auto; background: var(--bg-primary); border-radius: 0.5rem; padding: 0.5rem;"></div>
+        </div>
+        
+        <div id="autoImportResult" style="display: none; margin-bottom: 1rem;">
+            <h5 style="margin-bottom: 0.5rem; color: var(--success);"><i class="fa-solid fa-check"></i> {{ t('import_completed') }}:</h5>
+            <div id="autoImportResultList" style="max-height: 300px; overflow-y: auto; background: var(--bg-primary); border-radius: 0.5rem; padding: 0.5rem;"></div>
+        </div>
+        
+        <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+            <button type="button" onclick="closeModal('autoImportModal')" class="btn" style="background: var(--bg-tertiary); color: var(--text-primary);">{{ t('cancel') }}</button>
+            <button type="button" onclick="previewAutoImport()" id="previewImportBtn" class="btn" style="background: var(--info); color: white;"><i class="fa-solid fa-eye"></i> {{ t('preview') }}</button>
+            <button type="button" onclick="executeAutoImport()" id="executeImportBtn" class="btn btn-primary" style="display: none;"><i class="fa-solid fa-rocket"></i> {{ t('import') }}</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Добавить группу -->
+<div id="addGroupModal" class="modal" style="display: none;">
+    <div class="modal-content" style="max-width: 450px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+            <h3 id="groupModalTitle"><i class="fa-solid fa-folder"></i> {{ t('new_group') }}</h3>
+            <button onclick="closeModal('addGroupModal')" style="background: none; border: none; color: var(--text-secondary); font-size: 1.5rem; cursor: pointer;">&times;</button>
+        </div>
+        
+        <form id="groupForm" onsubmit="submitGroup(event)">
+            <input type="hidden" name="group_id" id="groupId">
+            
+            <div style="margin-bottom: 1rem;">
+                <label>{{ t('group_name') }} *</label>
+                <input type="text" name="name" id="groupName" required placeholder="Ubuntu">
+            </div>
+            
+            <div style="margin-bottom: 1rem;">
+                <label>{{ t('icon') }}</label>
+                <input type="text" name="icon" id="groupIcon" placeholder="🐧" maxlength="10">
+                <small style="color: var(--text-muted);">{{ t('icon_hint') }}</small>
+            </div>
+            
+            <div style="margin-bottom: 1rem;">
+                <label>{{ t('description') }}</label>
+                <textarea name="description" id="groupDescription" rows="2" placeholder="{{ t('group_description_placeholder') }}"></textarea>
+            </div>
+            
+            <div style="margin-bottom: 1rem;">
+                <label>{{ t('sort_order') }}</label>
+                <input type="number" name="sort_order" id="groupSortOrder" value="0" min="0">
+            </div>
+            
+            <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                <button type="button" onclick="closeModal('addGroupModal')" class="btn" style="background: var(--bg-tertiary); color: var(--text-primary);">{{ t('cancel') }}</button>
+                <button type="submit" class="btn btn-primary">{{ t('save') }}</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal: Добавить шаблон -->
+<div id="addTemplateModal" class="modal" style="display: none;">
+    <div class="modal-content" style="max-width: 600px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+            <h3 id="templateModalTitle"><i class="fa-solid fa-compact-disc"></i> {{ t('new_template') }}</h3>
+            <button onclick="closeModal('addTemplateModal')" style="background: none; border: none; color: var(--text-secondary); font-size: 1.5rem; cursor: pointer;">&times;</button>
+        </div>
+        
+        <form id="templateForm" onsubmit="submitTemplate(event)">
+            <input type="hidden" name="template_id" id="templateId">
+            
+            <div class="form-row">
+                <div>
+                    <label>{{ t('group') }} {{ t('required') }}</label>
+                    <select name="group_id" id="templateGroupId" required>
+                        <option value="">{{ t('select_group') }}</option>
+                        {% for group in template_groups %}
+                        <option value="{{ group.id }}">{{ group.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label>{{ t('proxmox_server') }} {{ t('required') }}</label>
+                    <select name="server_id" id="templateServerId" required>
+                        <option value="">{{ t('select_server') }}</option>
+                        {% for server in proxmox_servers %}
+                        <option value="{{ server.id }}">{{ server.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            
+            <div class="form-row">
+                <div>
+                    <label>{{ t('template_name') }} {{ t('required') }}</label>
+                    <input type="text" name="name" id="templateName" required placeholder="Ubuntu 22.04 LTS">
+                </div>
+                <div>
+                    <label>{{ t('vmid_in_proxmox') }} {{ t('required') }}</label>
+                    <input type="number" name="vmid" id="templateVmid" required min="100" placeholder="9000">
+                </div>
+            </div>
+            
+            <div class="form-row">
+                <div>
+                    <label>{{ t('proxmox_node') }} {{ t('required') }}</label>
+                    <input type="text" name="node" id="templateNode" required placeholder="pve">
+                </div>
+                <div>
+                    <label>{{ t('sort_order') }}</label>
+                    <input type="number" name="sort_order" id="templateSortOrder" value="0" min="0">
+                </div>
+            </div>
+            
+            <div style="background: var(--bg-primary); border-radius: 0.5rem; padding: 1rem; margin-bottom: 1rem;">
+                <h5 style="margin: 0 0 1rem 0; color: var(--text-primary);"><i class="fa-solid fa-gear"></i> {{ t('default_parameters') }}</h5>
+                
+                <div class="form-row">
+                    <div>
+                        <label>{{ t('cpu_cores') }}</label>
+                        <input type="number" name="default_cores" id="templateDefaultCores" value="1" min="1" max="128">
+                    </div>
+                    <div>
+                        <label>{{ t('memory_mb') }}</label>
+                        <input type="number" name="default_memory" id="templateDefaultMemory" value="1024" min="128">
+                    </div>
+                    <div>
+                        <label>{{ t('disk_gb') }}</label>
+                        <input type="number" name="default_disk" id="templateDefaultDisk" value="10" min="1">
+                    </div>
+                </div>
+                
+                <div class="form-row">
+                    <div>
+                        <label>{{ t('min_cpu_cores') }}</label>
+                        <input type="number" name="min_cores" id="templateMinCores" value="1" min="1">
+                    </div>
+                    <div>
+                        <label>{{ t('min_memory_mb') }}</label>
+                        <input type="number" name="min_memory" id="templateMinMemory" value="512" min="128">
+                    </div>
+                    <div>
+                        <label>{{ t('min_disk_gb') }}</label>
+                        <input type="number" name="min_disk" id="templateMinDisk" value="5" min="1">
+                    </div>
+                </div>
+            </div>
+            
+            <div style="margin-bottom: 1rem;">
+                <label>{{ t('description') }}</label>
+                <textarea name="description" id="templateDescription" rows="2" placeholder="{{ t('os_template_description_placeholder') }}"></textarea>
+            </div>
+            
+            <div class="form-check">
+                <input type="checkbox" class="form-check-input" name="is_active" id="templateIsActive" checked>
+                <label class="form-check-label" for="templateIsActive">{{ t('template_active') }}</label>
+            </div>
+            
+            <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                <button type="button" onclick="closeModal('addTemplateModal')" class="btn" style="background: var(--bg-tertiary); color: var(--text-primary);">{{ t('cancel') }}</button>
+                <button type="submit" class="btn btn-primary">{{ t('save') }}</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal: Развернуть VM -->
+<div id="deployModal" class="modal" style="display: none;">
+    <div class="modal-content" style="max-width: 550px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+            <h3><i class="fa-solid fa-rocket"></i> {{ t('deploy_vm') }}</h3>
+            <button onclick="closeModal('deployModal')" style="background: none; border: none; color: var(--text-secondary); font-size: 1.5rem; cursor: pointer;">&times;</button>
+        </div>
+        
+        <div id="deployTemplateInfo" style="background: var(--bg-secondary); border-radius: 0.5rem; padding: 1rem; margin-bottom: 1.5rem;">
+            <div style="display: flex; align-items: center; gap: 0.75rem;">
+                <span id="deployIcon" style="font-size: 2rem;"><i class="fa-solid fa-compact-disc"></i></span>
+                <div>
+                    <h4 id="deployTemplateName" style="margin: 0; color: var(--text-primary);">{{ t('template_label') }}</h4>
+                    <span id="deployServerName" style="font-size: 0.875rem; color: var(--text-secondary);">{{ t('server_label') }}</span>
+                </div>
+            </div>
+        </div>
+        
+        <form id="deployForm" onsubmit="submitDeploy(event)">
+            <input type="hidden" name="template_id" id="deployTemplateId">
+            <input type="hidden" name="server_id" id="deployServerId">
+            
+            <div style="margin-bottom: 1rem;">
+                <label>{{ t('new_vm_name') }} {{ t('required') }}</label>
+                <input type="text" name="name" id="deployVmName" required placeholder="my-server-01" pattern="[a-zA-Z0-9\-_]+" title="{{ t('vm_name_pattern_hint') }}">
+            </div>
+            
+            <div style="margin-bottom: 1rem;">
+                <label><i class="fa-solid fa-desktop"></i> {{ t('target_node') }}</label>
+                <select name="target_node" id="deployTargetNode" style="width: 100%;">
+                    <option value="">{{ t('auto_select') }}</option>
+                </select>
+                <small style="color: var(--text-muted);">{{ t('cross_node_deploy_hint') }}</small>
+            </div>
+            
+            <div style="background: var(--bg-primary); border-radius: 0.5rem; padding: 1rem; margin-bottom: 1rem;">
+                <h5 style="margin: 0 0 1rem 0; color: var(--text-primary);"><i class="fa-solid fa-gear"></i> {{ t('resources') }}</h5>
+                
+                <div class="form-row">
+                    <div>
+                        <label>{{ t('cpu_cores') }}</label>
+                        <input type="number" name="cores" id="deployCores" min="1" max="128">
+                        <small id="deployCoresHint" style="color: var(--text-muted);"></small>
+                    </div>
+                    <div>
+                        <label>{{ t('memory_mb') }}</label>
+                        <input type="number" name="memory" id="deployMemory" min="128">
+                        <small id="deployMemoryHint" style="color: var(--text-muted);"></small>
+                    </div>
+                    <div>
+                        <label>{{ t('disk_gb') }}</label>
+                        <input type="number" name="disk" id="deployDisk" min="1">
+                        <small id="deployDiskHint" style="color: var(--text-muted);"></small>
+                    </div>
+                </div>
+            </div>
+            
+            <div style="background: var(--bg-primary); border-radius: 0.5rem; padding: 1rem; margin-bottom: 1rem;">
+                <h5 style="margin: 0 0 1rem 0; color: var(--text-primary);"><i class="fa-solid fa-globe"></i> {{ t('network') }}</h5>
+                
+                <div class="form-row">
+                    <div>
+                        <label>{{ t('network_bridge') }}</label>
+                        <input type="text" name="network_bridge" id="deployBridge" value="vmbr0">
+                    </div>
+                    <div>
+                        <label>{{ t('ip_address_optional') }}</label>
+                        <input type="text" name="ip_address" id="deployIp" placeholder="192.168.1.100">
+                    </div>
+                </div>
+                
+                <div style="margin-top: 0.75rem;">
+                    <label>{{ t('gateway_optional') }}</label>
+                    <input type="text" name="gateway" id="deployGateway" placeholder="192.168.1.1">
+                </div>
+            </div>
+            
+            <div style="background: var(--bg-primary); border-radius: 0.5rem; padding: 1rem; margin-bottom: 1rem;">
+                <h5 style="margin: 0 0 1rem 0; color: var(--text-primary);"><i class="fa-solid fa-cloud"></i> {{ t('cloud_init_optional') }}</h5>
+                
+                <div class="form-row">
+                    <div>
+                        <label>{{ t('user') }}</label>
+                        <input type="text" name="cloud_init_user" id="deployUser" placeholder="ubuntu">
+                    </div>
+                    <div>
+                        <label>{{ t('password') }}</label>
+                        <input type="password" name="cloud_init_password" id="deployPassword" placeholder="••••••">
+                    </div>
+                </div>
+                
+                <div style="margin-top: 0.75rem;">
+                    <label>{{ t('ssh_keys_public') }}</label>
+                    <textarea name="ssh_keys" id="deploySshKeys" rows="2" placeholder="ssh-rsa AAAA..."></textarea>
+                </div>
+            </div>
+            
+            <!-- High Availability -->
+            <div id="deployHASection" style="background: var(--bg-primary); border-radius: 0.5rem; padding: 1rem; margin-bottom: 1rem; display: none;">
+                <h5 style="margin: 0 0 0.75rem 0; color: var(--text-primary);"><i class="fa-solid fa-shield"></i> {{ t('high_availability') or 'High Availability' }}</h5>
+                <div class="form-check">
+                    <input type="checkbox" class="form-check-input" name="add_to_ha" id="deployAddToHA">
+                    <label class="form-check-label" for="deployAddToHA">{{ t('add_to_ha_after_create') or 'Добавить в HA после создания' }}</label>
+                </div>
+                <small id="deployHAHint" style="color: var(--text-muted); display: block; margin-top: 0.5rem;"></small>
+            </div>
+            
+            <div class="form-check">
+                <input type="checkbox" class="form-check-input" name="start_after_create" id="deployStart" checked>
+                <label class="form-check-label" for="deployStart">{{ t('start_vm_after_create') }}</label>
+            </div>
+            
+            <div id="deployStatus" style="display: none; margin-bottom: 1rem; padding: 1rem; border-radius: 0.5rem;"></div>
+            
+            <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                <button type="button" onclick="closeModal('deployModal')" class="btn" style="background: var(--bg-tertiary); color: var(--text-primary);">{{ t('cancel') }}</button>
+                <button type="submit" id="deploySubmitBtn" class="btn btn-primary"><i class="fa-solid fa-rocket"></i> {{ t('deploy') }}</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<style>
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-content {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 0.75rem;
+    padding: 1.5rem;
+    width: 90%;
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+.form-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.template-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 0.5rem;
+    padding: 1rem;
+    transition: all 0.2s;
+}
+
+.template-card:hover {
+    border-color: var(--primary);
+}
+
+.template-card .actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+}
+
+.node-group-header {
+    user-select: none;
+}
+
+.node-group-header:hover {
+    background: var(--bg-hover) !important;
+}
+
+.discovered-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 0.5rem;
+    padding: 0.75rem;
+}
+
+.discovered-card.already-added {
+    opacity: 0.6;
+    border-color: var(--success);
+}
+
+label {
+    display: block;
+    margin-bottom: 0.25rem;
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+}
+
+input, select, textarea {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 0.375rem;
+    color: var(--text-primary);
+    font-size: 0.875rem;
+}
+
+input:focus, select:focus, textarea:focus {
+    outline: none;
+    border-color: var(--primary);
+}
+
+small {
+    display: block;
+    margin-top: 0.25rem;
+}
+</style>
+
+<script>
+const API_BASE = '/templates/api';
+let currentTemplates = [];
+let currentGroups = [];
+
+// i18n translations for JavaScript
+const i18n = {
+    error_loading_templates: "{{ t('error_loading_templates') }}",
+    no_templates: "{{ t('no_templates') }}",
+    add_first_template: "{{ t('add_first_template') }}",
+    no_group: "{{ t('no_group') }}",
+    active: "{{ t('active') }}",
+    inactive: "{{ t('inactive') }}",
+    unknown_server: "{{ t('unknown_server') }}",
+    deploy: "{{ t('deploy') }}",
+    edit: "{{ t('edit') }}",
+    delete: "{{ t('delete') }}",
+    templates_count: "{{ t('templates_count') }}",
+    new_group: "{{ t('new_group') }}",
+    edit_group: "{{ t('edit_group') }}",
+    error_loading_group: "{{ t('error_loading_group') }}",
+    delete_group_confirm: "{{ t('delete_group_confirm') }}",
+    error_saving_group: "{{ t('error_saving_group') }}",
+    error_deleting_group: "{{ t('error_deleting_group') }}",
+    new_template: "{{ t('new_template') }}",
+    edit_template: "{{ t('edit_template') }}",
+    delete_template_confirm: "{{ t('delete_template_confirm') }}",
+    error_saving_template: "{{ t('error_saving_template') }}",
+    error_deleting_template: "{{ t('error_deleting_template') }}",
+    select_proxmox_server: "{{ t('select_proxmox_server') }}",
+    searching_templates: "{{ t('searching_templates') }}",
+    no_templates_found: "{{ t('no_templates_found') }}",
+    already_added: "{{ t('already_added') }}",
+    select_group_placeholder: "{{ t('select_group_placeholder') }}",
+    add: "{{ t('add') }}",
+    please_select_group: "{{ t('please_select_group') }}",
+    add_template_to_group: "{{ t('add_template_to_group') }}",
+    error_loading_template_info: "{{ t('error_loading_template_info') }}",
+    min_value: "{{ t('min_value') }}",
+    deploying_vm: "{{ t('deploying_vm') }}",
+    deploying_status: "{{ t('deploying_status') }}",
+    deploy_error: "{{ t('deploy_error') }}",
+    error: "{{ t('error') }}",
+    // Auto-import translations
+    loading: "{{ t('loading') }}",
+    select_server: "{{ t('select_server') }}",
+    no_new_templates: "{{ t('no_new_templates') }}",
+    found: "{{ t('found') }}",
+    new_templates: "{{ t('new_templates') }}",
+    importing: "{{ t('importing') }}",
+    imported: "{{ t('imported') }}",
+    templates: "{{ t('templates') }}"
+};
+
+// Store template groups globally for use in discovered templates
+window.templateGroups = [
+    {% for group in template_groups %}
+    { id: {{ group.id }}, name: "{{ group.name }}", icon: "{{ (group.icon|replace('\"', '\\\"'))|safe if group.icon else '<i class=\\\"fa-solid fa-cube\\\"></i>' }}" }{{ "," if not loop.last else "" }}
+    {% endfor %}
+];
+
+// URL params helper functions
+function getUrlParams() {
+    return new URLSearchParams(window.location.search);
+}
+
+function updateUrlParams(params) {
+    const url = new URL(window.location);
+    Object.entries(params).forEach(([key, value]) => {
+        if (value) {
+            url.searchParams.set(key, value);
+        } else {
+            url.searchParams.delete(key);
+        }
+    });
+    window.history.replaceState({}, '', url);
+}
+
+function restoreFiltersFromUrl() {
+    const params = getUrlParams();
+    
+    const group = params.get('group') || '';
+    const groupSelect = document.getElementById('filterGroup');
+    if (groupSelect) groupSelect.value = group;
+    
+    const server = params.get('server') || '';
+    const serverSelect = document.getElementById('filterServer');
+    if (serverSelect) serverSelect.value = server;
+}
+
+// Load templates on page load
+document.addEventListener('DOMContentLoaded', () => {
+    restoreFiltersFromUrl();
+    loadTemplates();
+    loadGroupCounts();
+});
+
+// API helpers
+async function apiRequest(url, options = {}) {
+    const token = localStorage.getItem('access_token');
+    const defaultOptions = {
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+        }
+    };
+    
+    const response = await fetch(url, { ...defaultOptions, ...options });
+    
+    if (response.status === 401) {
+        localStorage.removeItem('access_token');
+        const currentUrl = encodeURIComponent(window.location.pathname + window.location.search);
+        window.location.href = `/login?returnUrl=${currentUrl}`;
+        return null;
+    }
+    
+    return response;
+}
+
+// Helper to escape HTML and quotes for safe attribute values
+function escapeAttr(str) {
+    if (!str) return '';
+    return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// Load templates
+async function loadTemplates() {
+    try {
+        const response = await apiRequest(`${API_BASE}/templates?active_only=false`);
+        if (!response.ok) throw new Error('Failed to load templates');
+        
+        currentTemplates = await response.json();
+        // Apply filters from URL
+        filterTemplates();
+    } catch (e) {
+        console.error('Error loading templates:', e);
+        document.getElementById('templatesContainer').innerHTML = 
+            `<p style="color: var(--danger);"><i class="fa-solid fa-circle-xmark"></i> ${i18n.error_loading_templates}</p>`;
+    }
+}
+
+// Render templates grouped by node
+function renderTemplates(templates) {
+    const container = document.getElementById('templatesContainer');
+    const canManage = window.hasPermission('templates.manage');
+    const canDeploy = window.hasPermission('vms.create');
+    
+    if (templates.length === 0) {
+        container.innerHTML = `
+            <p style="color: var(--text-secondary); grid-column: 1 / -1;">
+                ${i18n.no_templates} ${canManage ? `<a href="#" onclick="showAddTemplateModal(); return false;" style="color: var(--success);">${i18n.add_first_template}</a>.` : ''}
+            </p>
+        `;
+        return;
+    }
+    
+    // Group templates by server + node
+    const grouped = {};
+    templates.forEach(t => {
+        const key = `${t.server_name || 'Unknown'}|${t.node || 'unknown'}`;
+        if (!grouped[key]) {
+            grouped[key] = {
+                serverName: t.server_name || i18n.unknown_server,
+                node: t.node || 'unknown',
+                templates: []
+            };
+        }
+        grouped[key].templates.push(t);
+    });
+    
+    // Render grouped
+    container.innerHTML = Object.entries(grouped).map(([key, group], index) => `
+        <div class="node-group" style="grid-column: 1 / -1; margin-bottom: 1rem;">
+            <div class="node-group-header" onclick="toggleNodeGroup('${key.replace(/'/g, "\\'")}')" style="display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem 1rem; background: var(--bg-tertiary); border-radius: 0.5rem; cursor: pointer; border: 1px solid var(--border-color);">
+                <i class="fa-solid fa-chevron-down node-toggle" id="toggle-${index}" style="transition: transform 0.2s; color: var(--text-muted); transform: rotate(-90deg);"></i>
+                <i class="fa-solid fa-server" style="color: var(--primary);"></i>
+                <div style="flex: 1;">
+                    <span style="font-weight: 600; color: var(--text-primary);">${group.serverName}</span>
+                    <span style="color: var(--text-muted); margin-left: 0.5rem;">→</span>
+                    <span style="color: var(--info); font-weight: 500; margin-left: 0.5rem;"><i class="fa-solid fa-cube"></i> ${group.node}</span>
+                </div>
+                <span class="badge" style="background: var(--primary); color: white; padding: 0.25rem 0.5rem; border-radius: 0.25rem; font-size: 0.75rem;">
+                    ${group.templates.length} ${i18n.templates_count}
+                </span>
+            </div>
+            <div class="node-group-content" id="content-${index}" style="display: none; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; margin-top: 0.75rem; padding-left: 1rem;">
+                ${group.templates.map(t => renderTemplateCard(t, canManage, canDeploy)).join('')}
+            </div>
+        </div>
+    `).join('');
+}
+
+// Render single template card
+function renderTemplateCard(t, canManage, canDeploy) {
+    return `
+        <div class="template-card" data-template-id="${t.id}" data-group-id="${t.group_id}" data-server-id="${t.server_id}">
+            <div style="display: flex; justify-content: space-between; align-items: start;">
+                <div style="display: flex; align-items: center; gap: 0.75rem;">
+                    <span style="font-size: 1.5rem;">${t.group_icon || '<i class="fa-solid fa-compact-disc"></i>'}</span>
+                    <div>
+                        <h5 style="margin: 0; color: var(--text-primary);">${t.name}</h5>
+                        <span style="font-size: 0.75rem; color: var(--text-muted);">${t.group_name || i18n.no_group}</span>
+                    </div>
+                </div>
+                <span style="font-size: 0.75rem; padding: 0.25rem 0.5rem; background: ${t.is_active ? 'var(--success-dark)' : 'var(--danger-dark)'}; border-radius: 0.25rem;">
+                    ${t.is_active ? `<i class="fa-solid fa-check"></i> ${i18n.active}` : `<i class="fa-solid fa-xmark"></i> ${i18n.inactive}`}
+                </span>
+            </div>
+            
+            <div style="margin-top: 0.75rem; font-size: 0.875rem; color: var(--text-secondary);">
+                <div><i class="fa-solid fa-list"></i> VMID: ${t.vmid}</div>
+                <div><i class="fa-solid fa-gear"></i> ${t.default_cores} CPU, ${t.default_memory} MB RAM, ${t.default_disk} GB</div>
+            </div>
+            
+            ${t.description ? `<p style="margin: 0.5rem 0 0 0; font-size: 0.8rem; color: var(--text-muted); font-style: italic;">${t.description}</p>` : ''}
+            
+            <div class="actions">
+                ${canDeploy ? `<button onclick="showDeployModal(${t.id})" class="btn btn-sm btn-primary" style="flex: 1;"><i class="fa-solid fa-rocket"></i> ${i18n.deploy}</button>` : ''}
+                ${canManage ? `<button onclick="editTemplate(${t.id})" class="btn btn-sm" style="background: var(--info); padding: 0.25rem 0.5rem;"><i class="fa-solid fa-pen"></i></button>` : ''}
+                ${canManage ? `<button onclick="deleteTemplate(${t.id}, '${escapeAttr(t.name)}')" class="btn btn-sm btn-delete" style="padding: 0.25rem 0.5rem;"><i class="fa-solid fa-trash"></i></button>` : ''}
+            </div>
+        </div>
+    `;
+}
+
+// Toggle node group visibility
+function toggleNodeGroup(key) {
+    const groups = document.querySelectorAll('.node-group');
+    groups.forEach((group, index) => {
+        const header = group.querySelector('.node-group-header');
+        const content = group.querySelector('.node-group-content');
+        const toggle = group.querySelector('.node-toggle');
+        
+        if (header && header.getAttribute('onclick').includes(key.replace(/'/g, "\\'"))) {
+            const isVisible = content.style.display !== 'none';
+            content.style.display = isVisible ? 'none' : 'grid';
+            toggle.style.transform = isVisible ? 'rotate(-90deg)' : 'rotate(0deg)';
+        }
+    });
+}
+
+// Filter templates
+function filterTemplates() {
+    const groupId = document.getElementById('filterGroup').value;
+    const serverId = document.getElementById('filterServer').value;
+    
+    // Save filters to URL
+    updateUrlParams({ group: groupId, server: serverId });
+    
+    let filtered = currentTemplates;
+    
+    if (groupId) {
+        filtered = filtered.filter(t => t.group_id == groupId);
+    }
+    if (serverId) {
+        filtered = filtered.filter(t => t.server_id == serverId);
+    }
+    
+    renderTemplates(filtered);
+}
+
+// Load group counts
+async function loadGroupCounts() {
+    const groups = document.querySelectorAll('.template-group-card');
+    
+    for (const group of groups) {
+        const groupId = group.dataset.groupId;
+        const countEl = document.getElementById(`group-templates-count-${groupId}`);
+        
+        const count = currentTemplates.filter(t => t.group_id == groupId).length;
+        countEl.textContent = `${count} ${i18n.templates_count}`;
+    }
+    
+    // Update after templates are loaded
+    setTimeout(() => {
+        for (const group of groups) {
+            const groupId = group.dataset.groupId;
+            const countEl = document.getElementById(`group-templates-count-${groupId}`);
+            const count = currentTemplates.filter(t => t.group_id == groupId).length;
+            countEl.textContent = `${count} ${i18n.templates_count}`;
+        }
+    }, 1000);
+}
+
+// Modal helpers
+function showModal(id) {
+    document.getElementById(id).style.display = 'flex';
+}
+
+function closeModal(id) {
+    document.getElementById(id).style.display = 'none';
+}
+
+// Auto-import functions
+function showAutoImportModal() {
+    document.getElementById('autoImportServerId').value = '';
+    document.getElementById('autoImportStatus').style.display = 'none';
+    document.getElementById('autoImportPreview').style.display = 'none';
+    document.getElementById('autoImportResult').style.display = 'none';
+    document.getElementById('previewImportBtn').style.display = 'inline-block';
+    document.getElementById('executeImportBtn').style.display = 'none';
+    showModal('autoImportModal');
+}
+
+let pendingImportData = null;
+
+async function previewAutoImport() {
+    const serverId = document.getElementById('autoImportServerId').value;
+    if (!serverId) {
+        showAutoImportStatus('<i class="fa-solid fa-triangle-exclamation"></i> ' + i18n.select_server, 'warning');
+        return;
+    }
+    
+    const btn = document.getElementById('previewImportBtn');
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> ' + i18n.loading;
+    btn.disabled = true;
+    
+    try {
+        // Сначала получаем список шаблонов для превью
+        const response = await apiRequest(`${API_BASE}/discover/${serverId}`);
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to discover templates');
+        }
+        
+        const data = await response.json();
+        const templates = data.templates.filter(t => !t.already_added);
+        
+        if (templates.length === 0) {
+            showAutoImportStatus('<i class="fa-solid fa-circle-info"></i> ' + i18n.no_new_templates, 'info');
+            document.getElementById('autoImportPreview').style.display = 'none';
+            document.getElementById('executeImportBtn').style.display = 'none';
+            return;
+        }
+        
+        // Группируем по предполагаемой группе ОС с правильной сортировкой
+        const grouped = groupTemplatesByOS(templates);
+        
+        // Сортируем группы по приоритету
+        const groupOrder = {
+            'Ubuntu': 1, 'Debian': 2, 'CentOS': 3, 'Rocky Linux': 4, 
+            'AlmaLinux': 5, 'Fedora': 6, 'RHEL': 7, 'Oracle Linux': 8,
+            'openSUSE': 9, 'Arch Linux': 10, 'Alpine': 12, 
+            'Windows': 20, 'FreeBSD': 30, 'Other': 99
+        };
+        const sortedGroups = Object.entries(grouped).sort((a, b) => 
+            (groupOrder[a[0]] || 50) - (groupOrder[b[0]] || 50)
+        );
+        
+        // Отображаем превью с глобальной сортировкой
+        let html = '';
+        let globalOrder = 0;
+        for (const [groupName, groupTemplates] of sortedGroups) {
+            html += `<div style="margin-bottom: 0.75rem;">
+                <div style="font-weight: bold; color: var(--text-primary); padding: 0.25rem 0; border-bottom: 1px solid var(--border-color);">
+                    ${getGroupIcon(groupName)} ${groupName} (${groupTemplates.length})
+                </div>`;
+            groupTemplates.forEach((tpl, idx) => {
+                html += `<div style="padding: 0.25rem 0.5rem; font-size: 0.875rem; color: var(--text-secondary); display: flex; justify-content: space-between;">
+                    <span>• ${tpl.name}</span>
+                    <span style="color: var(--text-muted);">VMID: ${tpl.vmid}, Sort: ${globalOrder}</span>
+                </div>`;
+                globalOrder++;
+            });
+            html += '</div>';
+        }
+        
+        document.getElementById('autoImportList').innerHTML = html;
+        document.getElementById('autoImportPreview').style.display = 'block';
+        document.getElementById('executeImportBtn').style.display = 'inline-block';
+        
+        showAutoImportStatus(`<i class="fa-solid fa-circle-check"></i> ${i18n.found} ${templates.length} ${i18n.new_templates}`, 'success');
+        
+        pendingImportData = { serverId, templates: grouped };
+        
+    } catch (error) {
+        console.error('Preview error:', error);
+        showAutoImportStatus('<i class="fa-solid fa-circle-xmark"></i> ' + error.message, 'danger');
+    } finally {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    }
+}
+
+async function executeAutoImport() {
+    const serverId = document.getElementById('autoImportServerId').value;
+    if (!serverId) return;
+    
+    const btn = document.getElementById('executeImportBtn');
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> ' + i18n.importing;
+    btn.disabled = true;
+    
+    try {
+        const response = await apiRequest(`${API_BASE}/auto-import/${serverId}`, {
+            method: 'POST'
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to import templates');
+        }
+        
+        const data = await response.json();
+        
+        // Показываем результат
+        document.getElementById('autoImportPreview').style.display = 'none';
+        
+        let html = '';
+        const byGroup = {};
+        data.templates.forEach(tpl => {
+            if (!byGroup[tpl.group]) byGroup[tpl.group] = [];
+            byGroup[tpl.group].push(tpl);
+        });
+        
+        for (const [groupName, templates] of Object.entries(byGroup)) {
+            html += `<div style="margin-bottom: 0.5rem;">
+                <span style="font-weight: bold;">${getGroupIcon(groupName)} ${groupName}:</span>`;
+            templates.forEach(tpl => {
+                html += ` <span style="background: var(--success); color: white; padding: 0.125rem 0.5rem; border-radius: 1rem; font-size: 0.75rem; margin-left: 0.25rem;">${tpl.name} (#${tpl.sort_order})</span>`;
+            });
+            html += '</div>';
+        }
+        
+        document.getElementById('autoImportResultList').innerHTML = html;
+        document.getElementById('autoImportResult').style.display = 'block';
+        document.getElementById('executeImportBtn').style.display = 'none';
+        
+        showAutoImportStatus(`<i class="fa-solid fa-circle-check"></i> ${i18n.imported} ${data.imported_count} ${i18n.templates}`, 'success');
+        
+        // Обновляем списки
+        loadTemplates();
+        loadGroupCounts();
+        
+    } catch (error) {
+        console.error('Import error:', error);
+        showAutoImportStatus('<i class="fa-solid fa-circle-xmark"></i> ' + error.message, 'danger');
+    } finally {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    }
+}
+
+function showAutoImportStatus(message, type) {
+    const el = document.getElementById('autoImportStatus');
+    el.style.display = 'block';
+    el.style.background = type === 'success' ? 'var(--success-bg)' : 
+                          type === 'warning' ? 'var(--warning-bg)' : 
+                          type === 'info' ? 'var(--info-bg)' : 'var(--danger-bg)';
+    el.style.color = type === 'success' ? 'var(--success)' : 
+                     type === 'warning' ? 'var(--warning)' : 
+                     type === 'info' ? 'var(--info)' : 'var(--danger)';
+    el.innerHTML = message;
+}
+
+function groupTemplatesByOS(templates) {
+    const osKeywords = {
+        'ubuntu': 'Ubuntu',
+        'debian': 'Debian', 
+        'centos': 'CentOS',
+        'rocky': 'Rocky Linux',
+        'alma': 'AlmaLinux',
+        'fedora': 'Fedora',
+        'rhel': 'RHEL',
+        'oracle': 'Oracle Linux',
+        'suse': 'openSUSE',
+        'arch': 'Arch Linux',
+        'alpine': 'Alpine',
+        'windows': 'Windows',
+        'win': 'Windows',
+        'freebsd': 'FreeBSD'
+    };
+    
+    const result = {};
+    
+    templates.forEach(tpl => {
+        const nameLower = tpl.name.toLowerCase();
+        let groupName = 'Other';
+        
+        for (const [keyword, group] of Object.entries(osKeywords)) {
+            if (nameLower.includes(keyword)) {
+                groupName = group;
+                break;
+            }
+        }
+        
+        if (!result[groupName]) result[groupName] = [];
+        result[groupName].push(tpl);
+    });
+    
+    // Сортируем шаблоны внутри групп по имени
+    for (const group of Object.keys(result)) {
+        result[group].sort((a, b) => a.name.localeCompare(b.name));
+    }
+    
+    return result;
+}
+
+function getGroupIcon(groupName) {
+    const icons = {
+        'Ubuntu': '<i class="fa-brands fa-ubuntu"></i>',
+        'Debian': '<i class="fa-brands fa-debian"></i>',
+        'CentOS': '<i class="fa-brands fa-centos"></i>',
+        'Rocky Linux': '<i class="fa-brands fa-linux"></i>',
+        'AlmaLinux': '<i class="fa-brands fa-linux"></i>',
+        'Fedora': '<i class="fa-brands fa-fedora"></i>',
+        'RHEL': '<i class="fa-brands fa-redhat"></i>',
+        'Oracle Linux': '<i class="fa-brands fa-linux"></i>',
+        'openSUSE': '<i class="fa-brands fa-suse"></i>',
+        'Arch Linux': '<i class="fa-brands fa-linux"></i>',
+        'Alpine': '<i class="fa-brands fa-linux"></i>',
+        'Windows': '<i class="fa-brands fa-windows"></i>',
+        'FreeBSD': '<i class="fa-brands fa-freebsd"></i>',
+        'Other': '<i class="fa-solid fa-compact-disc"></i>'
+    };
+    return icons[groupName] || '<i class="fa-solid fa-cube"></i>';
+}
+
+// Group CRUD
+function showAddGroupModal() {
+    document.getElementById('groupModalTitle').innerHTML = `<i class="fa-solid fa-folder"></i> ${i18n.new_group}`;
+    document.getElementById('groupForm').reset();
+    document.getElementById('groupId').value = '';
+    showModal('addGroupModal');
+}
+
+async function editGroup(groupId) {
+    try {
+        const response = await apiRequest(`${API_BASE}/groups/${groupId}`);
+        if (!response.ok) throw new Error('Failed to load group');
+        
+        const group = await response.json();
+        
+        document.getElementById('groupModalTitle').innerHTML = `<i class="fa-solid fa-pen"></i> ${i18n.edit_group}`;
+        document.getElementById('groupId').value = group.id;
+        document.getElementById('groupName').value = group.name;
+        document.getElementById('groupIcon').value = group.icon || '';
+        document.getElementById('groupDescription').value = group.description || '';
+        document.getElementById('groupSortOrder').value = group.sort_order;
+        
+        showModal('addGroupModal');
+    } catch (e) {
+        showToast('error', i18n.error, `${i18n.error_loading_group}: ${e.message}`);
+    }
+}
+
+async function submitGroup(event) {
+    event.preventDefault();
+    
+    const formData = new FormData(event.target);
+    const groupId = formData.get('group_id');
+    const data = {
+        name: formData.get('name'),
+        icon: formData.get('icon') || null,
+        description: formData.get('description') || null,
+        sort_order: parseInt(formData.get('sort_order')) || 0
+    };
+    
+    try {
+        const url = groupId ? `${API_BASE}/groups/${groupId}` : `${API_BASE}/groups`;
+        const method = groupId ? 'PUT' : 'POST';
+        
+        const response = await apiRequest(url, {
+            method: method,
+            body: JSON.stringify(data)
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to save group');
+        }
+        
+        closeModal('addGroupModal');
+        window.location.reload();
+    } catch (e) {
+        showToast('error', i18n.error, `${i18n.error_saving_group}: ${e.message}`);
+    }
+}
+
+async function deleteGroup(groupId, name) {
+    const confirmed = await showDeleteConfirm(
+        i18n.delete_group || 'Delete Group',
+        `${i18n.delete_group_confirm} "${name}"?`
+    );
+    
+    if (!confirmed) return;
+    
+    try {
+        const response = await apiRequest(`${API_BASE}/groups/${groupId}`, {
+            method: 'DELETE'
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to delete group');
+        }
+        
+        window.location.reload();
+    } catch (e) {
+        showToast('error', i18n.error, `${i18n.error_deleting_group}: ${e.message}`);
+    }
+}
+
+// Template CRUD
+function showAddTemplateModal() {
+    document.getElementById('templateModalTitle').innerHTML = `<i class="fa-solid fa-compact-disc"></i> ${i18n.new_template}`;
+    document.getElementById('templateForm').reset();
+    document.getElementById('templateId').value = '';
+    document.getElementById('templateIsActive').checked = true;
+    showModal('addTemplateModal');
+}
+
+async function editTemplate(templateId) {
+    const template = currentTemplates.find(t => t.id === templateId);
+    if (!template) return;
+    
+    document.getElementById('templateModalTitle').innerHTML = `<i class="fa-solid fa-pen"></i> ${i18n.edit_template}`;
+    document.getElementById('templateId').value = template.id;
+    document.getElementById('templateGroupId').value = template.group_id;
+    document.getElementById('templateServerId').value = template.server_id;
+    document.getElementById('templateName').value = template.name;
+    document.getElementById('templateVmid').value = template.vmid;
+    document.getElementById('templateNode').value = template.node;
+    document.getElementById('templateDefaultCores').value = template.default_cores;
+    document.getElementById('templateDefaultMemory').value = template.default_memory;
+    document.getElementById('templateDefaultDisk').value = template.default_disk;
+    document.getElementById('templateMinCores').value = template.min_cores;
+    document.getElementById('templateMinMemory').value = template.min_memory;
+    document.getElementById('templateMinDisk').value = template.min_disk;
+    document.getElementById('templateDescription').value = template.description || '';
+    document.getElementById('templateSortOrder').value = template.sort_order;
+    document.getElementById('templateIsActive').checked = template.is_active;
+    
+    showModal('addTemplateModal');
+}
+
+async function submitTemplate(event) {
+    event.preventDefault();
+    
+    const formData = new FormData(event.target);
+    const templateId = formData.get('template_id');
+    const data = {
+        group_id: parseInt(formData.get('group_id')),
+        server_id: parseInt(formData.get('server_id')),
+        name: formData.get('name'),
+        vmid: parseInt(formData.get('vmid')),
+        node: formData.get('node'),
+        default_cores: parseInt(formData.get('default_cores')),
+        default_memory: parseInt(formData.get('default_memory')),
+        default_disk: parseInt(formData.get('default_disk')),
+        min_cores: parseInt(formData.get('min_cores')),
+        min_memory: parseInt(formData.get('min_memory')),
+        min_disk: parseInt(formData.get('min_disk')),
+        description: formData.get('description') || null,
+        sort_order: parseInt(formData.get('sort_order')) || 0,
+        is_active: document.getElementById('templateIsActive').checked
+    };
+    
+    try {
+        const url = templateId ? `${API_BASE}/templates/${templateId}` : `${API_BASE}/templates`;
+        const method = templateId ? 'PUT' : 'POST';
+        
+        const response = await apiRequest(url, {
+            method: method,
+            body: JSON.stringify(data)
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to save template');
+        }
+        
+        closeModal('addTemplateModal');
+        loadTemplates();
+    } catch (e) {
+        showToast('error', i18n.error, `${i18n.error_saving_template}: ${e.message}`);
+    }
+}
+
+async function deleteTemplate(templateId, name) {
+    const confirmed = await showDeleteConfirm(
+        i18n.delete_template || 'Delete Template',
+        `${i18n.delete_template_confirm} "${name}"?`
+    );
+    
+    if (!confirmed) return;
+    
+    try {
+        const response = await apiRequest(`${API_BASE}/templates/${templateId}`, {
+            method: 'DELETE'
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to delete template');
+        }
+        
+        loadTemplates();
+    } catch (e) {
+        showToast('error', i18n.error, `${i18n.error_deleting_template}: ${e.message}`);
+    }
+}
+
+// Discover templates
+async function discoverTemplates() {
+    const serverId = document.getElementById('discoverServer').value;
+    if (!serverId) {
+        showToast('warning', i18n.warning || 'Warning', i18n.select_proxmox_server);
+        return;
+    }
+    
+    const container = document.getElementById('discoveredTemplates');
+    const list = document.getElementById('discoveredList');
+    
+    container.style.display = 'block';
+    list.innerHTML = `<p style="color: var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> ${i18n.searching_templates}</p>`;
+    
+    try {
+        const response = await apiRequest(`${API_BASE}/discover/${serverId}`);
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to discover templates');
+        }
+        
+        const data = await response.json();
+        
+        if (data.templates.length === 0) {
+            list.innerHTML = `<p style="color: var(--text-secondary);">${i18n.no_templates_found}</p>`;
+            return;
+        }
+        
+        list.innerHTML = data.templates.map(t => `
+            <div class="discovered-card ${t.already_added ? 'already-added' : ''}">
+                <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: start;">
+                        <div>
+                            <h5 style="margin: 0; color: var(--text-primary);">${escapeAttr(t.name)}</h5>
+                            <span style="font-size: 0.75rem; color: var(--text-muted);">VMID: ${t.vmid} @ ${escapeAttr(t.node)}</span>
+                        </div>
+                        ${t.already_added ? 
+                            `<span style="font-size: 0.75rem; color: var(--success);">✓ ${i18n.already_added}</span>` :
+                            ''
+                        }
+                    </div>
+                    ${!t.already_added ? `
+                        <div style="display: flex; gap: 0.5rem; align-items: center;">
+                            <select id="groupSelect_${serverId}_${t.vmid}" style="flex: 1; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color); padding: 0.375rem; border-radius: 0.375rem; font-size: 0.875rem;">
+                                <option value="">${i18n.select_group_placeholder}</option>
+                                ${window.templateGroups.map(g => `<option value="${g.id}">${escapeAttr(g.icon)} ${escapeAttr(g.name)}</option>`).join('')}
+                            </select>
+                            <button onclick="quickAddTemplate(${serverId}, ${t.vmid}, '${escapeAttr(t.name)}', '${escapeAttr(t.node)}')" class="btn btn-sm btn-primary" style="white-space: nowrap;"><i class="fa-solid fa-plus"></i> ${i18n.add}</button>
+                        </div>
+                    ` : ''}
+                </div>
+            </div>
+        `).join('');
+    } catch (e) {
+        list.innerHTML = `<p style="color: var(--danger);"><i class="fa-solid fa-circle-xmark"></i> ${i18n.error}: ${e.message}</p>`;
+    }
+}
+
+function quickAddTemplate(serverId, vmid, name, node) {
+    // Get selected group from dropdown
+    const groupSelect = document.getElementById(`groupSelect_${serverId}_${vmid}`);
+    const groupId = groupSelect ? groupSelect.value : '';
+    
+    if (!groupId) {
+        showToast('warning', i18n.warning || 'Warning', i18n.please_select_group);
+        return;
+    }
+    
+    // Reset form first
+    document.getElementById('templateForm').reset();
+    document.getElementById('templateId').value = '';
+    document.getElementById('templateIsActive').checked = true;
+    
+    // Then fill form with template data
+    document.getElementById('templateModalTitle').innerHTML = `<i class="fa-solid fa-compact-disc"></i> ${i18n.add_template_to_group}`;
+    document.getElementById('templateGroupId').value = groupId;
+    document.getElementById('templateServerId').value = serverId;
+    document.getElementById('templateVmid').value = vmid;
+    document.getElementById('templateName').value = name;
+    document.getElementById('templateNode').value = node;
+    
+    // Open modal
+    showModal('addTemplateModal');
+}
+
+// Deploy VM
+async function showDeployModal(templateId) {
+    try {
+        const response = await apiRequest(`${API_BASE}/quick-deploy/${templateId}`);
+        if (!response.ok) throw new Error('Failed to load template info');
+        
+        const data = await response.json();
+        const t = data.template;
+        
+        document.getElementById('deployTemplateId').value = t.id;
+        document.getElementById('deployServerId').value = data.server.id;
+        document.getElementById('deployIcon').innerHTML = data.group.icon || '<i class="fa-solid fa-compact-disc"></i>';
+        document.getElementById('deployTemplateName').textContent = t.name;
+        document.getElementById('deployServerName').textContent = `${data.server.name} @ ${t.node || t.source_node || 'any'}`;
+        
+        document.getElementById('deployCores').value = t.default_cores;
+        document.getElementById('deployCores').min = t.min_cores;
+        document.getElementById('deployCoresHint').textContent = `${i18n.min_value} ${t.min_cores}`;
+        
+        document.getElementById('deployMemory').value = t.default_memory;
+        document.getElementById('deployMemory').min = t.min_memory;
+        document.getElementById('deployMemoryHint').textContent = `${i18n.min_value} ${t.min_memory} MB`;
+        
+        document.getElementById('deployDisk').value = t.default_disk;
+        document.getElementById('deployDisk').min = t.min_disk;
+        document.getElementById('deployDiskHint').textContent = `${i18n.min_value} ${t.min_disk} GB`;
+        
+        document.getElementById('deployVmName').value = '';
+        document.getElementById('deployIp').value = '';
+        document.getElementById('deployGateway').value = '';
+        document.getElementById('deployUser').value = '';
+        document.getElementById('deployPassword').value = '';
+        document.getElementById('deploySshKeys').value = '';
+        document.getElementById('deployStatus').style.display = 'none';
+        document.getElementById('deploySubmitBtn').disabled = false;
+        
+        // Reset HA checkbox
+        document.getElementById('deployAddToHA').checked = false;
+        
+        // Load nodes for target node selection and check cluster status
+        await loadNodesForDeploy(data.server.id);
+        
+        showModal('deployModal');
+    } catch (e) {
+        showToast('error', i18n.error, `${i18n.error_loading_template_info}: ${e.message}`);
+    }
+}
+
+async function loadNodesForDeploy(serverId) {
+    const select = document.getElementById('deployTargetNode');
+    const haSection = document.getElementById('deployHASection');
+    const haHint = document.getElementById('deployHAHint');
+    select.innerHTML = `<option value="">${i18n.auto_select || 'Авто (нода шаблона)'}</option>`;
+    
+    try {
+        // Load nodes
+        const response = await fetchWithAuth(`/proxmox/api/${serverId}/nodes`);
+        if (response.ok) {
+            const nodesData = await response.json();
+            const nodes = nodesData.nodes || nodesData || [];
+            
+            nodes.forEach(node => {
+                const nodeName = node.node || node.name || node;
+                const nodeStatus = node.status || 'unknown';
+                const isOnline = nodeStatus === 'online';
+                const option = document.createElement('option');
+                option.value = nodeName;
+                option.innerHTML = `${nodeName} ${isOnline ? '<i class="fa-solid fa-circle" style="color:var(--success)"></i>' : '<i class="fa-solid fa-circle" style="color:var(--danger)"></i>'}`;
+                if (!isOnline) option.disabled = true;
+                select.appendChild(option);
+            });
+        }
+        
+        // Check HA status via dedicated endpoint
+        const haResponse = await fetchWithAuth(`/proxmox/api/${serverId}/ha/status`);
+        if (haResponse.ok) {
+            const haData = await haResponse.json();
+            if (haData.is_cluster) {
+                haSection.style.display = 'block';
+                haHint.textContent = '{{ t("ha_auto_failover_hint") or "VM будет автоматически перезапущена на другой ноде при сбое" }}';
+            } else {
+                haSection.style.display = 'none';
+            }
+        } else {
+            haSection.style.display = 'none';
+        }
+    } catch (e) {
+        console.error('Error loading nodes:', e);
+        haSection.style.display = 'none';
+    }
+}
+
+async function submitDeploy(event) {
+    event.preventDefault();
+    
+    const formData = new FormData(event.target);
+    const statusEl = document.getElementById('deployStatus');
+    const submitBtn = document.getElementById('deploySubmitBtn');
+    
+    const data = {
+        template_id: parseInt(formData.get('template_id')),
+        name: formData.get('name'),
+        cores: parseInt(formData.get('cores')) || null,
+        memory: parseInt(formData.get('memory')) || null,
+        disk: parseInt(formData.get('disk')) || null,
+        network_bridge: formData.get('network_bridge') || 'vmbr0',
+        ip_address: formData.get('ip_address') || null,
+        gateway: formData.get('gateway') || null,
+        cloud_init_user: formData.get('cloud_init_user') || null,
+        cloud_init_password: formData.get('cloud_init_password') || null,
+        ssh_keys: formData.get('ssh_keys') || null,
+        start_after_create: document.getElementById('deployStart').checked
+    };
+    
+    // Add target node if selected
+    const targetNode = formData.get('target_node');
+    if (targetNode) {
+        data.target_node = targetNode;
+    }
+    
+    // Add HA option if enabled
+    const haCheckbox = document.getElementById('deployAddToHA');
+    if (haCheckbox && haCheckbox.checked) {
+        data.enable_ha = true;
+    }
+    
+    statusEl.style.display = 'block';
+    statusEl.style.background = 'var(--info-dark)';
+    statusEl.style.color = 'var(--info-text-light)';
+    statusEl.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ${i18n.deploying_vm}`;
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ${i18n.deploying_status}`;
+    
+    try {
+        const response = await apiRequest(`${API_BASE}/deploy`, {
+            method: 'POST',
+            body: JSON.stringify(data)
+        });
+        
+        const result = await response.json();
+        
+        if (!response.ok) {
+            throw new Error(result.detail || 'Failed to deploy VM');
+        }
+        
+        statusEl.style.background = 'var(--success-dark)';
+        statusEl.style.color = 'var(--success-text-light)';
+        statusEl.innerHTML = `<i class="fa-solid fa-circle-check"></i> ${result.message}<br><small>VMID: ${result.vmid}</small>`;
+        
+        setTimeout(() => {
+            closeModal('deployModal');
+        }, 3000);
+        
+    } catch (e) {
+        statusEl.style.background = 'var(--danger-dark)';
+        statusEl.style.color = 'var(--danger-text-light)';
+        statusEl.innerHTML = `<i class="fa-solid fa-circle-xmark"></i> ${i18n.deploy_error}: ${e.message}`;
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = `<i class="fa-solid fa-rocket"></i> ${i18n.deploy}`;
+    }
+}
+</script>
+
+{% endblock %}

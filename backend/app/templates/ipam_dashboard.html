@@ -1,0 +1,574 @@
+{% extends "base.html" %}
+{% block title %}IPAM - {{ t('ip_address_management') }}{% endblock %}
+
+{% block content %}
+<div class="page-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+    <div>
+        <h1 style="font-size: 1.75rem; font-weight: 600; margin: 0;"><i class="fa-solid fa-globe"></i> IPAM</h1>
+        <p style="color: var(--text-secondary); margin-top: 0.25rem;">{{ t('ip_address_management') }}</p>
+    </div>
+    <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+        <a href="/ipam/networks" class="btn btn-secondary"><i class="fa-solid fa-list"></i> {{ t('networks') }}</a>
+        <a href="/ipam/allocations" class="btn btn-secondary"><i class="fa-solid fa-thumbtack"></i> {{ t('allocations') }}</a>
+        <button onclick="showMaintenanceModal()" class="btn btn-warning" data-permission="ipam.manage" title="Обслуживание IPAM"><i class="fa-solid fa-wrench"></i> {{ t('maintenance') }}</button>
+        <button onclick="showAddNetworkModal()" class="btn btn-success" data-permission="ipam.manage"><i class="fa-solid fa-plus"></i> {{ t('add_network') }}</button>
+    </div>
+</div>
+
+<!-- Summary Cards -->
+<div class="stats-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 2rem;">
+    <div class="card stat-card">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+            <div>
+                <div style="font-size: 2rem; font-weight: 600; color: var(--text-primary);" id="networksCount">-</div>
+                <div style="color: var(--text-secondary); font-size: 0.875rem;">{{ t('networks') }}</div>
+            </div>
+            <div style="font-size: 2rem; opacity: 0.5;"><i class="fa-solid fa-globe"></i></div>
+        </div>
+    </div>
+    
+    <div class="card stat-card">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+            <div>
+                <div style="font-size: 2rem; font-weight: 600; color: var(--text-primary);" id="allocatedCount">-</div>
+                <div style="color: var(--text-secondary); font-size: 0.875rem;">{{ t('allocated_ips') }}</div>
+            </div>
+            <div style="font-size: 2rem; opacity: 0.5;"><i class="fa-solid fa-thumbtack"></i></div>
+        </div>
+    </div>
+    
+    <div class="card stat-card">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+            <div>
+                <div style="font-size: 2rem; font-weight: 600; color: var(--text-primary);" id="vmCount">-</div>
+                <div style="color: var(--text-secondary); font-size: 0.875rem;">VM</div>
+            </div>
+            <div style="font-size: 2rem; opacity: 0.5;"><i class="fa-solid fa-desktop"></i></div>
+        </div>
+    </div>
+    
+    <div class="card stat-card">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+            <div>
+                <div style="font-size: 2rem; font-weight: 600; color: var(--text-primary);" id="reservedCount">-</div>
+                <div style="color: var(--text-secondary); font-size: 0.875rem;">{{ t('reserved') }}</div>
+            </div>
+            <div style="font-size: 2rem; opacity: 0.5;"><i class="fa-solid fa-lock"></i></div>
+        </div>
+    </div>
+</div>
+
+<!-- Networks List -->
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h3 style="margin: 0;"><i class="fa-solid fa-list"></i> {{ t('networks') }}</h3>
+        <button onclick="loadData()" class="btn btn-sm" style="background: var(--bg-tertiary); color: var(--text-primary);"><i class="fa-solid fa-rotate"></i> {{ t('refresh') }}</button>
+    </div>
+    
+    <div id="networksContainer">
+        <div style="text-align: center; padding: 2rem; color: var(--text-muted);">
+            <i class="fa-solid fa-spinner fa-spin"></i> {{ t('loading_ellipsis') }}
+        </div>
+    </div>
+</div>
+
+<!-- Recent Activity -->
+<div class="card">
+    <h3 style="margin: 0 0 1rem 0;"><i class="fa-solid fa-file-lines"></i> {{ t('recent_activity') }}</h3>
+    <div id="recentActivity">
+        <div style="text-align: center; padding: 1rem; color: var(--text-muted);">
+            <i class="fa-solid fa-spinner fa-spin"></i> {{ t('loading_ellipsis') }}
+        </div>
+    </div>
+</div>
+
+<!-- Add Network Modal -->
+<div id="addNetworkModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 2000; align-items: center; justify-content: center; padding: 1rem;">
+    <div class="card" style="max-width: 600px; width: 95%; max-height: 90vh; overflow-y: auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+            <h3 style="margin: 0;"><i class="fa-solid fa-plus"></i> {{ t('add_network') }}</h3>
+            <button onclick="closeAddNetworkModal()" style="background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer;">&times;</button>
+        </div>
+        
+        <form id="addNetworkForm" onsubmit="createNetwork(event)">
+            <div style="display: grid; gap: 1rem;">
+                <div class="form-group">
+                    <label style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary);">{{ t('title') }} *</label>
+                    <input type="text" id="networkName" required placeholder="Production Network" style="width: 100%; padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                </div>
+                
+                <div class="form-group">
+                    <label style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary);">{{ t('network_cidr') }} *</label>
+                    <input type="text" id="networkCIDR" required placeholder="10.10.10.0/24" pattern="^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$" style="width: 100%; padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                </div>
+                
+                <div class="form-group">
+                    <label style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary);">{{ t('gateway') }}</label>
+                    <input type="text" id="networkGateway" placeholder="10.10.10.1" style="width: 100%; padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                </div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                    <div class="form-group">
+                        <label style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary);">{{ t('vlan_id') }}</label>
+                        <input type="number" id="networkVLAN" min="1" max="4094" placeholder="100" style="width: 100%; padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary);">{{ t('proxmox_bridge') }}</label>
+                        <input type="text" id="networkBridge" placeholder="vmbr0" style="width: 100%; padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary);">{{ t('proxmox_server') }}</label>
+                    <select id="networkServer" style="width: 100%; padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                        <option value="">{{ t('all_servers') }} ({{ t('global_network') }})</option>
+                    </select>
+                    <small style="color: var(--text-muted);">{{ t('network_server_hint') }}</small>
+                </div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                    <div class="form-group">
+                        <label style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary);">{{ t('dns_primary') }}</label>
+                        <input type="text" id="networkDNS1" placeholder="8.8.8.8" style="width: 100%; padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary);">{{ t('dns_secondary') }}</label>
+                        <input type="text" id="networkDNS2" placeholder="8.8.4.4" style="width: 100%; padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary);">{{ t('dns_domain') }}</label>
+                    <input type="text" id="networkDomain" placeholder="example.local" style="width: 100%; padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);">
+                </div>
+                
+                <div class="form-group">
+                    <label style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary);">{{ t('description') }}</label>
+                    <textarea id="networkDescription" rows="2" placeholder="{{ t('network_description_placeholder') }}" style="width: 100%; padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary); resize: vertical;"></textarea>
+                </div>
+            </div>
+            
+            <div style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border-default);">
+                <button type="button" onclick="closeAddNetworkModal()" class="btn btn-secondary">{{ t('cancel') }}</button>
+                <button type="submit" class="btn btn-success"><i class="fa-solid fa-floppy-disk"></i> {{ t('create') }}</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+// Use global fetchWithAuth from base.html
+
+async function loadData() {
+    await Promise.all([
+        loadSummary(),
+        loadNetworks()
+    ]);
+}
+
+async function loadSummary() {
+    try {
+        const response = await fetchWithAuth('/ipam/api/summary');
+        if (response.ok) {
+            const data = await response.json();
+            
+            document.getElementById('networksCount').textContent = data.networks_count || 0;
+            document.getElementById('allocatedCount').textContent = data.total_allocated || 0;
+            document.getElementById('vmCount').textContent = (data.vm_count || 0) + (data.lxc_count || 0);
+            document.getElementById('reservedCount').textContent = data.total_reserved || 0;
+            
+            // Recent activity
+            const activityDiv = document.getElementById('recentActivity');
+            if (data.recent_allocations && data.recent_allocations.length > 0) {
+                activityDiv.innerHTML = data.recent_allocations.map(item => `
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 0; border-bottom: 1px solid var(--border-color);">
+                        <div>
+                            <span style="font-family: monospace; background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; color: var(--text-primary);">${item.ip}</span>
+                            <span style="margin-left: 0.5rem; color: var(--text-secondary);">${item.resource || 'N/A'}</span>
+                        </div>
+                        <div style="color: var(--text-muted); font-size: 0.875rem;">
+                            ${item.by || 'system'} • ${item.at ? new Date(item.at).toLocaleString('ru-RU') : ''}
+                        </div>
+                    </div>
+                `).join('');
+            } else {
+                activityDiv.innerHTML = '<div style="text-align: center; padding: 1rem; color: var(--text-muted);">' + t('no_recent_activity') + '</div>';
+            }
+        }
+    } catch (error) {
+        console.error('Error loading summary:', error);
+    }
+}
+
+async function loadNetworks() {
+    try {
+        const response = await fetchWithAuth('/ipam/api/networks');
+        const container = document.getElementById('networksContainer');
+        
+        if (response.ok) {
+            const networks = await response.json();
+            
+            if (networks.length === 0) {
+                container.innerHTML = `
+                    <div style="text-align: center; padding: 3rem;">
+                        <div style="font-size: 3rem; margin-bottom: 1rem;"><i class="fa-solid fa-globe"></i></div>
+                        <h3 style="color: var(--text-primary); margin-bottom: 0.5rem;">${t('networks_not_found')}</h3>
+                        <p style="color: var(--text-secondary); margin-bottom: 1.5rem;">${t('add_first_network')}</p>
+                        <button onclick="showAddNetworkModal()" class="btn btn-success"><i class="fa-solid fa-plus"></i> ${t('add_network')}</button>
+                    </div>
+                `;
+                return;
+            }
+            
+            container.innerHTML = `
+                <table style="width: 100%; border-collapse: collapse;">
+                    <thead>
+                        <tr style="border-bottom: 1px solid var(--border-default);">
+                            <th style="text-align: left; padding: 0.75rem; color: var(--text-secondary); font-weight: 500;">${t('network_label')}</th>
+                            <th style="text-align: left; padding: 0.75rem; color: var(--text-secondary); font-weight: 500;">${t('cidr')}</th>
+                            <th style="text-align: left; padding: 0.75rem; color: var(--text-secondary); font-weight: 500;">${t('server')}</th>
+                            <th style="text-align: left; padding: 0.75rem; color: var(--text-secondary); font-weight: 500;">${t('vlan')}</th>
+                            <th style="text-align: left; padding: 0.75rem; color: var(--text-secondary); font-weight: 500;">${t('usage')}</th>
+                            <th style="text-align: right; padding: 0.75rem; color: var(--text-secondary); font-weight: 500;">${t('actions')}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${networks.map(net => {
+                            const serverName = net.server_name || (net.proxmox_server_id ? `ID: ${net.proxmox_server_id}` : t('global'));
+                            return `
+                            <tr style="border-bottom: 1px solid var(--border-default);" onmouseover="this.style.background='var(--bg-surface-hover)'" onmouseout="this.style.background='transparent'">
+                                <td style="padding: 0.75rem;">
+                                    <a href="/ipam/network/${net.id}" style="color: var(--primary); text-decoration: none; font-weight: 500;">
+                                        ${net.name}
+                                    </a>
+                                    ${net.gateway ? `<div style="font-size: 0.75rem; color: var(--text-muted);">GW: ${net.gateway}</div>` : ''}
+                                </td>
+                                <td style="padding: 0.75rem; font-family: monospace; color: var(--text-primary);">${net.network}</td>
+                                <td style="padding: 0.75rem;">
+                                    ${net.proxmox_server_id ? 
+                                        `<span class="badge" style="background: var(--primary-bg); color: var(--primary);"><i class="fa-solid fa-server"></i> ${serverName}</span>` :
+                                        `<span style="color: var(--text-muted);">${t('global')}</span>`
+                                    }
+                                </td>
+                                <td style="padding: 0.75rem; color: var(--text-primary);">${net.vlan_id || '-'}</td>
+                                <td style="padding: 0.75rem;">
+                                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                        <div style="flex: 1; height: 8px; background: var(--bg-tertiary); border-radius: 4px; overflow: hidden; max-width: 100px;">
+                                            <div style="height: 100%; background: ${getUtilizationColor(net.utilization_percent)}; width: ${net.utilization_percent || 0}%;"></div>
+                                        </div>
+                                        <span style="font-size: 0.875rem; color: var(--text-secondary);">${net.used_ips || 0}/${net.total_ips || 0}</span>
+                                    </div>
+                                </td>
+                                <td style="padding: 0.75rem; text-align: right;">
+                                    <a href="/ipam/network/${net.id}" class="btn btn-sm" style="background: var(--bg-tertiary); color: var(--text-primary);"><i class="fa-solid fa-eye"></i></a>
+                                    <button onclick="deleteNetwork(${net.id}, '${net.name}')" class="btn btn-sm btn-delete" style="margin-left: 0.25rem;"><i class="fa-solid fa-trash"></i></button>
+                                </td>
+                            </tr>
+                        `}).join('')}
+                    </tbody>
+                </table>
+            `;
+        } else {
+            container.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--danger);"><i class="fa-solid fa-circle-xmark"></i> ' + t('error_loading_networks') + '</div>';
+        }
+    } catch (error) {
+        console.error('Error loading networks:', error);
+        document.getElementById('networksContainer').innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--danger);"><i class="fa-solid fa-circle-xmark"></i> ' + t('error_loading') + '</div>';
+    }
+}
+
+function getUtilizationColor(percent) {
+    if (percent >= 90) return 'var(--danger)';
+    if (percent >= 70) return 'var(--warning)';
+    if (percent >= 50) return 'var(--warning-light, #eab308)';
+    return 'var(--success)';
+}
+
+let ipamServers = [];
+
+async function loadServersForIPAM() {
+    try {
+        const response = await fetchWithAuth('/proxmox/api/servers');
+        if (response.ok) {
+            ipamServers = await response.json();
+            const select = document.getElementById('networkServer');
+            select.innerHTML = `<option value="">{{ t('all_servers') }} ({{ t('global_network') }})</option>`;
+            ipamServers.forEach(s => {
+                select.innerHTML += `<option value="${s.id}">${s.name} (${s.ip_address})</option>`;
+            });
+        }
+    } catch (e) {
+        console.error('Error loading servers:', e);
+    }
+}
+
+function showAddNetworkModal() {
+    document.getElementById('addNetworkModal').style.display = 'flex';
+    loadServersForIPAM();
+}
+
+function closeAddNetworkModal() {
+    document.getElementById('addNetworkModal').style.display = 'none';
+    document.getElementById('addNetworkForm').reset();
+}
+
+async function createNetwork(event) {
+    event.preventDefault();
+    
+    const serverId = document.getElementById('networkServer').value;
+    
+    const data = {
+        name: document.getElementById('networkName').value,
+        network: document.getElementById('networkCIDR').value,
+        gateway: document.getElementById('networkGateway').value || null,
+        vlan_id: document.getElementById('networkVLAN').value ? parseInt(document.getElementById('networkVLAN').value) : null,
+        proxmox_bridge: document.getElementById('networkBridge').value || null,
+        proxmox_server_id: serverId ? parseInt(serverId) : null,
+        dns_primary: document.getElementById('networkDNS1').value || null,
+        dns_secondary: document.getElementById('networkDNS2').value || null,
+        dns_domain: document.getElementById('networkDomain').value || null,
+        description: document.getElementById('networkDescription').value || null
+    };
+    
+    try {
+        const response = await fetchWithAuth('/ipam/api/networks', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        
+        if (response.ok) {
+            closeAddNetworkModal();
+            loadData();
+            showToast('success', t('success'), t('network_created_successfully') || 'Network created successfully');
+        } else {
+            const error = await response.json();
+            showToast('error', t('error'), error.detail || t('failed_to_create_network'));
+        }
+    } catch (error) {
+        console.error('Error creating network:', error);
+        showToast('error', t('error'), t('network_creation_error'));
+    }
+}
+
+async function deleteNetwork(id, name) {
+    const confirmed = await showDeleteConfirm(
+        t('delete_network'),
+        t('delete_network_confirm').replace('{name}', name)
+    );
+    
+    if (!confirmed) return;
+    
+    try {
+        const response = await fetchWithAuth(`/ipam/api/networks/${id}?force=true`, {
+            method: 'DELETE'
+        });
+        
+        if (response.ok) {
+            loadData();
+            showToast('success', t('success'), t('network_deleted_successfully') || 'Network deleted successfully');
+        } else {
+            const error = await response.json();
+            showToast('error', t('error'), error.detail || t('failed_to_delete_network'));
+        }
+    } catch (error) {
+        console.error('Error deleting network:', error);
+        showToast('error', t('error'), t('network_deletion_error'));
+    }
+}
+
+// ==================== Maintenance Functions ====================
+
+function showMaintenanceModal() {
+    document.getElementById('maintenanceModal').style.display = 'flex';
+    loadMaintenanceData();
+}
+
+function closeMaintenanceModal() {
+    document.getElementById('maintenanceModal').style.display = 'none';
+}
+
+async function loadMaintenanceData() {
+    // Load orphans
+    try {
+        const orphansResp = await fetchWithAuth('/ipam/api/orphans');
+        if (orphansResp.ok) {
+            const data = await orphansResp.json();
+            renderOrphans(data.orphans);
+            document.getElementById('orphansCount').textContent = data.count;
+        }
+    } catch (e) {
+        console.error('Error loading orphans:', e);
+    }
+    
+    // Load unlinked
+    try {
+        const unlinkedResp = await fetchWithAuth('/ipam/api/unlinked');
+        if (unlinkedResp.ok) {
+            const data = await unlinkedResp.json();
+            renderUnlinked(data.unlinked);
+            document.getElementById('unlinkedCount').textContent = data.count;
+            document.getElementById('linkableCount').textContent = data.linkable_count;
+        }
+    } catch (e) {
+        console.error('Error loading unlinked:', e);
+    }
+}
+
+function renderOrphans(orphans) {
+    const container = document.getElementById('orphansList');
+    if (!orphans.length) {
+        container.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 1rem;"><i class="fa-solid fa-check-circle" style="color: var(--success);"></i> {{ t("no_orphans_found") }}</div>';
+        return;
+    }
+    
+    let html = '<div style="max-height: 200px; overflow-y: auto;">';
+    for (const o of orphans) {
+        html += `
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; border-bottom: 1px solid var(--border-color);">
+                <div>
+                    <span style="font-family: monospace; color: var(--warning);">${o.ip_address}</span>
+                    <span style="color: var(--text-secondary); margin-left: 0.5rem;">${o.resource_name || '-'}</span>
+                    <small style="color: var(--text-muted); margin-left: 0.5rem;">(${o.reason})</small>
+                </div>
+                <span class="badge" style="background: var(--bg-tertiary);">${o.resource_type}</span>
+            </div>
+        `;
+    }
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+function renderUnlinked(unlinked) {
+    const container = document.getElementById('unlinkedList');
+    if (!unlinked.length) {
+        container.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 1rem;"><i class="fa-solid fa-check-circle" style="color: var(--success);"></i> {{ t("all_allocations_linked") }}</div>';
+        return;
+    }
+    
+    let html = '<div style="max-height: 200px; overflow-y: auto;">';
+    for (const u of unlinked) {
+        const canLink = u.can_link;
+        html += `
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; border-bottom: 1px solid var(--border-color);">
+                <div>
+                    <span style="font-family: monospace;">${u.ip_address}</span>
+                    <span style="color: var(--text-secondary); margin-left: 0.5rem;">${u.resource_name}</span>
+                </div>
+                <div>
+                    ${canLink ? 
+                        `<span class="badge" style="background: var(--success);">→ VMID ${u.suggested_vmid}</span>` : 
+                        `<span class="badge" style="background: var(--danger);">{{ t("no_match") }}</span>`
+                    }
+                </div>
+            </div>
+        `;
+    }
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+async function cleanupOrphans() {
+    const confirmed = await showDeleteConfirm(
+        '{{ t("cleanup_orphans") }}',
+        '{{ t("confirm_cleanup_orphans") }}'
+    );
+    if (!confirmed) return;
+    
+    const btn = document.querySelector('#maintenanceModal .btn-danger');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> {{ t("cleaning") }}...';
+    
+    try {
+        const response = await fetchWithAuth('/ipam/api/cleanup-orphans', { method: 'POST' });
+        if (response.ok) {
+            const data = await response.json();
+            showToast('success', '{{ t("success") }}', `{{ t("released") }}: ${data.released_count} IP`);
+            loadMaintenanceData();
+            loadData(); // Refresh main data
+        } else {
+            const error = await response.json();
+            showToast('error', '{{ t("error") }}', error.detail || '{{ t("cleanup_failed") }}');
+        }
+    } catch (e) {
+        console.error('Error cleaning orphans:', e);
+        showToast('error', '{{ t("error") }}', '{{ t("cleanup_failed") }}');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-trash"></i> {{ t("cleanup_orphans") }}';
+    }
+}
+
+async function linkAllocations() {
+    const confirmed = await showDeleteConfirm(
+        '{{ t("link_to_vms") }}',
+        '{{ t("confirm_link_allocations") }}'
+    );
+    if (!confirmed) return;
+    
+    const btn = document.querySelector('#maintenanceModal .btn-primary');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> {{ t("linking") }}...';
+    
+    try {
+        const response = await fetchWithAuth('/ipam/api/link-allocations', { method: 'POST' });
+        if (response.ok) {
+            const data = await response.json();
+            showToast('success', '{{ t("success") }}', `{{ t("linked") }}: ${data.linked_count}, {{ t("not_found") }}: ${data.not_found_count}`);
+            loadMaintenanceData();
+            loadData(); // Refresh main data
+        } else {
+            const error = await response.json();
+            showToast('error', '{{ t("error") }}', error.detail || '{{ t("linking_failed") }}');
+        }
+    } catch (e) {
+        console.error('Error linking allocations:', e);
+        showToast('error', '{{ t("error") }}', '{{ t("linking_failed") }}');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-link"></i> {{ t("link_to_vms") }}';
+    }
+}
+
+// Initial load after DOM ready
+window.addEventListener('DOMContentLoaded', () => {
+    setTimeout(loadData, 100);
+});
+</script>
+
+<!-- Maintenance Modal -->
+<div id="maintenanceModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 2000; align-items: center; justify-content: center; padding: 1rem;">
+    <div class="card" style="max-width: 800px; width: 95%; max-height: 90vh; overflow-y: auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+            <h3 style="margin: 0;"><i class="fa-solid fa-wrench"></i> {{ t('ipam_maintenance') }}</h3>
+            <button onclick="closeMaintenanceModal()" style="background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer;">&times;</button>
+        </div>
+        
+        <!-- Orphan Allocations -->
+        <div style="margin-bottom: 1.5rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+                <h4 style="margin: 0; color: var(--warning);"><i class="fa-solid fa-ghost"></i> {{ t('orphan_allocations') }} (<span id="orphansCount">0</span>)</h4>
+                <button onclick="cleanupOrphans()" class="btn btn-danger btn-sm"><i class="fa-solid fa-trash"></i> {{ t('cleanup_orphans') }}</button>
+            </div>
+            <p style="color: var(--text-secondary); font-size: 0.875rem; margin-bottom: 0.5rem;">{{ t('orphan_allocations_desc') }}</p>
+            <div id="orphansList" style="background: var(--bg-tertiary); border-radius: 6px; padding: 0.5rem;">
+                <div style="text-align: center; color: var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i></div>
+            </div>
+        </div>
+        
+        <!-- Unlinked Allocations -->
+        <div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+                <h4 style="margin: 0; color: var(--info);"><i class="fa-solid fa-unlink"></i> {{ t('unlinked_allocations') }} (<span id="unlinkedCount">0</span>, {{ t('linkable') }}: <span id="linkableCount">0</span>)</h4>
+                <button onclick="linkAllocations()" class="btn btn-primary btn-sm"><i class="fa-solid fa-link"></i> {{ t('link_to_vms') }}</button>
+            </div>
+            <p style="color: var(--text-secondary); font-size: 0.875rem; margin-bottom: 0.5rem;">{{ t('unlinked_allocations_desc') }}</p>
+            <div id="unlinkedList" style="background: var(--bg-tertiary); border-radius: 6px; padding: 0.5rem;">
+                <div style="text-align: center; color: var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

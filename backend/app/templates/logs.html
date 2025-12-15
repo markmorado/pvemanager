@@ -1,0 +1,948 @@
+{% extends "base.html" %}
+{% set page_title = t('nav_logs') %}
+
+{% block content %}
+<style>
+    .logs-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1.5rem;
+        flex-wrap: wrap;
+        gap: 1rem;
+    }
+    
+    .filters-panel {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 1.25rem;
+        margin-bottom: 1.5rem;
+    }
+    
+    .filters-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 1rem;
+        margin-bottom: 1rem;
+    }
+    
+    .filter-group {
+        display: flex;
+        flex-direction: column;
+    }
+    
+    .filter-group label {
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        color: var(--text-muted);
+        margin-bottom: 0.375rem;
+        font-weight: 600;
+    }
+    
+    .filter-group select,
+    .filter-group input {
+        background: var(--bg-secondary);
+        color: var(--text-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        padding: 0.5rem 0.75rem;
+        font-size: 0.875rem;
+        transition: border-color 0.2s ease;
+    }
+    
+    .filter-group select:focus,
+    .filter-group input:focus {
+        outline: none;
+        border-color: var(--accent);
+    }
+    
+    .filter-group input[type="date"] {
+        color-scheme: dark light;
+    }
+    
+    :root[data-theme="light"] .filter-group input[type="date"] {
+        color-scheme: light;
+    }
+    
+    :root[data-theme="dark"] .filter-group input[type="date"] {
+        color-scheme: dark;
+    }
+    
+    .filter-group input::placeholder {
+        color: var(--text-muted);
+    }
+    
+    .filter-actions {
+        display: flex;
+        gap: 0.5rem;
+        justify-content: flex-end;
+    }
+    
+    .stats-row {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+    }
+    
+    .stat-box {
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 1rem;
+        text-align: center;
+    }
+    
+    .stat-box-value {
+        font-size: 1.75rem;
+        font-weight: 700;
+        color: var(--text-primary);
+    }
+    
+    .stat-box-label {
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        text-transform: uppercase;
+    }
+    
+    .stat-box.errors .stat-box-value {
+        color: var(--danger);
+    }
+    
+    .stat-box.warnings .stat-box-value {
+        color: var(--warning);
+    }
+    
+    .logs-table-container {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        overflow: hidden;
+    }
+    
+    .logs-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    
+    .logs-table th {
+        background: var(--bg-tertiary);
+        padding: 0.875rem;
+        text-align: left;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        color: var(--text-muted);
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .logs-table td {
+        padding: 0.75rem;
+        border-bottom: 1px solid var(--border-color);
+        font-size: 0.875rem;
+    }
+    
+    .logs-table tr:hover {
+        background: var(--bg-tertiary);
+        cursor: pointer;
+    }
+    
+    .log-level {
+        display: inline-block;
+        padding: 0.25rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.6875rem;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+    
+    .log-level.debug { background: var(--text-muted); color: var(--text-secondary); }
+    .log-level.info { background: var(--info-light); color: var(--info); }
+    .log-level.warning { background: var(--warning-light); color: var(--warning); }
+    .log-level.error { background: var(--danger-light); color: var(--danger); }
+    .log-level.critical { background: var(--danger); color: var(--danger-text-light); }
+    
+    .log-category {
+        display: inline-block;
+        padding: 0.25rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.6875rem;
+        background: var(--bg-hover);
+        color: var(--text-secondary);
+    }
+    
+    .log-message {
+        max-width: 400px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    
+    .log-time {
+        font-family: 'SF Mono', monospace;
+        font-size: 0.8125rem;
+        color: var(--text-muted);
+    }
+    
+    .log-success {
+        color: var(--success);
+    }
+    
+    .log-failed {
+        color: var(--danger);
+    }
+    
+    .pagination {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 1rem;
+        background: var(--bg-tertiary);
+        border-top: 1px solid var(--border-color);
+    }
+    
+    .pagination button {
+        padding: 0.5rem 1rem;
+        border: 1px solid var(--border-color);
+        background: var(--bg-secondary);
+        color: var(--text-primary);
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 0.875rem;
+    }
+    
+    .pagination button:hover:not(:disabled) {
+        background: var(--bg-hover);
+    }
+    
+    .pagination button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+    
+    .pagination-info {
+        color: var(--text-muted);
+        font-size: 0.875rem;
+        margin: 0 1rem;
+    }
+    
+    /* Modal for log details */
+    .modal-overlay {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.7);
+        z-index: 1000;
+        justify-content: center;
+        align-items: center;
+    }
+    
+    .modal-overlay.active {
+        display: flex;
+    }
+    
+    .modal-content {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        width: 90%;
+        max-width: 700px;
+        max-height: 80vh;
+        overflow-y: auto;
+    }
+    
+    .modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 1rem 1.5rem;
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .modal-header h3 {
+        margin: 0;
+        font-size: 1.125rem;
+    }
+    
+    .modal-close {
+        background: none;
+        border: none;
+        color: var(--text-muted);
+        font-size: 1.5rem;
+        cursor: pointer;
+    }
+    
+    .modal-body {
+        padding: 1.5rem;
+    }
+    
+    .detail-row {
+        display: grid;
+        grid-template-columns: 140px 1fr;
+        padding: 0.5rem 0;
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .detail-row:last-child {
+        border-bottom: none;
+    }
+    
+    .detail-label {
+        color: var(--text-muted);
+        font-weight: 500;
+        font-size: 0.875rem;
+    }
+    
+    .detail-value {
+        color: var(--text-primary);
+        font-size: 0.875rem;
+        word-break: break-all;
+    }
+    
+    .detail-json {
+        background: var(--bg-tertiary);
+        border-radius: 4px;
+        padding: 0.75rem;
+        font-family: 'SF Mono', monospace;
+        font-size: 0.8125rem;
+        overflow-x: auto;
+        white-space: pre-wrap;
+    }
+    
+    .loading {
+        text-align: center;
+        padding: 3rem;
+        color: var(--text-muted);
+    }
+    
+    .no-logs {
+        text-align: center;
+        padding: 3rem;
+        color: var(--text-muted);
+    }
+    
+    /* Мобильная адаптация */
+    @media (max-width: 768px) {
+        .logs-header {
+            flex-direction: column;
+            gap: 1rem;
+            align-items: stretch;
+        }
+        
+        .logs-header > div:last-child {
+            justify-content: flex-end;
+        }
+        
+        .filters-grid {
+            grid-template-columns: 1fr 1fr;
+        }
+        
+        .logs-table th,
+        .logs-table td {
+            padding: 0.5rem 0.25rem;
+            font-size: 0.75rem;
+        }
+        
+        /* Скрываем менее важные колонки */
+        .logs-table th:nth-child(3),
+        .logs-table td:nth-child(3),
+        .logs-table th:nth-child(4),
+        .logs-table td:nth-child(4),
+        .logs-table th:nth-child(6),
+        .logs-table td:nth-child(6) {
+            display: none;
+        }
+        
+        .log-modal-content {
+            padding: 1rem;
+            margin: 0.5rem;
+            max-height: 90vh;
+        }
+        
+        .detail-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+    
+    @media (max-width: 480px) {
+        .filters-grid {
+            grid-template-columns: 1fr;
+        }
+        
+        .logs-table th:nth-child(5),
+        .logs-table td:nth-child(5) {
+            display: none;
+        }
+        
+        .pagination {
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+    }
+</style>
+
+<div class="logs-header">
+    <div>
+        <h3 style="margin: 0; color: var(--text-primary);">{{ t('event_log') }}</h3>
+        <p style="margin: 0.25rem 0 0; color: var(--text-muted); font-size: 0.875rem;">
+            {{ t('view_and_filter_system_logs') }}
+        </p>
+    </div>
+    <div style="display: flex; gap: 0.5rem;">
+        <button class="btn btn-secondary" onclick="refreshLogs()"><i class="fa-solid fa-rotate"></i> {{ t('refresh') }}</button>
+        <button class="btn btn-secondary" onclick="exportLogs()"><i class="fa-solid fa-calendar"></i> {{ t('export') }}</button>
+    </div>
+</div>
+
+<!-- Stats Row -->
+<div class="stats-row" id="statsRow">
+    <div class="stat-box">
+        <div class="stat-box-value" id="statTotal">-</div>
+        <div class="stat-box-label">{{ t('total_24h') }}</div>
+    </div>
+    <div class="stat-box">
+        <div class="stat-box-value" id="statAuth">-</div>
+        <div class="stat-box-label"><i class="fa-solid fa-lock"></i> {{ t('auth') }}</div>
+    </div>
+    <div class="stat-box">
+        <div class="stat-box-value" id="statProxmox">-</div>
+        <div class="stat-box-label"><i class="fa-solid fa-desktop"></i> Proxmox</div>
+    </div>
+    <div class="stat-box errors">
+        <div class="stat-box-value" id="statErrors">-</div>
+        <div class="stat-box-label"><i class="fa-solid fa-circle-xmark"></i> {{ t('errors') }}</div>
+    </div>
+    <div class="stat-box warnings">
+        <div class="stat-box-value" id="statWarnings">-</div>
+        <div class="stat-box-label"><i class="fa-solid fa-triangle-exclamation"></i> {{ t('warnings') }}</div>
+    </div>
+    <div class="stat-box">
+        <div class="stat-box-value" id="statFailedLogins">-</div>
+        <div class="stat-box-label"><i class="fa-solid fa-ban"></i> {{ t('failed_logins') }}</div>
+    </div>
+</div>
+
+<!-- Filters Panel -->
+<div class="filters-panel">
+    <div class="filters-grid">
+        <div class="filter-group">
+            <label>{{ t('level') }}</label>
+            <select id="filterLevel">
+                <option value="">{{ t('all_levels') }}</option>
+                <option value="debug">Debug</option>
+                <option value="info">Info</option>
+                <option value="warning">Warning</option>
+                <option value="error">Error</option>
+                <option value="critical">Critical</option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <label>{{ t('category') }}</label>
+            <select id="filterCategory">
+                <option value="">{{ t('all_categories') }}</option>
+                <option value="auth"><i class="fa-solid fa-lock"></i> {{ t('auth') }}</option>
+                <option value="proxmox"><i class="fa-solid fa-desktop"></i> Proxmox</option>
+                <option value="ipam"><i class="fa-solid fa-globe"></i> IPAM</option>
+                <option value="system"><i class="fa-solid fa-gear"></i> {{ t('system') }}</option>
+                <option value="api"><i class="fa-solid fa-plug"></i> API</option>
+                <option value="docker"><i class="fa-brands fa-docker"></i> Docker</option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <label>{{ t('user') }}</label>
+            <input type="text" id="filterUsername" placeholder="{{ t('username') }}">
+        </div>
+        <div class="filter-group">
+            <label>{{ t('date_from') }}</label>
+            <input type="date" id="filterDateFrom">
+        </div>
+        <div class="filter-group">
+            <label>{{ t('date_to') }}</label>
+            <input type="date" id="filterDateTo">
+        </div>
+        <div class="filter-group">
+            <label>IP {{ t('address') }}</label>
+            <input type="text" id="filterIP" placeholder="192.168.1.1">
+        </div>
+        <div class="filter-group">
+            <label>{{ t('search') }}</label>
+            <input type="text" id="filterSearch" placeholder="{{ t('search_in_messages') }}">
+        </div>
+    </div>
+    <div class="filter-actions">
+        <button class="btn btn-secondary" onclick="clearFilters()">{{ t('reset') }}</button>
+        <button class="btn btn-primary" onclick="applyFilters()">{{ t('apply') }}</button>
+    </div>
+</div>
+
+<!-- Logs Table -->
+<div class="logs-table-container">
+    <table class="logs-table">
+        <thead>
+            <tr>
+                <th style="width: 140px;">{{ t('time') }}</th>
+                <th style="width: 80px;">{{ t('level') }}</th>
+                <th style="width: 100px;">{{ t('category') }}</th>
+                <th style="width: 120px;">{{ t('action') }}</th>
+                <th>{{ t('message') }}</th>
+                <th style="width: 100px;">{{ t('user') }}</th>
+                <th style="width: 110px;">IP</th>
+                <th style="width: 60px;">{{ t('status') }}</th>
+            </tr>
+        </thead>
+        <tbody id="logsTableBody">
+            <tr>
+                <td colspan="7" class="loading">{{ t('loading_logs') }}</td>
+            </tr>
+        </tbody>
+    </table>
+    
+    <div class="pagination">
+        <button id="btnPrevPage" onclick="prevPage()" disabled>← {{ t('back') }}</button>
+        <span class="pagination-info" id="paginationInfo">{{ t('page') }} 1 {{ t('of') }} 1</span>
+        <button id="btnNextPage" onclick="nextPage()" disabled>{{ t('forward') }} →</button>
+    </div>
+</div>
+
+<!-- Log Detail Modal -->
+<div class="modal-overlay" id="logDetailModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3><i class="fa-solid fa-list"></i> {{ t('log_details') }}</h3>
+            <button class="modal-close" onclick="closeModal()">&times;</button>
+        </div>
+        <div class="modal-body" id="logDetailBody">
+            <!-- Content loaded dynamically -->
+        </div>
+    </div>
+</div>
+
+<script>
+    // State
+    let currentPage = 1;
+    let totalPages = 1;
+    let currentFilters = {};
+    let logsData = [];
+    
+    // URL params helper functions
+    function getUrlParams() {
+        return new URLSearchParams(window.location.search);
+    }
+    
+    function updateUrlParams(params) {
+        const url = new URL(window.location);
+        Object.entries(params).forEach(([key, value]) => {
+            if (value) {
+                url.searchParams.set(key, value);
+            } else {
+                url.searchParams.delete(key);
+            }
+        });
+        window.history.replaceState({}, '', url);
+    }
+    
+    function restoreFiltersFromUrl() {
+        const params = getUrlParams();
+        
+        const level = params.get('level') || '';
+        document.getElementById('filterLevel').value = level;
+        
+        const category = params.get('category') || '';
+        document.getElementById('filterCategory').value = category;
+        
+        const username = params.get('username') || '';
+        document.getElementById('filterUsername').value = username;
+        
+        const dateFrom = params.get('dateFrom') || '';
+        document.getElementById('filterDateFrom').value = dateFrom;
+        
+        const dateTo = params.get('dateTo') || '';
+        document.getElementById('filterDateTo').value = dateTo;
+        
+        const ip = params.get('ip') || '';
+        document.getElementById('filterIP').value = ip;
+        
+        const search = params.get('search') || '';
+        document.getElementById('filterSearch').value = search;
+        
+        const page = params.get('page');
+        if (page && parseInt(page) > 0) {
+            currentPage = parseInt(page);
+        }
+        
+        currentFilters = { level, category, username, dateFrom, dateTo, ip, search };
+    }
+    
+    // Initialize on page load
+    document.addEventListener('DOMContentLoaded', () => {
+        restoreFiltersFromUrl();
+        setTimeout(() => {
+            loadStats();
+            loadLogs();
+        }, 100);
+        
+        // Enter key on search and IP fields
+        document.getElementById('filterSearch').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') applyFilters();
+        });
+        document.getElementById('filterIP').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') applyFilters();
+        });
+    });
+    
+    // Load statistics
+    async function loadStats() {
+        try {
+            const token = localStorage.getItem('access_token');
+            const response = await fetch('/logs/api/stats?hours=24', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            
+            if (response.ok) {
+                const stats = await response.json();
+                document.getElementById('statTotal').textContent = stats.total;
+                document.getElementById('statAuth').textContent = stats.by_category.auth || 0;
+                document.getElementById('statProxmox').textContent = stats.by_category.proxmox || 0;
+                document.getElementById('statErrors').textContent = stats.errors_count || 0;
+                document.getElementById('statWarnings').textContent = stats.by_level.warning || 0;
+                document.getElementById('statFailedLogins').textContent = stats.failed_logins || 0;
+            }
+        } catch (error) {
+            console.error('Failed to load stats:', error);
+        }
+    }
+    
+    // Load logs with filters
+    async function loadLogs() {
+        const tbody = document.getElementById('logsTableBody');
+        tbody.innerHTML = '<tr><td colspan="8" class="loading">' + t('loading_logs') + '</td></tr>';
+        
+        try {
+            const token = localStorage.getItem('access_token');
+            
+            // Build query string
+            const params = new URLSearchParams();
+            params.append('page', currentPage);
+            params.append('limit', 50);
+            
+            if (currentFilters.level) params.append('level', currentFilters.level);
+            if (currentFilters.category) params.append('category', currentFilters.category);
+            if (currentFilters.username) params.append('username', currentFilters.username);
+            if (currentFilters.dateFrom) params.append('date_from', currentFilters.dateFrom);
+            if (currentFilters.dateTo) params.append('date_to', currentFilters.dateTo);
+            if (currentFilters.search) params.append('search', currentFilters.search);
+            
+            const response = await fetch(`/logs/api/logs?${params.toString()}`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            
+            const data = await response.json();
+            logsData = data.logs;
+            totalPages = data.pages;
+            
+            renderLogs(data.logs);
+            updatePagination(data.page, data.pages, data.total);
+        } catch (error) {
+            console.error('Failed to load logs:', error);
+            tbody.innerHTML = '<tr><td colspan="8" class="no-logs">' + t('log_load_error') + '</td></tr>';
+        }
+    }
+    
+    // Render logs table
+    function renderLogs(logs) {
+        const tbody = document.getElementById('logsTableBody');
+        
+        if (!logs || logs.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" class="no-logs">' + t('no_logs_for_filters') + '</td></tr>';
+            return;
+        }
+        
+        tbody.innerHTML = logs.map((log, index) => `
+            <tr onclick="showLogDetail(${index})" style="cursor: pointer;">
+                <td class="log-time">${formatDateTime(log.created_at)}</td>
+                <td><span class="log-level ${log.level}">${log.level}</span></td>
+                <td><span class="log-category">${getCategoryIcon(log.category)} ${log.category}</span></td>
+                <td>${log.action}</td>
+                <td class="log-message" title="${escapeHtml(log.message)}">${escapeHtml(log.message)}</td>
+                <td>${log.username || '-'}</td>
+                <td style="font-family: monospace; font-size: 0.8rem;">${log.ip_address || '-'}</td>
+                <td class="${log.success ? 'log-success' : 'log-failed'}">${log.success ? '✓' : '✗'}</td>
+            </tr>
+        `).join('');
+    }
+    
+    // Update pagination
+    function updatePagination(page, pages, total) {
+        document.getElementById('paginationInfo').textContent = t('page') + ' ' + page + ' ' + t('of') + ' ' + pages + ' (' + total + ' ' + t('records') + ')';
+        document.getElementById('btnPrevPage').disabled = page <= 1;
+        document.getElementById('btnNextPage').disabled = page >= pages;
+    }
+    
+    // Navigation
+    function prevPage() {
+        if (currentPage > 1) {
+            currentPage--;
+            updateUrlParams({ page: String(currentPage) });
+            loadLogs();
+        }
+    }
+    
+    function nextPage() {
+        if (currentPage < totalPages) {
+            currentPage++;
+            updateUrlParams({ page: String(currentPage) });
+            loadLogs();
+        }
+    }
+    
+    // Filters
+    function applyFilters() {
+        currentFilters = {
+            level: document.getElementById('filterLevel').value,
+            category: document.getElementById('filterCategory').value,
+            username: document.getElementById('filterUsername').value,
+            dateFrom: document.getElementById('filterDateFrom').value,
+            dateTo: document.getElementById('filterDateTo').value,
+            ip: document.getElementById('filterIP').value,
+            search: document.getElementById('filterSearch').value
+        };
+        currentPage = 1;
+        updateUrlParams({
+            ...currentFilters,
+            page: '1'
+        });
+        loadLogs();
+    }
+    
+    function clearFilters() {
+        document.getElementById('filterLevel').value = '';
+        document.getElementById('filterCategory').value = '';
+        document.getElementById('filterUsername').value = '';
+        document.getElementById('filterDateFrom').value = '';
+        document.getElementById('filterDateTo').value = '';
+        document.getElementById('filterIP').value = '';
+        document.getElementById('filterSearch').value = '';
+        currentFilters = {};
+        currentPage = 1;
+        // Clear all URL params
+        updateUrlParams({
+            level: '',
+            category: '',
+            username: '',
+            dateFrom: '',
+            dateTo: '',
+            ip: '',
+            search: '',
+            page: ''
+        });
+        loadLogs();
+    }
+    
+    // Refresh
+    function refreshLogs() {
+        loadStats();
+        loadLogs();
+    }
+    
+    // Show log detail modal
+    function showLogDetail(index) {
+        const log = logsData[index];
+        if (!log) return;
+        
+        const body = document.getElementById('logDetailBody');
+        body.innerHTML = `
+            <div class="detail-row">
+                <div class="detail-label">ID</div>
+                <div class="detail-value">${log.id}</div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">${t('time')}</div>
+                <div class="detail-value">${formatDateTime(log.created_at)}</div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">${t('level')}</div>
+                <div class="detail-value"><span class="log-level ${log.level}">${log.level.toUpperCase()}</span></div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">${t('category')}</div>
+                <div class="detail-value">${getCategoryIcon(log.category)} ${log.category}</div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">${t('action')}</div>
+                <div class="detail-value">${log.action}</div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">${t('message')}</div>
+                <div class="detail-value">${escapeHtml(log.message)}</div>
+            </div>
+            ${log.request_id ? `
+            <div class="detail-row">
+                <div class="detail-label">Request ID</div>
+                <div class="detail-value"><code style="font-family: monospace; background: var(--bg-tertiary); padding: 2px 6px; border-radius: 4px;">${log.request_id}</code></div>
+            </div>
+            ` : ''}
+            <div class="detail-row">
+                <div class="detail-label">${t('user')}</div>
+                <div class="detail-value">${log.username || '-'}${log.user_id ? ` (ID: ${log.user_id})` : ''}</div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">IP ${t('address')}</div>
+                <div class="detail-value">${log.ip_address || '-'}${log.geo_location ? ` <span style="color: var(--text-muted);">(${log.geo_location})</span>` : ''}</div>
+            </div>
+            ${log.user_agent ? `
+            <div class="detail-row">
+                <div class="detail-label">User Agent</div>
+                <div class="detail-value" style="font-size: 0.8rem; word-break: break-all;">${escapeHtml(log.user_agent)}</div>
+            </div>
+            ` : ''}
+            ${log.server_name || log.node_name ? `
+            <div class="detail-row">
+                <div class="detail-label">Proxmox Server</div>
+                <div class="detail-value">${log.server_name || '-'}${log.node_name ? ` / Node: ${log.node_name}` : ''}</div>
+            </div>
+            ` : ''}
+            <div class="detail-row">
+                <div class="detail-label">${t('resource')}</div>
+                <div class="detail-value">${log.resource_type ? `${log.resource_type} #${log.resource_id}${log.resource_name ? ` (${log.resource_name})` : ''}` : '-'}</div>
+            </div>
+            ${log.request_method ? `
+            <div class="detail-row">
+                <div class="detail-label">HTTP ${t('request')}</div>
+                <div class="detail-value">${log.request_method} ${log.request_path}${log.query_params ? `?${log.query_params}` : ''} → ${log.response_status} (${log.duration_ms}ms)</div>
+            </div>
+            ` : ''}
+            <div class="detail-row">
+                <div class="detail-label">${t('status')}</div>
+                <div class="detail-value" class="${log.success ? 'log-success' : 'log-failed'}">${log.success ? '✓ ' + t('success') : '✗ ' + t('error')}</div>
+            </div>
+            ${log.error_message ? `
+            <div class="detail-row">
+                <div class="detail-label">${t('error')}</div>
+                <div class="detail-value" style="color: var(--danger);">${escapeHtml(log.error_message)}</div>
+            </div>
+            ` : ''}
+            ${log.error_traceback ? `
+            <div class="detail-row">
+                <div class="detail-label">Stack Trace</div>
+                <div class="detail-value">
+                    <pre style="background: var(--bg-tertiary); padding: 0.5rem; border-radius: 4px; font-size: 0.75rem; overflow-x: auto; max-height: 200px; white-space: pre-wrap;">${escapeHtml(log.error_traceback)}</pre>
+                </div>
+            </div>
+            ` : ''}
+            ${log.request_body ? `
+            <div class="detail-row">
+                <div class="detail-label">Request Body</div>
+                <div class="detail-value">
+                    <div class="detail-json">${JSON.stringify(log.request_body, null, 2)}</div>
+                </div>
+            </div>
+            ` : ''}
+            ${log.response_body ? `
+            <div class="detail-row">
+                <div class="detail-label">Response Body</div>
+                <div class="detail-value">
+                    <div class="detail-json">${JSON.stringify(log.response_body, null, 2)}</div>
+                </div>
+            </div>
+            ` : ''}
+            ${log.details ? `
+            <div class="detail-row">
+                <div class="detail-label">${t('details')} (JSON)</div>
+                <div class="detail-value">
+                    <div class="detail-json">${JSON.stringify(log.details, null, 2)}</div>
+                </div>
+            </div>
+            ` : ''}
+        `;
+        
+        document.getElementById('logDetailModal').classList.add('active');
+    }
+    
+    function closeModal() {
+        document.getElementById('logDetailModal').classList.remove('active');
+    }
+    
+    // Close modal on escape key
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeModal();
+    });
+    
+    // Close modal on overlay click
+    document.getElementById('logDetailModal').addEventListener('click', (e) => {
+        if (e.target.classList.contains('modal-overlay')) closeModal();
+    });
+    
+    // Export logs
+    function exportLogs() {
+        if (!logsData || logsData.length === 0) {
+            showToast('warning', t('warning') || 'Warning', t('no_data_to_export'));
+            return;
+        }
+        
+        const csv = [
+            ['ID', t('time'), t('level'), t('category'), t('action'), t('message'), t('user'), 'IP', t('status')].join(','),
+            ...logsData.map(log => [
+                log.id,
+                log.created_at,
+                log.level,
+                log.category,
+                log.action,
+                `"${(log.message || '').replace(/"/g, '""')}"`,
+                log.username || '',
+                log.ip_address || '',
+                log.success ? 'OK' : 'ERROR'
+            ].join(','))
+        ].join('\n');
+        
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `logs_${new Date().toISOString().slice(0, 10)}.csv`;
+        link.click();
+        URL.revokeObjectURL(url);
+    }
+    
+    // Helpers
+    function formatDateTime(dateStr) {
+        if (!dateStr) return '-';
+        const date = new Date(dateStr);
+        return date.toLocaleString('ru-RU', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+        });
+    }
+    
+    function getCategoryIcon(category) {
+        const icons = {
+            'auth': '<i class="fa-solid fa-lock"></i>',
+            'proxmox': '<i class="fa-solid fa-desktop"></i>',
+            'ipam': '<i class="fa-solid fa-globe"></i>',
+            'system': '<i class="fa-solid fa-gear"></i>',
+            'api': '<i class="fa-solid fa-plug"></i>',
+            'docker': '<i class="fa-brands fa-docker"></i>'
+        };
+        return icons[category] || '<i class="fa-solid fa-list"></i>';
+    }
+    
+    function escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+</script>
+{% endblock %}
