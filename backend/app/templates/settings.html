@@ -715,6 +715,12 @@
     color: var(--danger);
 }
 
+.update-status-box.warning {
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    color: #f59e0b;
+}
+
 .update-changelog-box {
     margin-bottom: var(--spacing-lg);
 }
@@ -1797,9 +1803,16 @@ async function checkForUpdates() {
             
             if (data.error) {
                 statusBox.style.display = 'block';
-                statusBox.className = 'update-status-box error';
-                statusBox.querySelector('#update-status-message').innerHTML = 
-                    '<i class="fas fa-exclamation-circle"></i> ' + data.error;
+                // Если проверка отключена, показываем warning вместо ошибки
+                if (data.disabled || data.error.includes('disabled')) {
+                    statusBox.className = 'update-status-box warning';
+                    statusBox.querySelector('#update-status-message').innerHTML = 
+                        '<i class="fas fa-info-circle"></i> ' + (t('update_check_disabled') || 'Проверка обновлений отключена');
+                } else {
+                    statusBox.className = 'update-status-box error';
+                    statusBox.querySelector('#update-status-message').innerHTML = 
+                        '<i class="fas fa-exclamation-circle"></i> ' + data.error;
+                }
                 updateBtn.style.display = 'none';
                 changelogBox.style.display = 'none';
             } else if (data.update_available) {

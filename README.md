@@ -88,6 +88,20 @@ POSTGRES_PASSWORD=your_secure_password
 TZ=Your/Timezone
 ```
 
+### Private Repository Configuration
+
+For private repositories, update checks need to be configured:
+
+```bash
+# Disable update checks completely
+DISABLE_UPDATE_CHECK=true
+
+# OR use GitHub token for access
+GITHUB_TOKEN=your_github_personal_access_token
+```
+
+To create GitHub token: https://github.com/settings/tokens (needs 'repo' scope)
+
 ### Notifications (SMTP and Telegram)
 
 Email and Telegram notification settings are now managed via web interface:

@@ -317,7 +317,8 @@ def register_user(
         )
     
     # Validate password
-    is_valid, errors = SecurityService.validate_password(db, user_data.password)
+    lang = request.cookies.get("language", "en")
+    is_valid, errors = SecurityService.validate_password(db, user_data.password, lang)
     if not is_valid:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -446,7 +447,8 @@ def change_password(
         )
     
     # Validate new password
-    is_valid, errors = SecurityService.validate_password(db, new_password)
+    lang = request.cookies.get("language", "en")
+    is_valid, errors = SecurityService.validate_password(db, new_password, lang)
     if not is_valid:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

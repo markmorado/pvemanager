@@ -32,6 +32,15 @@ const translations = {
         language_changed: "Язык изменён. Страница будет перезагружена...",
         error_occurred: "Произошла ошибка",
         confirm_delete: "Вы уверены, что хотите удалить?",
+        
+        // Updates
+        update_check_disabled: "Проверка обновлений отключена",
+        checking_updates: "Проверка обновлений...",
+        check_updates: "Проверить обновления",
+        update_available: "Доступно обновление",
+        no_updates: "Установлена последняя версия",
+        update_warning: "Панель будет недоступна во время обновления",
+        updating_system: "Обновление системы...",
     },
     
     en: {
@@ -62,6 +71,15 @@ const translations = {
         language_changed: "Language changed. Page will reload...",
         error_occurred: "An error occurred",
         confirm_delete: "Are you sure you want to delete?",
+        
+        // Updates
+        update_check_disabled: "Update check is disabled",
+        checking_updates: "Checking for updates...",
+        check_updates: "Check for Updates",
+        update_available: "Update available",
+        no_updates: "You have the latest version",
+        update_warning: "Panel will be unavailable during update",
+        updating_system: "Updating system...",
     }
 };
 

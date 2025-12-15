@@ -93,6 +93,7 @@ class UserCreate(BaseModel):
 class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
     full_name: Optional[str] = Field(None, max_length=100)
+    password: Optional[str] = Field(None, min_length=1, max_length=100)
     role_id: Optional[int] = None
     is_active: Optional[bool] = None
     is_admin: Optional[bool] = None
@@ -383,7 +384,8 @@ async def create_user(
         raise HTTPException(status_code=400, detail="Email already exists")
     
     # Validate password
-    is_valid, errors = SecurityService.validate_password(db, user_data.password)
+    lang = request.cookies.get("language", "en")
+    is_valid, errors = SecurityService.validate_password(db, user_data.password, lang)
     if not is_valid:
         raise HTTPException(status_code=400, detail="; ".join(errors))
     
@@ -466,6 +468,15 @@ async def update_user(
     
     if user_data.full_name is not None:
         user.full_name = user_data.full_name
+    
+    if user_data.password is not None:
+        # Validate password
+        lang = request.cookies.get("language", "en")
+        is_valid, errors = SecurityService.validate_password(db, user_data.password, lang)
+        if not is_valid:
+            raise HTTPException(status_code=400, detail="; ".join(errors))
+        user.hashed_password = get_password_hash(user_data.password)
+        user.last_password_change = utcnow()
     
     if user_data.role_id is not None:
         role = db.query(Role).filter(Role.id == user_data.role_id).first()
@@ -588,7 +599,8 @@ async def reset_user_password(
         raise HTTPException(status_code=404, detail="User not found")
     
     # Validate password
-    is_valid, errors = SecurityService.validate_password(db, password_data.new_password)
+    lang = request.cookies.get("language", "en")
+    is_valid, errors = SecurityService.validate_password(db, password_data.new_password, lang)
     if not is_valid:
         raise HTTPException(status_code=400, detail="; ".join(errors))
     

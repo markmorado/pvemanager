@@ -3940,6 +3940,28 @@ class I18nService:
             "en": "Require Special Characters"
         },
         
+        # Password validation errors
+        "password_error_min_length": {
+            "ru": "Пароль должен быть не менее {min_length} символов",
+            "en": "Password must be at least {min_length} characters"
+        },
+        "password_error_uppercase": {
+            "ru": "Пароль должен содержать хотя бы одну заглавную букву",
+            "en": "Password must contain at least one uppercase letter"
+        },
+        "password_error_lowercase": {
+            "ru": "Пароль должен содержать хотя бы одну строчную букву",
+            "en": "Password must contain at least one lowercase letter"
+        },
+        "password_error_number": {
+            "ru": "Пароль должен содержать хотя бы одну цифру",
+            "en": "Password must contain at least one number"
+        },
+        "password_error_special": {
+            "ru": "Пароль должен содержать хотя бы один спецсимвол",
+            "en": "Password must contain at least one special character"
+        },
+        
         # IP Blacklist
         "ip_blacklist": {
             "ru": "Чёрный список IP",

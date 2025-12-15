@@ -22,6 +22,9 @@ class UserUpdate(BaseModel):
     full_name: Optional[str] = Field(None, max_length=100)
     password: Optional[str] = Field(None, min_length=6, max_length=100)
     is_active: Optional[bool] = None
+    is_admin: Optional[bool] = None
+    role_id: Optional[int] = None
+    require_password_change: Optional[bool] = None
 
 
 class UserResponse(UserBase):

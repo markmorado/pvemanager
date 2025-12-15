@@ -568,11 +568,13 @@ class SecurityService:
     # ==================== Password Validation ====================
     
     @classmethod
-    def validate_password(cls, db: Session, password: str) -> Tuple[bool, list]:
+    def validate_password(cls, db: Session, password: str, lang: str = "en") -> Tuple[bool, list]:
         """
         Validate password against security requirements.
         Returns (is_valid, list_of_errors)
         """
+        from ..i18n import t
+        
         errors = []
         
         min_length = cls.get_setting_int(db, "password_min_length", 8)
@@ -582,18 +584,18 @@ class SecurityService:
         require_special = cls.get_setting_bool(db, "password_require_special", False)
         
         if len(password) < min_length:
-            errors.append(f"Password must be at least {min_length} characters")
+            errors.append(t("password_error_min_length", lang, min_length=min_length))
         
         if require_upper and not any(c.isupper() for c in password):
-            errors.append("Password must contain at least one uppercase letter")
+            errors.append(t("password_error_uppercase", lang))
         
         if require_lower and not any(c.islower() for c in password):
-            errors.append("Password must contain at least one lowercase letter")
+            errors.append(t("password_error_lowercase", lang))
         
         if require_numbers and not any(c.isdigit() for c in password):
-            errors.append("Password must contain at least one number")
+            errors.append(t("password_error_number", lang))
         
         if require_special and not any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in password):
-            errors.append("Password must contain at least one special character")
+            errors.append(t("password_error_special", lang))
         
         return len(errors) == 0, errors

@@ -549,6 +549,55 @@ header h2 {
     display: block;
 }
 
+/* GitHub Button */
+.github-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 16px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-default);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    text-decoration: none;
+    font-size: 0.875rem;
+    font-weight: 500;
+    transition: all var(--transition-fast);
+    white-space: nowrap;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.github-btn:hover {
+    background: var(--bg-surface-elevated);
+    color: var(--text-primary);
+    border-color: var(--text-muted);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.github-star-icon {
+    flex-shrink: 0;
+    opacity: 0.8;
+}
+
+.github-btn:hover .github-star-icon {
+    opacity: 1;
+    color: #fbbf24;
+}
+
+.github-text {
+    font-weight: 500;
+}
+
+.github-stars {
+    font-variant-numeric: tabular-nums;
+    min-width: 30px;
+    text-align: center;
+    font-weight: 600;
+    padding-left: 8px;
+    border-left: 1px solid var(--border-default);
+}
+
 /* ============================================
    Main Content
    ============================================ */
@@ -1624,6 +1673,21 @@ table tr:hover {
     .notifications-btn {
         width: 36px;
         height: 36px;
+    }
+    
+    /* Compact GitHub button on very small screens */
+    .github-btn {
+        padding: 7px 10px;
+        gap: 6px;
+    }
+    
+    .github-text {
+        display: none;
+    }
+    
+    .github-stars {
+        font-size: 0.75rem;
+        padding-left: 6px;
     }
 }
 

@@ -19,6 +19,12 @@ VERSION_FILE = os.path.join(PROJECT_ROOT, "VERSION")
 # Для fallback - путь внутри контейнера где может быть VERSION
 CONTAINER_VERSION_FILE = "/app/VERSION"
 
+# GitHub token для доступа к приватным репозиториям (опционально)
+GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN', None)
+
+# Отключить проверку обновлений (для приватных репозиториев без токена)
+DISABLE_UPDATE_CHECK = os.environ.get('DISABLE_UPDATE_CHECK', 'false').lower() == 'true'
+
 # Статус обновления (in-memory)
 update_status = {
     "is_updating": False,
@@ -139,8 +145,15 @@ async def check_for_updates() -> Dict[str, Any]:
         "changelog": None,
         "error": None,
         "git_available": is_git_available(),
-        "project_mounted": is_project_mounted()
+        "project_mounted": is_project_mounted(),
+        "disabled": DISABLE_UPDATE_CHECK
     }
+    
+    # Если проверка обновлений отключена
+    if DISABLE_UPDATE_CHECK:
+        result["error"] = "Update check is disabled"
+        result["latest_version"] = current_version
+        return result
     
     # Получаем URL репозитория
     repo_url = None
@@ -175,25 +188,45 @@ async def check_for_updates() -> Dict[str, Any]:
         owner, repo = "markmorado", "pvemanager"
     
     try:
+        # Подготавливаем заголовки для запроса
+        headers = {}
+        if GITHUB_TOKEN:
+            headers["Authorization"] = f"token {GITHUB_TOKEN}"
+        
         # Используем GitHub API для получения файлов
         async with httpx.AsyncClient(timeout=30.0) as client:
-            # Получить VERSION из main ветки
-            version_url = f"https://raw.githubusercontent.com/{owner}/{repo}/main/VERSION"
-            version_response = await client.get(version_url)
+            # Пробуем оба варианта: main и master
+            version_url = None
+            version_response = None
             
-            if version_response.status_code == 200:
+            for branch in ["main", "master"]:
+                test_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/VERSION"
+                test_response = await client.get(test_url, headers=headers)
+                
+                if test_response.status_code == 200:
+                    version_url = test_url
+                    version_response = test_response
+                    break
+            
+            if version_response and version_response.status_code == 200:
                 result["latest_version"] = version_response.text.strip()
+            elif version_response and version_response.status_code == 404:
+                result["error"] = "Repository is private or not accessible. Set DISABLE_UPDATE_CHECK=true to hide this error."
+                result["latest_version"] = current_version
+                return result
             else:
-                result["error"] = f"Failed to fetch VERSION file: HTTP {version_response.status_code}"
+                result["error"] = f"Failed to fetch VERSION file: HTTP {version_response.status_code if version_response else 'unknown'}"
+                result["latest_version"] = current_version
                 return result
             
             # Сравнить версии
             if result["latest_version"] != current_version:
                 result["update_available"] = True
                 
-                # Получить CHANGELOG.md
-                changelog_url = f"https://raw.githubusercontent.com/{owner}/{repo}/main/CHANGELOG.md"
-                changelog_response = await client.get(changelog_url)
+                # Получить CHANGELOG.md (используем ту же ветку, что и для VERSION)
+                branch = version_url.split("/")[-2] if version_url else "main"
+                changelog_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/CHANGELOG.md"
+                changelog_response = await client.get(changelog_url, headers=headers)
                 
                 if changelog_response.status_code == 200:
                     # Извлекаем только последнюю версию из changelog

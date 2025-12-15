@@ -63,6 +63,10 @@ services:
       - PYTHONPATH=/app
       - TZ=${TZ:-Asia/Tashkent}
       - PROJECT_ROOT=/project
+      # Отключить проверку обновлений для приватных репозиториев
+      - DISABLE_UPDATE_CHECK=${DISABLE_UPDATE_CHECK:-false}
+      # GitHub token для доступа к приватным репозиториям (опционально)
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       # Оптимизация для production
       - UVICORN_WORKERS=1
       - UVICORN_TIMEOUT_KEEP_ALIVE=30
