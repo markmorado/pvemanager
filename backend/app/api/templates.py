@@ -764,6 +764,14 @@ async def deploy_vm_from_template(
         elif allocated_ip is None:
             ip_config = "ip=dhcp"
         
+        # Combine user's SSH key with deploy request SSH keys
+        ssh_keys = deploy_data.ssh_keys or ""
+        if current_user.ssh_public_key:
+            if ssh_keys:
+                ssh_keys = f"{ssh_keys}\n{current_user.ssh_public_key}"
+            else:
+                ssh_keys = current_user.ssh_public_key
+        
         config_success = client.configure_vm(
             node=deploy_node,
             vmid=new_vmid,
@@ -773,7 +781,7 @@ async def deploy_vm_from_template(
             network_bridge=deploy_data.network_bridge,
             cloud_init_user=deploy_data.cloud_init_user,
             cloud_init_password=deploy_data.cloud_init_password,
-            ssh_keys=deploy_data.ssh_keys,
+            ssh_keys=ssh_keys if ssh_keys else None,
             ip_config=ip_config,
             onboot=deploy_data.onboot
         )

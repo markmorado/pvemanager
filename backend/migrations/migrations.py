@@ -875,6 +875,22 @@ def migrate_snapshot_archives(conn):
     logger.info("✓ Snapshot archives table created")
 
 
+# ==================== Migration 12: User SSH Public Key ====================
+
+def migrate_user_ssh_key(conn):
+    """Add SSH public key column to users table"""
+    
+    if column_exists(conn, 'users', 'ssh_public_key'):
+        logger.info("✓ User SSH public key column already exists")
+        return
+    
+    logger.info("Adding SSH public key column to users table...")
+    
+    add_column_if_not_exists(conn, 'users', 'ssh_public_key', 'TEXT')
+    
+    logger.info("✓ User SSH public key column added")
+
+
 # ==================== Main Migration Function ====================
 
 def run_all_migrations(engine, db_session=None):
@@ -977,6 +993,14 @@ def run_all_migrations(engine, db_session=None):
                 conn.commit()
             except Exception as e:
                 logger.warning(f"Snapshot archives migration: {e}")
+                conn.rollback()
+            
+            # Migration 12: User SSH Public Key
+            try:
+                migrate_user_ssh_key(conn)
+                conn.commit()
+            except Exception as e:
+                logger.warning(f"User SSH key migration: {e}")
                 conn.rollback()
         
         logger.info("=" * 50)

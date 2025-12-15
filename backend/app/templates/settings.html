@@ -78,6 +78,22 @@
                 </button>
             </form>
         </div>
+
+        <div class="settings-section">
+            <h2><i class="fa-solid fa-key"></i> {{ t('ssh_public_key') }}</h2>
+            
+            <form id="ssh-key-form" class="settings-form">
+                <div class="form-group">
+                    <label for="ssh_public_key">{{ t('ssh_public_key_label') }}</label>
+                    <textarea id="ssh_public_key" rows="4" placeholder="ssh-rsa AAAAB3NzaC1yc2EAAA... user@hostname" style="font-family: monospace; font-size: 0.85rem;"></textarea>
+                    <small>{{ t('ssh_public_key_help') }}</small>
+                </div>
+
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save"></i> {{ t('save_ssh_key') }}
+                </button>
+            </form>
+        </div>
     </div>
 
     <!-- Notifications Settings Tab -->
@@ -1139,6 +1155,41 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
+    // SSH Key form
+    document.getElementById('ssh-key-form').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const sshKey = document.getElementById('ssh_public_key').value.trim();
+        
+        // Basic validation
+        if (sshKey && !sshKey.match(/^(ssh-rsa|ssh-ed25519|ecdsa-sha2|ssh-dss)\s+\S+/)) {
+            showNotification(t('invalid_ssh_key_format'), 'error');
+            return;
+        }
+
+        const data = {
+            ssh_public_key: sshKey || null
+        };
+
+        try {
+            const response = await fetchWithAuth('/settings/api/profile', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+
+            if (response.ok) {
+                showNotification(t('ssh_key_saved'), 'success');
+            } else {
+                const error = await response.json();
+                showNotification(error.detail || t('error_saving_ssh_key'), 'error');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            showNotification(t('error_saving_ssh_key'), 'error');
+        }
+    });
+
     // Panel form
     document.getElementById('panel-form').addEventListener('submit', async function(e) {
         e.preventDefault();
@@ -1294,6 +1345,7 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('username').value = user.username;
         document.getElementById('full_name').value = user.full_name || '';
         document.getElementById('email').value = user.email || '';
+        document.getElementById('ssh_public_key').value = user.ssh_public_key || '';
         document.getElementById('profile-form').style.display = 'block';
     }
 

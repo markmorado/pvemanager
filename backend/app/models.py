@@ -58,6 +58,9 @@ class User(Base):
     role_id = Column(Integer, ForeignKey("roles.id"), nullable=True, index=True)
     role = relationship("Role", back_populates="users", lazy="joined")
     
+    # SSH Public Key for VM/LXC deployment
+    ssh_public_key = Column(Text, nullable=True)
+    
     # Security fields
     failed_login_attempts = Column(Integer, default=0, nullable=False)
     locked_until = Column(DateTime(timezone=True), nullable=True)

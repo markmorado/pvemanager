@@ -41,6 +41,11 @@ const translations = {
         no_updates: "Установлена последняя версия",
         update_warning: "Панель будет недоступна во время обновления",
         updating_system: "Обновление системы...",
+        
+        // SSH Keys
+        ssh_key_saved: "SSH ключ успешно сохранён",
+        error_saving_ssh_key: "Ошибка сохранения SSH ключа",
+        invalid_ssh_key_format: "Неверный формат SSH ключа",
     },
     
     en: {
@@ -80,6 +85,11 @@ const translations = {
         no_updates: "You have the latest version",
         update_warning: "Panel will be unavailable during update",
         updating_system: "Updating system...",
+        
+        // SSH Keys
+        ssh_key_saved: "SSH key saved successfully",
+        error_saving_ssh_key: "Error saving SSH key",
+        invalid_ssh_key_format: "Invalid SSH key format",
     }
 };
 

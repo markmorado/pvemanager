@@ -4475,13 +4475,21 @@ async def create_lxc_container(
             if not vmid:
                 raise HTTPException(status_code=500, detail="Failed to get next VMID")
         
+        # Combine user's SSH key with request SSH keys
+        combined_ssh_keys = ssh_public_keys or ""
+        if current_user.ssh_public_key:
+            if combined_ssh_keys:
+                combined_ssh_keys = f"{combined_ssh_keys}\n{current_user.ssh_public_key}"
+            else:
+                combined_ssh_keys = current_user.ssh_public_key
+        
         upid = client.create_lxc_container(
             node=node,
             vmid=vmid,
             ostemplate=ostemplate,
             hostname=hostname,
             password=password,
-            ssh_public_keys=ssh_public_keys,
+            ssh_public_keys=combined_ssh_keys if combined_ssh_keys else None,
             storage=storage,
             rootfs_size=rootfs_size,
             memory=memory,
@@ -4550,6 +4558,7 @@ async def create_lxc_container_smart(
     ostemplate = data.get('ostemplate')
     hostname = data.get('hostname')
     password = data.get('password')
+    ssh_public_keys = data.get('ssh_public_keys')  # SSH keys from request
     storage = data.get('storage', 'local-lvm')
     rootfs_size = data.get('rootfs_size', 8)
     memory = data.get('memory', 512)
@@ -4565,8 +4574,8 @@ async def create_lxc_container_smart(
     if not all([template_node, target_node, ostemplate, hostname]):
         raise HTTPException(status_code=400, detail="Missing required parameters")
     
-    if not password:
-        raise HTTPException(status_code=400, detail="Password is required")
+    if not password and not ssh_public_keys and not current_user.ssh_public_key:
+        raise HTTPException(status_code=400, detail="Password or SSH keys are required")
     
     try:
         if server.use_password:
@@ -4598,6 +4607,14 @@ async def create_lxc_container_smart(
         
         logger.info(f"[LXC Smart Create] Template on {template_node}, target {target_node}, shared={is_shared}, needs_migration={needs_migration}, net0={net0}")
         
+        # Combine user's SSH key with request SSH keys
+        combined_ssh_keys = ssh_public_keys or ""
+        if current_user.ssh_public_key:
+            if combined_ssh_keys:
+                combined_ssh_keys = f"{combined_ssh_keys}\n{current_user.ssh_public_key}"
+            else:
+                combined_ssh_keys = current_user.ssh_public_key
+        
         # Создаём контейнер
         upid = client.create_lxc_container(
             node=create_node,
@@ -4605,6 +4622,7 @@ async def create_lxc_container_smart(
             ostemplate=ostemplate,
             hostname=hostname,
             password=password,
+            ssh_public_keys=combined_ssh_keys if combined_ssh_keys else None,
             storage=storage,
             rootfs_size=rootfs_size,
             memory=memory,

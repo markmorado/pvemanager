@@ -64,6 +64,7 @@ def set_setting(db: Session, key: str, value: str, description: str = None):
 class UpdateProfileRequest(BaseModel):
     full_name: Optional[str] = Field(None, max_length=100)
     email: Optional[EmailStr] = None
+    ssh_public_key: Optional[str] = Field(None, max_length=10000, description="SSH public key for VM/LXC deployment")
 
 
 class ChangePasswordRequest(BaseModel):
@@ -141,6 +142,7 @@ async def get_profile(
         "full_name": current_user.full_name,
         "is_admin": current_user.is_admin,
         "is_active": current_user.is_active,
+        "ssh_public_key": current_user.ssh_public_key,
         "created_at": current_user.created_at.isoformat() if current_user.created_at else None,
         "last_login": current_user.last_login.isoformat() if current_user.last_login else None
     }
@@ -172,6 +174,17 @@ async def update_profile(
             )
         current_user.email = data.email
         updated_fields.append("email")
+    
+    if data.ssh_public_key is not None:
+        # Validate SSH key format (basic validation)
+        ssh_key = data.ssh_public_key.strip()
+        if ssh_key and not ssh_key.startswith(('ssh-rsa', 'ssh-ed25519', 'ecdsa-sha2', 'ssh-dss')):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Неверный формат SSH ключа. Ключ должен начинаться с ssh-rsa, ssh-ed25519, ecdsa-sha2 или ssh-dss"
+            )
+        current_user.ssh_public_key = ssh_key if ssh_key else None
+        updated_fields.append("ssh_public_key")
     
     if updated_fields:
         db.commit()

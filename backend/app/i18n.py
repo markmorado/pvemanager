@@ -3962,6 +3962,36 @@ class I18nService:
             "en": "Password must contain at least one special character"
         },
         
+        # SSH Public Key
+        "ssh_public_key": {
+            "ru": "SSH Публичный ключ",
+            "en": "SSH Public Key"
+        },
+        "ssh_public_key_label": {
+            "ru": "Ваш SSH публичный ключ",
+            "en": "Your SSH Public Key"
+        },
+        "ssh_public_key_help": {
+            "ru": "Этот ключ будет автоматически добавляться при создании VM/LXC. Поддерживаются ключи ssh-rsa, ssh-ed25519, ecdsa.",
+            "en": "This key will be automatically added when creating VM/LXC instances. Supports ssh-rsa, ssh-ed25519, ecdsa keys."
+        },
+        "save_ssh_key": {
+            "ru": "Сохранить ключ",
+            "en": "Save Key"
+        },
+        "ssh_key_saved": {
+            "ru": "SSH ключ успешно сохранён",
+            "en": "SSH key saved successfully"
+        },
+        "error_saving_ssh_key": {
+            "ru": "Ошибка сохранения SSH ключа",
+            "en": "Error saving SSH key"
+        },
+        "invalid_ssh_key_format": {
+            "ru": "Неверный формат SSH ключа. Ключ должен начинаться с ssh-rsa, ssh-ed25519, ecdsa-sha2 или ssh-dss",
+            "en": "Invalid SSH key format. Key must start with ssh-rsa, ssh-ed25519, ecdsa-sha2 or ssh-dss"
+        },
+        
         # IP Blacklist
         "ip_blacklist": {
             "ru": "Чёрный список IP",
