@@ -1498,7 +1498,7 @@ function drawCharts(cpuData, memData, netData, diskData) {
 // VNC Modal
 function showVNCModal(serverId, node, vmid, type, name) {
     const modal = document.getElementById('vncModal');
-    document.getElementById('vncTitle').textContent = `<i class="fa-solid fa-desktop"></i> VNC Console: ${name} (${vmid})`;
+    document.getElementById('vncTitle').innerHTML = `<i class="fa-solid fa-desktop"></i> VNC Console: ${name} (${vmid})`;
     document.getElementById('vncContent').innerHTML = `<div style="text-align: center; padding: 2rem; color: var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> ${t('connecting')}</div>`;
     
     modal.style.display = 'flex';

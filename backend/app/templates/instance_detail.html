@@ -633,7 +633,9 @@ function displayNetworkInterfaces(interfaces) {
         if (iface.ips && iface.ips.length > 0) {
             html += '<div style="display: flex; flex-direction: column; gap: 0.35rem;">';
             iface.ips.forEach(ip => {
-                const icon = ip.type === 'ipv4' ? '<i class="fa-solid fa-globe"></i>' : '<i class="fa-solid fa-earth-americas"></i>';
+                const icon = ip.type === 'ipv4' 
+                    ? '<i class="fa-solid fa-globe" style="color: var(--success);"></i>' 
+                    : '<i class="fa-solid fa-earth-americas" style="color: var(--info);"></i>';
                 const badge = ip.type === 'ipv4' ? 
                     '<span class="badge badge-success">IPv4</span>' :
                     '<span class="badge badge-info">IPv6</span>';
@@ -740,7 +742,7 @@ async function executeCommand(command) {
     const outputContent = document.getElementById('command-output-content');
     
     outputDiv.style.display = 'block';
-    outputContent.textContent = `$ ${command}\n<i class="fa-solid fa-spinner fa-spin"></i> Выполняется...\n`;
+    outputContent.innerHTML = `$ ${command}\n<i class="fa-solid fa-spinner fa-spin"></i> Выполняется...\n`;
     
     try {
         const timeout = 30;
@@ -753,7 +755,7 @@ async function executeCommand(command) {
         
         if (!response.ok) {
             const error = await response.text();
-            outputContent.textContent = `$ ${command}\n<i class="fa-solid fa-circle-xmark"></i> Ошибка: ${error}`;
+            outputContent.innerHTML = `$ ${command}\n<i class="fa-solid fa-circle-xmark"></i> Ошибка: ${error}`;
             showNotification('Ошибка выполнения команды', 'error');
             return;
         }
@@ -762,7 +764,7 @@ async function executeCommand(command) {
         displayCommandOutput(result, command);
         
     } catch (error) {
-        outputContent.textContent = `$ ${command}\n<i class="fa-solid fa-circle-xmark"></i> Ошибка: ${error.message}`;
+        outputContent.innerHTML = `$ ${command}\n<i class="fa-solid fa-circle-xmark"></i> Ошибка: ${error.message}`;
         showNotification('Ошибка выполнения команды', 'error');
     }
 }
@@ -1092,9 +1094,9 @@ function drawCharts(data, timeframe = 'hour') {
 // Модальное окно подтверждения
 function showConfirmModal(icon, title, message, btnColor, action) {
     pendingAction = action;
-    document.getElementById('confirmIcon').textContent = icon;
+    document.getElementById('confirmIcon').innerHTML = icon;
     document.getElementById('confirmTitle').textContent = title;
-    document.getElementById('confirmMessage').textContent = message;
+    document.getElementById('confirmMessage').innerHTML = message;
     document.getElementById('confirmBtn').style.background = btnColor;
     document.getElementById('confirmModal').style.display = 'flex';
 }
@@ -1240,7 +1242,7 @@ async function openVNC() {
     const vncContent = document.getElementById('vncContent');
     
     modal.style.display = 'flex';
-    document.getElementById('vncTitle').textContent = `<i class="fa-solid fa-desktop"></i> VNC Console: ${instanceName}`;
+    document.getElementById('vncTitle').innerHTML = `<i class="fa-solid fa-desktop"></i> VNC Console: ${instanceName}`;
     vncContent.innerHTML = `<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> ${t('connecting')}</div>`;
     
     try {
