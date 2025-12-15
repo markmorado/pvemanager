@@ -85,7 +85,7 @@ Settings: **Settings** → **Notifications**
 
 ```bash
 POSTGRES_PASSWORD=your_secure_password
-TZ=Asia/Tashkent
+TZ=Your/Timezone
 ```
 
 ### Notifications (SMTP and Telegram)
