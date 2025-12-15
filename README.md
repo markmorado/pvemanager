@@ -6,8 +6,6 @@ Modern web panel for managing Proxmox servers, virtual machines and LXC containe
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](compose.yml)
 
-![Dashboard Screenshot](docs/screenshot.png)
-
 ## ✨ Key Features
 
 - 🖥️ **Proxmox Integration** — Manage multiple servers and clusters
