@@ -83,9 +83,51 @@ def ensure_safe_directory():
         pass
 
 
+def configure_git_for_public_access():
+    """Настроить git для работы без аутентификации с публичным репозиторием"""
+    try:
+        # Отключить запросы пароля
+        subprocess.run(
+            ["git", "config", "--global", "credential.helper", ""],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            timeout=5
+        )
+        
+        # Получить текущий remote URL
+        remote_result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        
+        if remote_result.returncode == 0:
+            current_url = remote_result.stdout.strip()
+            
+            # Если URL использует https с credentials, очистить их
+            if "https://" in current_url and "@" in current_url:
+                # Убрать credentials из URL
+                clean_url = current_url.split("@")[-1]
+                clean_url = "https://" + clean_url
+                
+                subprocess.run(
+                    ["git", "remote", "set-url", "origin", clean_url],
+                    cwd=PROJECT_ROOT,
+                    capture_output=True,
+                    timeout=5
+                )
+        
+        return True
+    except Exception as e:
+        logger.warning(f"Could not configure git: {e}")
+        return False
+
+
 async def check_for_updates() -> Dict[str, Any]:
     """
-    Проверить наличие обновлений
+    Проверить наличие обновлений через GitHub API
     Сравнивает локальную версию с удалённой
     """
     current_version = get_current_version()
@@ -100,94 +142,112 @@ async def check_for_updates() -> Dict[str, Any]:
         "project_mounted": is_project_mounted()
     }
     
-    # Проверяем доступность git и проекта
-    if not result["git_available"]:
-        result["error"] = "Git is not installed in container. Mount project directory with docker-compose volume."
-        return result
-    
-    if not result["project_mounted"]:
-        result["error"] = "Project directory not mounted. Add volume mount in docker-compose.yml: ./:/project"
-        return result
-    
-    # Добавляем safe.directory для git
-    ensure_safe_directory()
-    
-    try:
-        # Fetch последних изменений без merge
-        fetch_result = subprocess.run(
-            ["git", "fetch", "origin", "main"],
-            cwd=PROJECT_ROOT,
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        
-        if fetch_result.returncode != 0:
-            result["error"] = f"Failed to fetch updates: {fetch_result.stderr}"
-            return result
-        
-        # Получить версию из удалённого репозитория
-        remote_version_result = subprocess.run(
-            ["git", "show", "origin/main:VERSION"],
-            cwd=PROJECT_ROOT,
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        
-        if remote_version_result.returncode == 0:
-            result["latest_version"] = remote_version_result.stdout.strip()
-        else:
-            result["error"] = "Failed to get remote version"
-            return result
-        
-        # Сравнить версии
-        if result["latest_version"] != current_version:
-            result["update_available"] = True
-            
-            # Получить changelog из удалённого репозитория
-            changelog_result = subprocess.run(
-                ["git", "show", "origin/main:CHANGELOG.md"],
+    # Получаем URL репозитория
+    repo_url = None
+    if result["project_mounted"]:
+        try:
+            ensure_safe_directory()
+            remote_result = subprocess.run(
+                ["git", "remote", "get-url", "origin"],
                 cwd=PROJECT_ROOT,
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=5
             )
+            if remote_result.returncode == 0:
+                repo_url = remote_result.stdout.strip()
+        except Exception as e:
+            logger.warning(f"Could not get git remote URL: {e}")
+    
+    # Парсим owner/repo из URL
+    owner, repo = None, None
+    if repo_url:
+        # https://github.com/owner/repo.git -> owner/repo
+        if "github.com" in repo_url:
+            parts = repo_url.replace(".git", "").split("github.com/")
+            if len(parts) == 2:
+                owner_repo = parts[1].split("/")
+                if len(owner_repo) >= 2:
+                    owner, repo = owner_repo[0], owner_repo[1]
+    
+    if not owner or not repo:
+        # Fallback на хардкод для этого проекта
+        owner, repo = "markmorado", "pvemanager"
+    
+    try:
+        # Используем GitHub API для получения файлов
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Получить VERSION из main ветки
+            version_url = f"https://raw.githubusercontent.com/{owner}/{repo}/main/VERSION"
+            version_response = await client.get(version_url)
             
-            if changelog_result.returncode == 0:
-                # Извлекаем только последнюю версию из changelog
-                changelog_lines = changelog_result.stdout.split('\n')
-                latest_changelog = []
-                in_latest_version = False
-                version_count = 0
+            if version_response.status_code == 200:
+                result["latest_version"] = version_response.text.strip()
+            else:
+                result["error"] = f"Failed to fetch VERSION file: HTTP {version_response.status_code}"
+                return result
+            
+            # Сравнить версии
+            if result["latest_version"] != current_version:
+                result["update_available"] = True
                 
-                for line in changelog_lines:
-                    if line.startswith('## [v'):
-                        version_count += 1
-                        if version_count == 1:
-                            in_latest_version = True
-                        elif version_count == 2:
-                            break
+                # Получить CHANGELOG.md
+                changelog_url = f"https://raw.githubusercontent.com/{owner}/{repo}/main/CHANGELOG.md"
+                changelog_response = await client.get(changelog_url)
+                
+                if changelog_response.status_code == 200:
+                    # Извлекаем только последнюю версию из changelog
+                    changelog_lines = changelog_response.text.split('\n')
+                    latest_changelog = []
+                    in_latest_version = False
+                    version_count = 0
                     
-                    if in_latest_version:
-                        latest_changelog.append(line)
-                
-                result["changelog"] = '\n'.join(latest_changelog)
+                    for line in changelog_lines:
+                        if line.startswith('## [v'):
+                            version_count += 1
+                            if version_count == 1:
+                                in_latest_version = True
+                            elif version_count == 2:
+                                break
+                        
+                        if in_latest_version:
+                            latest_changelog.append(line)
+                    
+                    result["changelog"] = '\n'.join(latest_changelog)
+            
+            # Получить информацию о коммитах через API
+            if result["project_mounted"]:
+                try:
+                    # Получить локальный commit hash
+                    local_commit_result = subprocess.run(
+                        ["git", "rev-parse", "HEAD"],
+                        cwd=PROJECT_ROOT,
+                        capture_output=True,
+                        text=True,
+                        timeout=5
+                    )
+                    
+                    if local_commit_result.returncode == 0:
+                        local_commit = local_commit_result.stdout.strip()
+                        
+                        # Получить удаленный commit через API
+                        commits_url = f"https://api.github.com/repos/{owner}/{repo}/commits/main"
+                        commits_response = await client.get(commits_url)
+                        
+                        if commits_response.status_code == 200:
+                            remote_commit = commits_response.json()["sha"]
+                            
+                            # Сравнить хеши
+                            if local_commit != remote_commit:
+                                result["commits_behind"] = 1  # Упрощенно
+                except Exception as e:
+                    logger.warning(f"Could not check commits: {e}")
         
-        # Проверить количество коммитов позади
-        behind_result = subprocess.run(
-            ["git", "rev-list", "--count", "HEAD..origin/main"],
-            cwd=PROJECT_ROOT,
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        
-        if behind_result.returncode == 0:
-            result["commits_behind"] = int(behind_result.stdout.strip())
-        
-    except subprocess.TimeoutExpired:
+    except httpx.TimeoutException:
         result["error"] = "Timeout while checking for updates"
+    except httpx.HTTPError as e:
+        result["error"] = f"HTTP error: {str(e)}"
+        logger.error(f"HTTP error checking for updates: {e}")
     except Exception as e:
         result["error"] = str(e)
         logger.error(f"Error checking for updates: {e}")
@@ -222,6 +282,9 @@ async def perform_update() -> Dict[str, Any]:
     # Добавляем safe.directory для git
     ensure_safe_directory()
     
+    # Настраиваем git для публичного доступа
+    configure_git_for_public_access()
+    
     # Сбросить статус
     update_status = {
         "is_updating": True,
@@ -237,16 +300,42 @@ async def perform_update() -> Dict[str, Any]:
         update_status["stage"] = "pulling"
         update_status["progress"] = 10
         
+        # Пробуем pull с публичным доступом
         pull_result = subprocess.run(
             ["git", "pull", "origin", "main"],
             cwd=PROJECT_ROOT,
             capture_output=True,
             text=True,
-            timeout=120
+            timeout=120,
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"}  # Отключить запрос пароля
         )
         
         if pull_result.returncode != 0:
-            raise Exception(f"Git pull failed: {pull_result.stderr}")
+            # Если не получилось через pull, пробуем через reset
+            # Fetch с установкой remote для публичного доступа
+            fetch_result = subprocess.run(
+                ["git", "fetch", "origin", "main"],
+                cwd=PROJECT_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                env={**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+            )
+            
+            if fetch_result.returncode != 0:
+                raise Exception(f"Git fetch failed: {fetch_result.stderr}")
+            
+            # Reset к удаленной версии
+            reset_result = subprocess.run(
+                ["git", "reset", "--hard", "origin/main"],
+                cwd=PROJECT_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if reset_result.returncode != 0:
+                raise Exception(f"Git reset failed: {reset_result.stderr}")
         
         # Stage 2: Docker build (50%)
         update_status["stage"] = "building"
