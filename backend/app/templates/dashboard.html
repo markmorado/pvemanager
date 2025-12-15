@@ -74,8 +74,12 @@ async function loadProxmoxNodesStats() {
         
         // Собрать все данные сначала, потом отрисовать
         const chartsToRender = [];
-        const seenNodes = new Set(); // Глобальная дедупликация по имени ноды
-        const processedClusters = new Set(); // Для дедупликации кластеров по набору нод
+        // Глобальная дедупликация по имени ноды
+        // Это работает потому что имена нод в кластере уникальны
+        // Даже если разные серверы кластера видят разное количество нод
+        // (например, при временном отключении одной ноды),
+        // мы всё равно покажем каждую ноду только один раз
+        const seenNodes = new Set();
         
         // Загрузить данные для каждого сервера
         for (const server of onlineServers) {
@@ -95,27 +99,14 @@ async function loadProxmoxNodesStats() {
                     continue;
                 }
                 
-                // Для кластеров: создаём уникальный ключ из отсортированных имён нод
-                // Это позволяет определить что разные серверы принадлежат одному кластеру
-                const nodeNames = nodes.map(n => n.node).sort();
-                const clusterKey = nodeNames.join(',');
-                
-                // Если это кластер (более 1 ноды) и мы уже обработали этот кластер - пропускаем
-                if (nodes.length > 1 && processedClusters.has(clusterKey)) {
-                    continue;
-                }
-                
-                if (nodes.length > 1) {
-                    processedClusters.add(clusterKey);
-                }
-                
                 // Обработать ВСЕ ноды этого сервера
                 for (const nodeInfo of nodes) {
                     const node = nodeInfo.node;
                     
                     // Глобальная дедупликация по имени ноды
+                    // Если нода с таким именем уже обработана - пропускаем
                     if (seenNodes.has(node)) {
-                        continue; // Уже показали эту ноду
+                        continue;
                     }
                     seenNodes.add(node);
                     
