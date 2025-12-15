@@ -47,10 +47,8 @@ docker compose up -d
 
 | Document | Description |
 |----------|-------------|
-| [📖 WIKI.md](WIKI.md) | **Complete User Guide** |
+| [📖 WIKI.md](WIKI.md) | **Complete User & Admin Guide** |
 | [📝 CHANGELOG.md](CHANGELOG.md) | Change History |
-| [🚀 DEPLOYMENT.md](DEPLOYMENT.md) | Production Deployment |
-| [🔌 API_EXAMPLES.md](API_EXAMPLES.md) | API Usage Examples |
 
 ## 🔔 Notifications
 

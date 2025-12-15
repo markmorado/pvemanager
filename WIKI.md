@@ -22,8 +22,10 @@
 13. [Localization](#-localization)
 14. [Settings](#-settings)
 15. [API Reference](#-api-reference)
-16. [Troubleshooting](#-troubleshooting)
-17. [FAQ](#-faq)
+16. [Deployment Guide](#-deployment-guide)
+17. [Private Repo Updates](#-private-repo-updates)
+18. [Troubleshooting](#-troubleshooting)
+19. [FAQ](#-faq)
 
 ---
 
@@ -118,6 +120,94 @@ SMTP and Telegram bot settings are now managed via web interface:
 3. Click **Test** button to verify settings
 
 ---
+
+## 📚 API Reference
+
+This section summarizes key API endpoints. All require JWT authentication.
+
+### Authentication
+
+- `POST /api/auth/login` — returns `access_token`
+
+### System Updates
+
+- `GET /settings/api/version` — current version
+- `GET /settings/api/updates/check` — check for updates
+- `POST /settings/api/updates/perform` — start update
+
+### Proxmox Servers
+
+- `GET /api/servers` — list servers
+- `POST /api/servers` — add server
+- `PUT /api/servers/{id}` — update server
+- `DELETE /api/servers/{id}` — delete server
+- `POST /api/servers/{id}/test` — test connection
+
+### Virtual Machines
+
+- `GET /api/servers/{id}/resources` — list VMs
+- `POST /api/servers/{id}/vm/{vmid}/start?node={node}` — start VM
+- `POST /api/servers/{id}/vm/{vmid}/stop?node={node}` — stop VM
+- `POST /api/servers/{id}/vm/{vmid}/restart?node={node}` — restart VM
+- `GET /api/servers/{id}/vm/{vmid}/status?node={node}` — VM status
+
+---
+
+## 📦 Deployment Guide
+
+Supported modes:
+- Standalone (dev): direct port 8000
+- Production with NGINX (HTTP)
+- Production with NGINX + SSL (HTTPS via Let's Encrypt)
+
+Quick start:
+```bash
+chmod +x deploy.sh
+sudo ./deploy.sh
+```
+
+Manual (standalone):
+```bash
+cp .env.example .env && cp backend/.env.example backend/.env
+docker compose up -d
+```
+
+Manual (NGINX + SSL):
+```bash
+docker compose -f compose.yml -f compose.prod.yml up -d nginx
+docker compose -f compose.yml -f compose.prod.yml run --rm certbot certonly \
+  --webroot --webroot-path=/var/www/certbot \
+  --email admin@example.com --agree-tos --no-eff-email \
+  -d your-domain.com
+docker compose -f compose.yml -f compose.prod.yml up -d
+```
+
+Requirements:
+- Docker 24+, Compose 2.20+
+- Domain + open ports 80/443 for SSL
+
+---
+
+## 🔒 Private Repo Updates
+
+If using a private GitHub repo, update checks may fail.
+
+Options:
+- Disable update checks:
+```bash
+DISABLE_UPDATE_CHECK=true
+```
+- Or set GitHub token:
+```bash
+DISABLE_UPDATE_CHECK=false
+GITHUB_TOKEN=your_token
+```
+Generate token: https://github.com/settings/tokens (scope `repo`).
+
+After changes:
+```bash
+docker compose restart app
+```
 
 ## 🎯 Main Features
 

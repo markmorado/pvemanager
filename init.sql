@@ -4,8 +4,8 @@
 -- Complete database initialization for fresh installations.
 -- This file is executed on first PostgreSQL startup via Docker volume mount.
 -- 
--- Version: 2.0.0
--- Last Updated: 2025-12-13
+-- Version: 1.0
+-- Last Updated: 2025-12-15
 -- ==============================================================================
 
 -- Extensions
