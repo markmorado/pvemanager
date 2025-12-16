@@ -206,7 +206,7 @@ class MonitoringWorker:
             # Get all active users with admin role for server notifications
             users = db.query(User).filter(
                 User.is_active == True,
-                User.role.in_(['admin', 'superadmin'])
+                User.is_admin == True
             ).all()
             
             if not users:
