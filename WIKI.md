@@ -1156,6 +1156,77 @@ docker system prune -f
 - Increase refresh interval in settings
 - Check network to Proxmox server
 
+### Account Issues
+
+#### Admin forgot password
+
+If the admin forgot their password, you can reset it using the command line:
+
+**Option 1: Reset to default password**
+
+```bash
+# Run inside the app container
+docker compose exec app python -c "
+from app.db import get_db
+from app.models import User
+from app.auth import get_password_hash
+
+db = next(get_db())
+admin = db.query(User).filter(User.username == 'admin').first()
+if admin:
+    admin.hashed_password = get_password_hash('admin123')
+    db.commit()
+    print('✅ Admin password reset to: admin123')
+else:
+    print('❌ Admin user not found')
+db.close()
+"
+```
+
+**Option 2: Set a custom password**
+
+```bash
+# Replace YOUR_NEW_PASSWORD with your desired password
+docker compose exec app python -c "
+from app.db import get_db
+from app.models import User
+from app.auth import get_password_hash
+
+db = next(get_db())
+admin = db.query(User).filter(User.username == 'admin').first()
+if admin:
+    admin.hashed_password = get_password_hash('YOUR_NEW_PASSWORD')
+    db.commit()
+    print('✅ Admin password has been reset')
+else:
+    print('❌ Admin user not found')
+db.close()
+"
+```
+
+**Option 3: Reset any user's password**
+
+```bash
+# Replace USERNAME with the target username
+docker compose exec app python -c "
+from app.db import get_db
+from app.models import User
+from app.auth import get_password_hash
+
+db = next(get_db())
+user = db.query(User).filter(User.username == 'USERNAME').first()
+if user:
+    user.hashed_password = get_password_hash('newpassword123')
+    db.commit()
+    print('✅ Password reset for user: USERNAME')
+else:
+    print('❌ User not found')
+db.close()
+"
+```
+
+> ⚠️ **Security note:** After resetting the password, log in immediately and change it to a secure password through the web interface.
+
 ---
 
 ## ❓ FAQ
