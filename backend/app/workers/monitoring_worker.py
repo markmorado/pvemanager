@@ -16,14 +16,14 @@ def utcnow() -> datetime:
 
 try:
     from backend.app.db import SessionLocal
-    from backend.app.models import User, ProxmoxServer, PanelSettings, VMInstance, IPAMAllocation
+    from backend.app.models import User, ProxmoxServer, PanelSettings, VMInstance, IPAMAllocation, Notification
     from backend.app.services.notification_service import NotificationService
     from backend.app.proxmox_client import ProxmoxClient
     from backend.app.schemas import NotificationCreate
     from backend.app.i18n import t
 except ImportError:
     from app.db import SessionLocal
-    from app.models import User, ProxmoxServer, PanelSettings, VMInstance, IPAMAllocation
+    from app.models import User, ProxmoxServer, PanelSettings, VMInstance, IPAMAllocation, Notification
     from app.services.notification_service import NotificationService
     from app.proxmox_client import ProxmoxClient
     from app.schemas import NotificationCreate
@@ -815,6 +815,82 @@ class MonitoringWorker:
         cooldown_seconds = cooldown_minutes * 60
         return (datetime.now().timestamp() - last_alert) > cooldown_seconds
 
+    def check_for_panel_updates(self):
+        """
+        Check for panel updates and notify admin users if a new version is available.
+        Runs periodically (every 6 hours) via scheduler.
+        """
+        try:
+            from app.services.update_service import check_for_updates
+        except ImportError:
+            from backend.app.services.update_service import check_for_updates
+        
+        db = SessionLocal()
+        try:
+            logger.info("[UPDATE CHECK] Checking for panel updates...")
+            
+            # Run async check_for_updates
+            result = run_async(check_for_updates())
+            
+            if result.get("error") or result.get("disabled"):
+                logger.debug(f"[UPDATE CHECK] Skipped: {result.get('error', 'disabled')}")
+                return
+            
+            if not result.get("update_available"):
+                logger.debug(f"[UPDATE CHECK] No updates available. Current: {result.get('current_version')}")
+                return
+            
+            current_version = result.get("current_version", "unknown")
+            new_version = result.get("latest_version", "unknown")
+            changelog = result.get("changelog")
+            
+            logger.info(f"[UPDATE CHECK] New version available: {new_version} (current: {current_version})")
+            
+            # Get all admin users to notify
+            users = db.query(User).filter(
+                User.is_active == True,
+                User.is_admin == True
+            ).all()
+            
+            if not users:
+                logger.debug("[UPDATE CHECK] No admin users to notify")
+                return
+            
+            # Check if we already notified about this version
+            for user in users:
+                # Check if notification already exists for this user and version
+                existing = db.query(Notification).filter(
+                    Notification.user_id == user.id,
+                    Notification.source_id == f"update_{new_version}",
+                    Notification.type == "update"
+                ).first()
+                
+                if existing:
+                    logger.debug(f"[UPDATE CHECK] User {user.id} already notified about version {new_version}")
+                    continue
+                
+                # Create notification for this user
+                try:
+                    NotificationService.notify_update_available(
+                        db=db,
+                        user_id=user.id,
+                        current_version=current_version,
+                        new_version=new_version,
+                        changelog=changelog
+                    )
+                    logger.info(f"[UPDATE CHECK] Notified user {user.username} about update to {new_version}")
+                except Exception as e:
+                    logger.error(f"[UPDATE CHECK] Failed to notify user {user.id}: {e}")
+            
+            db.commit()
+            logger.info(f"[UPDATE CHECK] Completed. Notified {len(users)} admin users about version {new_version}")
+            
+        except Exception as e:
+            logger.error(f"[UPDATE CHECK] Error checking for updates: {e}", exc_info=True)
+            db.rollback()
+        finally:
+            db.close()
+
 
 # Global worker instance
 monitoring_worker = MonitoringWorker()
@@ -852,6 +928,15 @@ def start_monitoring_worker():
         trigger=IntervalTrigger(seconds=60),
         id='resource_monitoring',
         name='Monitor resource usage',
+        replace_existing=True
+    )
+    
+    # Update check - every 6 hours
+    scheduler.add_job(
+        monitoring_worker.check_for_panel_updates,
+        trigger=IntervalTrigger(hours=6),
+        id='update_check',
+        name='Check for panel updates',
         replace_existing=True
     )
     
@@ -893,6 +978,19 @@ def start_monitoring_worker():
         monitoring_worker.sync_vm_cache()
     except Exception as e:
         logger.warning(f"Initial VM cache sync failed: {e}")
+    
+    # Run initial update check on startup (delayed by 60 seconds to let the app fully start)
+    def delayed_update_check():
+        import time
+        time.sleep(60)
+        try:
+            logger.info("Running initial update check...")
+            monitoring_worker.check_for_panel_updates()
+        except Exception as e:
+            logger.warning(f"Initial update check failed: {e}")
+    
+    import threading
+    threading.Thread(target=delayed_update_check, daemon=True).start()
     
     scheduler.start()
     logger.info("Background monitoring worker started")

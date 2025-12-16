@@ -3607,6 +3607,16 @@ class I18nService:
             "en": "This is a test notification from PVEmanager. If you see this, notifications are working correctly!"
         },
         
+        # Update notifications
+        "notify_update_available_title": {
+            "ru": "🆕 Доступна новая версия {new_version}",
+            "en": "🆕 New version {new_version} available"
+        },
+        "notify_update_available_message": {
+            "ru": "Доступна новая версия панели {new_version}. Текущая версия: {current_version}. Перейдите на страницу обновления для установки.",
+            "en": "New panel version {new_version} is available. Current version: {current_version}. Go to the update page to install."
+        },
+        
         # ==================== Users & RBAC ====================
         "users_management": {
             "ru": "Управление пользователями",

@@ -59,7 +59,7 @@ class NotificationPreference(Base):
     telegram_chat_id = Column(String(100))
     webhook_url = Column(String(500))
     notification_levels = Column(JSON, default=["critical", "warning", "info", "success"])
-    notification_types = Column(JSON, default=["vm_status", "resource_alert", "system"])
+    notification_types = Column(JSON, default=["vm_status", "resource_alert", "system", "update"])
     quiet_hours_start = Column(String(5))  # HH:MM format
     quiet_hours_end = Column(String(5))  # HH:MM format
     created_at = Column(DateTime(timezone=True), server_default=func.now())

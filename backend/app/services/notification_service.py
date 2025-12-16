@@ -406,6 +406,43 @@ class NotificationService:
             )
         )
 
+    @staticmethod
+    def notify_update_available(
+        db: Session,
+        user_id: int,
+        current_version: str,
+        new_version: str,
+        changelog: Optional[str] = None
+    ) -> Optional[Notification]:
+        """Create notification about new panel version"""
+        lang = get_panel_language(db)
+        
+        title = t("notify_update_available_title", lang, new_version=new_version)
+        message = t("notify_update_available_message", lang, 
+                   new_version=new_version, 
+                   current_version=current_version)
+        
+        data = {
+            "current_version": current_version,
+            "new_version": new_version,
+            "changelog": changelog
+        }
+        
+        return NotificationService.create_notification(
+            db,
+            NotificationCreate(
+                user_id=user_id,
+                type="update",
+                level="info",
+                title=title,
+                message=message,
+                data=data,
+                link="/settings#updates",
+                source="system",
+                source_id=f"update_{new_version}"
+            )
+        )
+
     # ============================================
     # Async methods for multi-channel notifications
     # ============================================

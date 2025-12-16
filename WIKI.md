@@ -17,15 +17,15 @@
 9. [Snapshots](#-snapshots)
 10. [IPAM](#-ipam)
 11. [Remote Command Execution](#-remote-command-execution)
-11. [Monitoring](#-monitoring)
-12. [Security (RBAC v2)](#-security)
-13. [Localization](#-localization)
-14. [Settings](#-settings)
-15. [API Reference](#-api-reference)
-16. [Deployment Guide](#-deployment-guide)
-17. [Private Repo Updates](#-private-repo-updates)
-18. [Troubleshooting](#-troubleshooting)
-19. [FAQ](#-faq)
+12. [Monitoring](#-monitoring)
+13. [Security (RBAC v2)](#-security)
+14. [Localization](#-localization)
+15. [Settings](#-settings)
+16. [API Reference](#-api-reference)
+17. [Deployment Guide](#-deployment-guide)
+18. [Private Repo Updates](#-private-repo-updates)
+19. [Troubleshooting](#-troubleshooting)
+20. [FAQ](#-faq)
 
 ---
 
@@ -97,16 +97,13 @@ docker compose up -d
 
 ```bash
 # Database
-DATABASE_URL=postgresql://postgres:password@db:5432/serverpanel
 POSTGRES_PASSWORD=your_secure_password
 
 # Secret key (generate unique!)
 SECRET_KEY=your-very-long-secret-key-change-me
 
-# Proxmox (optional, can be added via UI)
-PROXMOX_HOST=192.168.1.100
-PROXMOX_USER=root@pam
-PROXMOX_PASSWORD=your_password
+# Timezone
+TZ=Your/Timezone
 ```
 
 #### Email and Telegram Notifications
@@ -151,63 +148,61 @@ This section summarizes key API endpoints. All require JWT authentication.
 - `POST /api/servers/{id}/vm/{vmid}/restart?node={node}` — restart VM
 - `GET /api/servers/{id}/vm/{vmid}/status?node={node}` — VM status
 
----
+### Containers
 
-## 📦 Deployment Guide
+- `GET /api/servers/{id}/resources` — list containers
+- `POST /api/servers/{id}/container/{vmid}/start?node={node}` — start container
+- `POST /api/servers/{id}/container/{vmid}/stop?node={node}` — stop container
+- `POST /api/servers/{id}/container/{vmid}/restart?node={node}` — restart container
+- `GET /api/servers/{id}/container/{vmid}/status?node={node}` — container status
 
-Supported modes:
-- Standalone (dev): direct port 8000
-- Production with NGINX (HTTP)
-- Production with NGINX + SSL (HTTPS via Let's Encrypt)
+### OS Templates
 
-Quick start:
-```bash
-chmod +x deploy.sh
-sudo ./deploy.sh
-```
+- `GET /templates/api/groups` — list template groups
+- `POST /templates/api/groups` — create template group
+- `GET /templates/api/templates` — list templates
+- `POST /templates/api/templates` — create template
+- `DELETE /templates/api/templates/{id}` — delete template
 
-Manual (standalone):
-```bash
-cp .env.example .env && cp backend/.env.example backend/.env
-docker compose up -d
-```
+### IPAM
 
-Manual (NGINX + SSL):
-```bash
-docker compose -f compose.yml -f compose.prod.yml up -d nginx
-docker compose -f compose.yml -f compose.prod.yml run --rm certbot certonly \
-  --webroot --webroot-path=/var/www/certbot \
-  --email admin@example.com --agree-tos --no-eff-email \
-  -d your-domain.com
-docker compose -f compose.yml -f compose.prod.yml up -d
-```
+- `GET /ipam/api/networks` — list networks
+- `POST /ipam/api/networks` — create network
+- `DELETE /ipam/api/networks/{id}` — delete network
+- `GET /ipam/api/allocations` — list IP allocations
+- `POST /ipam/api/allocations` — create IP allocation
+- `DELETE /ipam/api/allocations/{id}` — release IP
 
-Requirements:
-- Docker 24+, Compose 2.20+
-- Domain + open ports 80/443 for SSL
+### Notifications
 
----
+- `GET /api/notifications` — list notifications
+- `PATCH /api/notifications/{id}/read` — mark as read
+- `DELETE /api/notifications/{id}` — delete notification
 
-## 🔒 Private Repo Updates
+### Users & Roles
 
-If using a private GitHub repo, update checks may fail.
+- `GET /api/users` — list users (admin)
+- `POST /api/users` — create user (admin)
+- `PUT /api/users/{id}` — update user (admin)
+- `DELETE /api/users/{id}` — delete user (admin)
+- `GET /api/roles` — list roles (admin)
+- `POST /api/roles` — create role (admin)
+- `PUT /api/roles/{id}` — update role (admin)
+- `DELETE /api/roles/{id}` — delete role (admin)
 
-Options:
-- Disable update checks:
-```bash
-DISABLE_UPDATE_CHECK=true
-```
-- Or set GitHub token:
-```bash
-DISABLE_UPDATE_CHECK=false
-GITHUB_TOKEN=your_token
-```
-Generate token: https://github.com/settings/tokens (scope `repo`).
+### Settings
 
-After changes:
-```bash
-docker compose restart app
-```
+- `GET /settings/api/panel` — get panel settings
+- `PUT /settings/api/panel` — update panel settings
+- `GET /settings/api/security` — get security settings
+- `PUT /settings/api/security` — update security settings
+- `GET /settings/api/notifications` — get notification settings
+- `PUT /settings/api/notifications` — update notification settings
+
+### Logs
+
+- `GET /logs/api/logs` — get audit logs
+- `GET /logs/api/stats` — get log statistics
 
 ## 🎯 Main Features
 
@@ -232,6 +227,54 @@ docker compose restart app
 - Configuration changes (CPU, RAM, Disk)
 - VNC console in browser
 - Remote command execution
+
+### Bulk Operations
+
+- Mass start/stop/restart/delete VMs and containers
+- Task queue system with progress tracking
+- Background processing
+
+### OS Templates
+
+- Quick VM deployment from templates
+- Cross-node template deployment for clusters
+- Template groups and icons
+- VM reinstall from template
+
+### Snapshots
+
+- Create, delete, rollback VM/LXC snapshots
+- Snapshot operation queue system
+- Snapshot archival on VM deletion
+
+### IPAM (IP Address Management)
+
+- Network and subnet management
+- Automatic IP allocation
+- IP reservation and release
+- Allocation history
+
+### Notifications
+
+- Real-time alerts about VM events
+- Email notifications via SMTP
+- Telegram notifications via Bot API
+- In-App notifications with bell icon
+
+### Security
+
+- RBAC v2 with atomic permissions (`resource:action`)
+- VPS-style user isolation (users see only their instances)
+- IP blocking (automatic and manual)
+- Session management
+- Login protection (lockout, rate limiting)
+- Audit logs
+
+### Monitoring
+
+- Real-time CPU, RAM, Disk, Network metrics
+- Historical graphs (hour, day, week, month)
+- Resource alert thresholds
 
 ---
 
@@ -1000,10 +1043,6 @@ curl -H "Authorization: Bearer eyJ..." \
 | GET | `/logs/api/logs` | Get audit logs |
 | GET | `/logs/api/stats` | Get log statistics |
 
-### API Examples
-
-For detailed API usage examples, see [API_EXAMPLES.md](API_EXAMPLES.md)
-
 ### Swagger Documentation
 
 Available at: `http://localhost:8000/docs`
@@ -1170,4 +1209,4 @@ A: Not yet, but planned for future versions.
 ---
 
 *Last updated: December 2025*
-*Version: 1.9.0*
+*Version: 1.0*
