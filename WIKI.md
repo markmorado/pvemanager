@@ -1176,9 +1176,9 @@ admin = db.query(User).filter(User.username == 'admin').first()
 if admin:
     admin.hashed_password = get_password_hash('admin123')
     db.commit()
-    print('✅ Admin password reset to: admin123')
+    print('Admin password reset to: admin123')
 else:
-    print('❌ Admin user not found')
+    print('Admin user not found')
 db.close()
 "
 ```
@@ -1197,9 +1197,9 @@ admin = db.query(User).filter(User.username == 'admin').first()
 if admin:
     admin.hashed_password = get_password_hash('YOUR_NEW_PASSWORD')
     db.commit()
-    print('✅ Admin password has been reset')
+    print('Admin password has been reset')
 else:
-    print('❌ Admin user not found')
+    print('Admin user not found')
 db.close()
 "
 ```
@@ -1218,9 +1218,9 @@ user = db.query(User).filter(User.username == 'USERNAME').first()
 if user:
     user.hashed_password = get_password_hash('newpassword123')
     db.commit()
-    print('✅ Password reset for user: USERNAME')
+    print('Password reset for user: USERNAME')
 else:
-    print('❌ User not found')
+    print('User not found')
 db.close()
 "
 ```
