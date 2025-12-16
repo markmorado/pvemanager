@@ -323,6 +323,27 @@
         <div class="settings-section admin-only-section" id="system-updates-section">
             <h2><i class="fa-solid fa-cloud-arrow-down"></i> {{ t('system_updates') }}</h2>
             
+            <!-- Repository Selection -->
+            <div class="form-group">
+                <label for="git-repository-select">
+                    <i class="fab fa-git-alt"></i> {{ t('git_repository') }}
+                </label>
+                <select id="git-repository-select" class="form-control" onchange="handleRepositoryChange()">
+                    <option value="https://git.tzim.uz/dilshod/pve_manager">git.tzim.uz/dilshod/pve_manager (Default)</option>
+                    <option value="https://github.com/markmorado/pvemanager">github.com/markmorado/pvemanager</option>
+                    <option value="custom">{{ t('custom_repository') }}...</option>
+                </select>
+                <small class="form-text">{{ t('repository_url') }}</small>
+            </div>
+            
+            <div id="custom-repo-input" class="form-group" style="display: none; margin-top: 10px;">
+                <input type="text" id="custom-repository-url" class="form-control" 
+                       placeholder="https://git.example.com/owner/repo">
+                <button class="btn btn-primary mt-2" onclick="saveCustomRepository()">
+                    <i class="fas fa-save"></i> {{ t('save') }}
+                </button>
+            </div>
+            
             <div class="update-info-card">
                 <div class="update-version-row">
                     <div class="version-item">
@@ -1086,6 +1107,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Load panel settings
     loadPanelSettings();
+    
+    // Load repository setting
+    loadRepositorySetting();
 
     // Profile form
     document.getElementById('profile-form').addEventListener('submit', async function(e) {
@@ -1822,6 +1846,102 @@ async function loadCurrentVersion() {
         }
     } catch (error) {
         console.error('Error loading version:', error);
+    }
+}
+
+// Load current repository setting
+async function loadRepositorySetting() {
+    try {
+        const response = await fetchWithAuth('/settings/api/updates/repository');
+        if (response && response.ok) {
+            const data = await response.json();
+            const select = document.getElementById('git-repository-select');
+            const repoUrl = data.repository_url;
+            
+            // Check if it's one of the predefined options
+            let found = false;
+            for (let option of select.options) {
+                if (option.value === repoUrl) {
+                    select.value = repoUrl;
+                    found = true;
+                    break;
+                }
+            }
+            
+            // If not found, it's a custom repository
+            if (!found && repoUrl !== 'custom') {
+                select.value = 'custom';
+                document.getElementById('custom-repo-input').style.display = 'block';
+                document.getElementById('custom-repository-url').value = repoUrl;
+            }
+        }
+    } catch (error) {
+        console.error('Error loading repository setting:', error);
+    }
+}
+
+// Handle repository selection change
+async function handleRepositoryChange() {
+    const select = document.getElementById('git-repository-select');
+    const customInput = document.getElementById('custom-repo-input');
+    const value = select.value;
+    
+    if (value === 'custom') {
+        customInput.style.display = 'block';
+        return;
+    }
+    
+    customInput.style.display = 'none';
+    
+    // Save the selected repository
+    try {
+        const response = await fetchWithAuth('/settings/api/updates/repository', {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(value)
+        });
+        
+        if (response && response.ok) {
+            showNotification(t('repository_saved') || 'Репозиторий сохранён', 'success');
+        }
+    } catch (error) {
+        console.error('Error saving repository:', error);
+        showNotification(t('error_saving') || 'Ошибка сохранения', 'error');
+    }
+}
+
+// Save custom repository URL
+async function saveCustomRepository() {
+    const input = document.getElementById('custom-repository-url');
+    const url = input.value.trim();
+    
+    if (!url) {
+        showNotification(t('enter_repository_url') || 'Введите URL репозитория', 'error');
+        return;
+    }
+    
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        showNotification('URL должен начинаться с http:// или https://', 'error');
+        return;
+    }
+    
+    try {
+        const response = await fetchWithAuth('/settings/api/updates/repository', {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(url)
+        });
+        
+        if (response && response.ok) {
+            showNotification(t('repository_saved') || 'Репозиторий сохранён', 'success');
+        }
+    } catch (error) {
+        console.error('Error saving custom repository:', error);
+        showNotification(t('error_saving') || 'Ошибка сохранения', 'error');
     }
 }
 

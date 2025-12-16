@@ -891,6 +891,37 @@ def migrate_user_ssh_key(conn):
     logger.info("✓ User SSH public key column added")
 
 
+# ==================== Migration 13: Git Repository URL Setting ====================
+
+def migrate_git_repository_setting(conn):
+    """Add git repository URL setting to panel_settings"""
+    
+    logger.info("Adding git repository URL setting...")
+    
+    # Check if setting already exists
+    result = conn.execute(text(
+        "SELECT COUNT(*) FROM panel_settings WHERE key = 'git_repository_url'"
+    )).scalar()
+    
+    if result > 0:
+        logger.info("✓ Git repository URL setting already exists")
+        return
+    
+    # Insert default repository setting
+    conn.execute(text("""
+        INSERT INTO panel_settings (key, value, description, created_at, updated_at)
+        VALUES (
+            'git_repository_url',
+            'https://git.tzim.uz/dilshod/pve_manager',
+            'Git repository URL for panel updates',
+            NOW(),
+            NOW()
+        )
+    """))
+    
+    logger.info("✓ Git repository URL setting added")
+
+
 # ==================== Main Migration Function ====================
 
 def run_all_migrations(engine, db_session=None):
@@ -1001,6 +1032,14 @@ def run_all_migrations(engine, db_session=None):
                 conn.commit()
             except Exception as e:
                 logger.warning(f"User SSH key migration: {e}")
+                conn.rollback()
+            
+            # Migration 13: Git Repository URL Setting
+            try:
+                migrate_git_repository_setting(conn)
+                conn.commit()
+            except Exception as e:
+                logger.warning(f"Git repository setting migration: {e}")
                 conn.rollback()
         
         logger.info("=" * 50)

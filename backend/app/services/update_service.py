@@ -131,6 +131,53 @@ def configure_git_for_public_access():
         return False
 
 
+def get_repository_url_from_settings():
+    """Get configured repository URL from database settings"""
+    try:
+        from ..db import SessionLocal
+        from ..models import PanelSettings
+        
+        db = SessionLocal()
+        try:
+            setting = db.query(PanelSettings).filter(PanelSettings.key == "git_repository_url").first()
+            if setting and setting.value:
+                return setting.value
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning(f"Could not get repository URL from settings: {e}")
+    
+    # Default fallback
+    return "https://git.tzim.uz/dilshod/pve_manager"
+
+
+def parse_repo_url(url: str) -> tuple:
+    """Parse repository URL to extract owner and repo name"""
+    # Remove .git suffix
+    url = url.replace(".git", "")
+    
+    # GitHub: https://github.com/owner/repo
+    if "github.com" in url:
+        parts = url.split("github.com/")
+        if len(parts) == 2:
+            owner_repo = parts[1].split("/")
+            if len(owner_repo) >= 2:
+                return owner_repo[0], owner_repo[1], "github"
+    
+    # GitLab or other Git hosting (Gitea, etc.)
+    # https://git.tzim.uz/dilshod/pve_manager
+    parts = url.split("://")
+    if len(parts) == 2:
+        path_parts = parts[1].split("/")
+        if len(path_parts) >= 3:
+            domain = path_parts[0]
+            owner = path_parts[1]
+            repo = path_parts[2]
+            return owner, repo, domain
+    
+    return None, None, None
+
+
 async def check_for_updates() -> Dict[str, Any]:
     """
     Проверить наличие обновлений через GitHub API
@@ -155,37 +202,17 @@ async def check_for_updates() -> Dict[str, Any]:
         result["latest_version"] = current_version
         return result
     
-    # Получаем URL репозитория
-    repo_url = None
-    if result["project_mounted"]:
-        try:
-            ensure_safe_directory()
-            remote_result = subprocess.run(
-                ["git", "remote", "get-url", "origin"],
-                cwd=PROJECT_ROOT,
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if remote_result.returncode == 0:
-                repo_url = remote_result.stdout.strip()
-        except Exception as e:
-            logger.warning(f"Could not get git remote URL: {e}")
+    # Получаем URL репозитория из настроек БД
+    repo_url = get_repository_url_from_settings()
+    result["repository_url"] = repo_url
     
     # Парсим owner/repo из URL
-    owner, repo = None, None
-    if repo_url:
-        # https://github.com/owner/repo.git -> owner/repo
-        if "github.com" in repo_url:
-            parts = repo_url.replace(".git", "").split("github.com/")
-            if len(parts) == 2:
-                owner_repo = parts[1].split("/")
-                if len(owner_repo) >= 2:
-                    owner, repo = owner_repo[0], owner_repo[1]
+    owner, repo, host = parse_repo_url(repo_url)
     
     if not owner or not repo:
-        # Fallback на хардкод для этого проекта
-        owner, repo = "markmorado", "pvemanager"
+        result["error"] = "Could not parse repository URL"
+        result["latest_version"] = current_version
+        return result
     
     try:
         # Подготавливаем заголовки для запроса
@@ -193,14 +220,20 @@ async def check_for_updates() -> Dict[str, Any]:
         if GITHUB_TOKEN:
             headers["Authorization"] = f"token {GITHUB_TOKEN}"
         
-        # Используем GitHub API для получения файлов
+        # Используем raw URL для получения файлов
         async with httpx.AsyncClient(timeout=30.0) as client:
             # Пробуем оба варианта: main и master
             version_url = None
             version_response = None
             
             for branch in ["main", "master"]:
-                test_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/VERSION"
+                # Формируем URL в зависимости от хостинга
+                if host == "github":
+                    test_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/VERSION"
+                else:
+                    # Для Gitea, GitLab и других (формат: https://domain/owner/repo/raw/branch/file)
+                    test_url = f"https://{host}/{owner}/{repo}/raw/branch/{branch}/VERSION"
+                
                 test_response = await client.get(test_url, headers=headers)
                 
                 if test_response.status_code == 200:
@@ -225,7 +258,12 @@ async def check_for_updates() -> Dict[str, Any]:
                 
                 # Получить CHANGELOG.md (используем ту же ветку, что и для VERSION)
                 branch = version_url.split("/")[-2] if version_url else "main"
-                changelog_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/CHANGELOG.md"
+                
+                if host == "github":
+                    changelog_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/CHANGELOG.md"
+                else:
+                    changelog_url = f"https://{host}/{owner}/{repo}/raw/branch/{branch}/CHANGELOG.md"
+                
                 changelog_response = await client.get(changelog_url, headers=headers)
                 
                 if changelog_response.status_code == 200:
@@ -317,6 +355,19 @@ async def perform_update() -> Dict[str, Any]:
     
     # Настраиваем git для публичного доступа
     configure_git_for_public_access()
+    
+    # Получаем URL репозитория из настроек и устанавливаем remote
+    try:
+        repo_url = get_repository_url_from_settings()
+        subprocess.run(
+            ["git", "remote", "set-url", "origin", repo_url],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            timeout=10
+        )
+        logger.info(f"Set git remote to: {repo_url}")
+    except Exception as e:
+        logger.warning(f"Could not set git remote: {e}")
     
     # Сбросить статус
     update_status = {

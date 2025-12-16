@@ -690,6 +690,26 @@ class I18nService:
             "ru": "коммитов позади",
             "en": "commits behind"
         },
+        "git_repository": {
+            "ru": "Git-репозиторий",
+            "en": "Git Repository"
+        },
+        "repository_url": {
+            "ru": "URL репозитория",
+            "en": "Repository URL"
+        },
+        "select_repository": {
+            "ru": "Выберите репозиторий",
+            "en": "Select Repository"
+        },
+        "custom_repository": {
+            "ru": "Другой репозиторий",
+            "en": "Custom Repository"
+        },
+        "repository_saved": {
+            "ru": "Репозиторий сохранён",
+            "en": "Repository saved"
+        },
         "panel_info": {
             "ru": "Информация о панели",
             "en": "Panel Information"

@@ -697,6 +697,47 @@ async def get_version():
     return {"version": get_current_version()}
 
 
+@router.get("/api/updates/repository")
+async def get_repository_url(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(PermissionChecker("settings.manage"))
+):
+    """Get configured git repository URL"""
+    setting = db.query(PanelSettings).filter(PanelSettings.key == "git_repository_url").first()
+    if setting:
+        return {"repository_url": setting.value}
+    return {"repository_url": "https://git.tzim.uz/dilshod/pve_manager"}
+
+
+@router.put("/api/updates/repository")
+async def set_repository_url(
+    repository_url: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(PermissionChecker("settings.manage"))
+):
+    """Set git repository URL for updates"""
+    # Validate URL format
+    if not repository_url.startswith(('http://', 'https://')):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Repository URL must start with http:// or https://"
+        )
+    
+    set_setting(db, "git_repository_url", repository_url, "Git repository URL for updates")
+    
+    LoggingService.log(
+        db=db,
+        level=LoggingService.WARNING,
+        category=LoggingService.SYSTEM,
+        action="update_repository_changed",
+        message=f"Administrator {current_user.username} changed update repository to: {repository_url}",
+        username=current_user.username,
+        user_id=current_user.id
+    )
+    
+    return {"message": "Repository URL updated", "repository_url": repository_url}
+
+
 @router.get("/api/updates/check")
 async def check_updates(
     db: Session = Depends(get_db),
