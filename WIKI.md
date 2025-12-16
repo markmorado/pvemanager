@@ -129,6 +129,8 @@ This section summarizes key API endpoints. All require JWT authentication.
 ### System Updates
 
 - `GET /settings/api/version` — current version
+- `GET /settings/api/updates/repository` — get git repository URL
+- `PUT /settings/api/updates/repository` — set git repository URL
 - `GET /settings/api/updates/check` — check for updates
 - `POST /settings/api/updates/perform` — start update
 
@@ -974,6 +976,31 @@ Access via **Settings → Security**:
 | Refresh interval | Data refresh frequency | 30 sec |
 | Log retention | How many days to keep logs | 30 days |
 | Language | Interface language | English |
+
+### System Updates & Repository Selection
+
+The panel supports automatic updates from a Git repository. You can choose which repository to use:
+
+**Available Options:**
+1. **git.tzim.uz/dilshod/pve_manager** (Default) — Primary repository
+2. **github.com/markmorado/pvemanager** — Mirror repository
+3. **Custom Repository** — Your own fork or mirror
+
+**How to Change Repository:**
+
+1. Go to **Settings** → **System Updates**
+2. In "Git Repository" dropdown, select your preferred repository
+3. For custom repository:
+   - Select "Custom Repository..." from dropdown
+   - Enter full URL (e.g., `https://git.example.com/user/repo`)
+   - Click Save
+
+The repository setting affects:
+- Update checks (version comparison)
+- Changelog retrieval
+- Panel update process
+
+> **Note:** Make sure the selected repository contains valid `VERSION` and `CHANGELOG.md` files.
 
 ### Notification Settings
 
