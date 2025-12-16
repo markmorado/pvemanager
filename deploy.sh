@@ -627,14 +627,22 @@ quick_deploy_standalone() {
     local RANDOM_SECRET_KEY=$(openssl rand -hex 32)
     
     if [ ! -f .env ]; then
-        [ -f .env.example ] && cp .env.example .env || create_default_env
-        sed -i "s/serverpanel_secure_password/${RANDOM_DB_PASSWORD}/g" .env 2>/dev/null || true
+        if [ -f .env.example ]; then
+            cp .env.example .env
+            sed -i "s/serverpanel_secure_password/${RANDOM_DB_PASSWORD}/g" .env 2>/dev/null || true
+        else
+            create_default_env "${RANDOM_DB_PASSWORD}"
+        fi
     fi
     
     if [ ! -f backend/.env ]; then
-        [ -f backend/.env.example ] && cp backend/.env.example backend/.env || create_default_backend_env
-        sed -i "s/serverpanel_secure_password/${RANDOM_DB_PASSWORD}/g" backend/.env 2>/dev/null || true
-        sed -i "s/your-very-secure-secret-key-change-this-in-production-minimum-32-chars/${RANDOM_SECRET_KEY}/g" backend/.env 2>/dev/null || true
+        if [ -f backend/.env.example ]; then
+            cp backend/.env.example backend/.env
+            sed -i "s/serverpanel_secure_password/${RANDOM_DB_PASSWORD}/g" backend/.env 2>/dev/null || true
+            sed -i "s/your-very-secure-secret-key-change-this-in-production-minimum-32-chars/${RANDOM_SECRET_KEY}/g" backend/.env 2>/dev/null || true
+        else
+            create_default_backend_env "${RANDOM_DB_PASSWORD}" "${RANDOM_SECRET_KEY}"
+        fi
     fi
     
     deploy_standalone
@@ -665,14 +673,22 @@ quick_deploy_nginx() {
     local RANDOM_SECRET_KEY=$(openssl rand -hex 32)
     
     if [ ! -f .env ]; then
-        [ -f .env.example ] && cp .env.example .env || create_default_env
-        sed -i "s/serverpanel_secure_password/${RANDOM_DB_PASSWORD}/g" .env 2>/dev/null || true
+        if [ -f .env.example ]; then
+            cp .env.example .env
+            sed -i "s/serverpanel_secure_password/${RANDOM_DB_PASSWORD}/g" .env 2>/dev/null || true
+        else
+            create_default_env "${RANDOM_DB_PASSWORD}"
+        fi
     fi
     
     if [ ! -f backend/.env ]; then
-        [ -f backend/.env.example ] && cp backend/.env.example backend/.env || create_default_backend_env
-        sed -i "s/serverpanel_secure_password/${RANDOM_DB_PASSWORD}/g" backend/.env 2>/dev/null || true
-        sed -i "s/your-very-secure-secret-key-change-this-in-production-minimum-32-chars/${RANDOM_SECRET_KEY}/g" backend/.env 2>/dev/null || true
+        if [ -f backend/.env.example ]; then
+            cp backend/.env.example backend/.env
+            sed -i "s/serverpanel_secure_password/${RANDOM_DB_PASSWORD}/g" backend/.env 2>/dev/null || true
+            sed -i "s/your-very-secure-secret-key-change-this-in-production-minimum-32-chars/${RANDOM_SECRET_KEY}/g" backend/.env 2>/dev/null || true
+        else
+            create_default_backend_env "${RANDOM_DB_PASSWORD}" "${RANDOM_SECRET_KEY}"
+        fi
     fi
     
     deploy_with_nginx "$domain" "$use_ssl" "$email"
@@ -686,25 +702,28 @@ quick_deploy_nginx() {
 }
 
 create_default_env() {
-    cat > .env << 'EOF'
-POSTGRES_PASSWORD=serverpanel_secure_password
+    local db_password="${1:-serverpanel_secure_password}"
+    cat > .env << EOF
+POSTGRES_PASSWORD=${db_password}
 TZ=Asia/Tashkent
 TIMEZONE=Asia/Tashkent
 EOF
 }
 
 create_default_backend_env() {
-    cat > backend/.env << 'EOF'
+    local db_password="${1:-serverpanel_secure_password}"
+    local secret_key="${2:-your-very-secure-secret-key-change-this-in-production-minimum-32-chars}"
+    cat > backend/.env << EOF
 PANEL_NAME=PVEmanager
 DEBUG=false
 LOG_LEVEL=INFO
 DB_HOST=db
 DB_PORT=5432
 DB_USER=serverpanel
-DB_PASSWORD=serverpanel_secure_password
+DB_PASSWORD=${db_password}
 DB_NAME=serverpanel
-DATABASE_URL=postgresql://serverpanel:serverpanel_secure_password@db:5432/serverpanel
-SECRET_KEY=your-very-secure-secret-key-change-this-in-production-minimum-32-chars
+DATABASE_URL=postgresql://serverpanel:${db_password}@db:5432/serverpanel
+SECRET_KEY=${secret_key}
 ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=1440
 SSH_TIMEOUT=10
