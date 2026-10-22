@@ -407,7 +407,7 @@ export default function InstallWizard({ app, open, onOpenChange, resumeInstalled
               {t('appstore.done')}
             </div>
             {installedApp?.url && (
-              <Button variant="outline" className="w-full" onClick={() => window.open(installedApp.url!, '_blank')}>
+              <Button variant="outline" className="w-full" onClick={() => window.open(installedApp.url!, '_blank', 'noopener,noreferrer')}>
                 <ExternalLink className="mr-2 h-4 w-4" />
                 {installedApp.url}
               </Button>

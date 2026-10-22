@@ -70,7 +70,13 @@ class SSHKeyResponse(BaseModel):
 
 
 def _normalize_public_key(value: str) -> str:
-    return value.strip()
+    value = (value or "").strip()
+    # Keys are written verbatim into authorized_keys / cloud-init sshkeys: an
+    # embedded newline would add an extra, unvalidated entry (e.g. with
+    # command=/from= options) next to the one shown in the UI.
+    if "\n" in value or "\r" in value:
+        raise HTTPException(status_code=400, detail="SSH public key must be a single line")
+    return value
 
 
 def _compute_fingerprint(public_key: str) -> Optional[str]:

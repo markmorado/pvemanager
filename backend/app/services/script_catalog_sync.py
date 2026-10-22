@@ -128,9 +128,43 @@ def _parse_community_scripts_metadata(text: str, fallback_name: str) -> dict:
     }
 
 
+# Remote URLs accepted for script sources. Anything else is rejected before it
+# reaches git: a value starting with "-" would be parsed as an option
+# (e.g. --upload-pack=<cmd> runs a command in the panel container), and
+# transports like ext::/file:: give local command execution or file access.
+_REPO_URL_RE = re.compile(r"^(https?|ssh|git)://[^\s]+$|^[\w.-]+@[\w.-]+:[^\s]+$")
+_BRANCH_RE = re.compile(r"^[\w][\w./-]{0,199}$")
+
+
+def validate_repo_url(url: str) -> str:
+    url = (url or "").strip()
+    if not _REPO_URL_RE.match(url):
+        raise ValueError("URL must be https://, ssh://, git:// or user@host:path")
+    return url
+
+
+def validate_branch(branch: str) -> str:
+    branch = (branch or "").strip()
+    if not _BRANCH_RE.match(branch) or ".." in branch:
+        raise ValueError("Invalid branch name")
+    return branch
+
+
+def validate_path_glob(path_glob: str) -> str:
+    """Glob must stay inside the clone: no absolute paths, no '..' segments."""
+    path_glob = (path_glob or "").strip()
+    norm = path_glob.replace("\\", "/")
+    if not norm or norm.startswith("/") or os.path.isabs(path_glob) or ".." in norm.split("/"):
+        raise ValueError("path_glob must be a relative pattern inside the repository")
+    return path_glob
+
+
 def _clone_repo(repo: ScriptGitRepo, dest: str) -> None:
+    url = validate_repo_url(repo.url)
+    branch = validate_branch(repo.branch)
     subprocess.run(
-        ["git", "clone", "--depth", "1", "--branch", repo.branch, repo.url, dest],
+        ["git", "-c", "protocol.ext.allow=never", "-c", "protocol.file.allow=never",
+         "clone", "--depth", "1", "--branch", branch, "--", url, dest],
         check=True, capture_output=True, timeout=120, text=True,
     )
 
@@ -151,15 +185,41 @@ def sync_git_repo(db: Session, repo: ScriptGitRepo) -> dict:
             repo.last_sync_error = "git clone timeout (>120s)"
             db.commit()
             return {"error": repo.last_sync_error, "created": 0, "updated": 0, "skipped": 0, "errors": 1}
+        except ValueError as e:
+            repo.last_sync_error = str(e)
+            db.commit()
+            return {"error": repo.last_sync_error, "created": 0, "updated": 0, "skipped": 0, "errors": 1}
 
-        pattern = os.path.join(tmp_dir, repo.path_glob)
+        try:
+            path_glob = validate_path_glob(repo.path_glob)
+        except ValueError as e:
+            repo.last_sync_error = str(e)
+            db.commit()
+            return {"error": repo.last_sync_error, "created": 0, "updated": 0, "skipped": 0, "errors": 1}
+
+        root = os.path.realpath(tmp_dir)
+        pattern = os.path.join(tmp_dir, path_glob)
         files = _glob.glob(pattern, recursive=True)
 
         is_community_scripts = repo.metadata_format == "community-scripts-ct"
         record_source = "community-scripts" if is_community_scripts else "git"
 
+        # One query instead of one per file.
+        existing_by_slug = {
+            s.slug: s for s in db.query(ScriptCatalog).filter(ScriptCatalog.git_repo_id == repo.id)
+        }
+
         seen_slugs: List[str] = []
         for path in files:
+            # A repository may carry symlinks (e.g. to /proc/self/environ) —
+            # reading through them would import panel secrets into the catalog.
+            if os.path.islink(path) or not os.path.isfile(path):
+                skipped += 1
+                continue
+            real = os.path.realpath(path)
+            if os.path.commonpath([root, real]) != root:
+                skipped += 1
+                continue
             rel_path = os.path.relpath(path, tmp_dir)
             slug = f"git-{repo.id}-{rel_path}".replace("/", "-").replace("\\", "-")
             try:
@@ -175,7 +235,10 @@ def sync_git_repo(db: Session, repo: ScriptGitRepo) -> dict:
             else:
                 meta = _parse_script_metadata(content, fallback_name=os.path.basename(rel_path))
 
-            existing = db.query(ScriptCatalog).filter(ScriptCatalog.slug == slug).first()
+            existing = existing_by_slug.get(slug)
+            if existing is None:
+                # Slug may belong to a record created before git_repo_id was set.
+                existing = db.query(ScriptCatalog).filter(ScriptCatalog.slug == slug).first()
             if existing:
                 existing.name = meta["name"]
                 existing.description = meta["description"]
@@ -195,7 +258,7 @@ def sync_git_repo(db: Session, repo: ScriptGitRepo) -> dict:
                 ))
                 created += 1
             seen_slugs.append(slug)
-            db.commit()
+        db.commit()
 
         # Удалить из этого источника то, что исчезло из репозитория.
         stale = db.query(ScriptCatalog).filter(

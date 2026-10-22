@@ -16,6 +16,7 @@ pct/pvesm/pveam/vzdump). Прогресс отдаётся через callback o
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -75,6 +76,9 @@ rm -f /opt/app/docker-compose.yml
 """
 
 
+_PVE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+
+
 @dataclass
 class GoldenSpec:
     server_id: int
@@ -102,6 +106,11 @@ class GoldenResult:
 
 def build_golden_template(db: Session, spec: GoldenSpec,
                           on_step: StepCb = _noop) -> GoldenResult:
+    # Interpolated into root shell commands below — accept plain PVE ids only.
+    for label, value in (("template_storage", spec.template_storage),
+                         ("rootfs_storage", spec.rootfs_storage), ("bridge", spec.bridge)):
+        if not _PVE_ID_RE.match(value or ""):
+            raise PocError(f"Недопустимое значение {label}: {value!r}")
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == spec.server_id).first()
     if not server:
         raise PocError(f"Proxmox сервер id={spec.server_id} не найден")
@@ -118,7 +127,7 @@ def build_golden_template(db: Session, spec: GoldenSpec,
 
     ssh = _node_ssh(server, client)
     if not ssh.connect():
-        raise PocError("SSH к ноде не установлен (нужен root-доступ к ноде)")
+        raise PocError(ssh.last_error or "SSH к ноде не установлен (нужен root-доступ к ноде)")
 
     vmid: Optional[int] = None
     created_ct = False

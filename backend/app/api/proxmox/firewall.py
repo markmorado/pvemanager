@@ -6,10 +6,14 @@ from loguru import logger
 from ...db import get_db
 from ...models import ProxmoxServer, User
 from ...auth import PermissionChecker
-from ._helpers import _get_proxmox_client
+from ._helpers import _get_proxmox_client, require_vm_access
 from ...proxmox import _run_in_executor
 
-router = APIRouter()
+from ._helpers import enforce_server_visibility  # noqa: E402
+
+# Every {server_id} route: tenants only reach servers assigned to them
+# (directly or through a workspace) — see enforce_server_visibility.
+router = APIRouter(dependencies=[Depends(enforce_server_visibility)])
 
 
 def _resolve_client(db: Session, server_id: int):
@@ -595,6 +599,7 @@ async def get_guest_firewall_options(
     db: Session = Depends(get_db),
     current_user: User = Depends(PermissionChecker("firewall:view")),
 ):
+    require_vm_access(db, current_user, server_id, vmid)
     client = _resolve_client(db, server_id)
     _norm_type(vm_type)
     try:
@@ -615,6 +620,7 @@ async def update_guest_firewall_options(
     db: Session = Depends(get_db),
     current_user: User = Depends(PermissionChecker("firewall:manage")),
 ):
+    require_vm_access(db, current_user, server_id, vmid)
     client = _resolve_client(db, server_id)
     _norm_type(vm_type)
     data = await request.json()
@@ -637,6 +643,7 @@ async def get_guest_firewall_rules(
     db: Session = Depends(get_db),
     current_user: User = Depends(PermissionChecker("firewall:view")),
 ):
+    require_vm_access(db, current_user, server_id, vmid)
     client = _resolve_client(db, server_id)
     _norm_type(vm_type)
     try:
@@ -657,6 +664,7 @@ async def create_guest_firewall_rule(
     db: Session = Depends(get_db),
     current_user: User = Depends(PermissionChecker("firewall:manage")),
 ):
+    require_vm_access(db, current_user, server_id, vmid)
     client = _resolve_client(db, server_id)
     _norm_type(vm_type)
     data = await request.json()
@@ -681,6 +689,7 @@ async def update_guest_firewall_rule(
     db: Session = Depends(get_db),
     current_user: User = Depends(PermissionChecker("firewall:manage")),
 ):
+    require_vm_access(db, current_user, server_id, vmid)
     client = _resolve_client(db, server_id)
     _norm_type(vm_type)
     data = await request.json()
@@ -704,6 +713,7 @@ async def delete_guest_firewall_rule(
     db: Session = Depends(get_db),
     current_user: User = Depends(PermissionChecker("firewall:manage")),
 ):
+    require_vm_access(db, current_user, server_id, vmid)
     client = _resolve_client(db, server_id)
     _norm_type(vm_type)
     try:
@@ -727,6 +737,7 @@ async def get_guest_firewall_log(
     db: Session = Depends(get_db),
     current_user: User = Depends(PermissionChecker("firewall:view")),
 ):
+    require_vm_access(db, current_user, server_id, vmid)
     client = _resolve_client(db, server_id)
     _norm_type(vm_type)
     try:

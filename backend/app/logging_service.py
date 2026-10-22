@@ -39,7 +39,11 @@ class LoggingService:
     DOCKER = "docker"
     
     # Sensitive fields to mask in logs
-    SENSITIVE_FIELDS = {'password', 'token', 'secret', 'api_key', 'apikey', 'access_token', 'refresh_token'}
+    SENSITIVE_FIELDS = {'password', 'token', 'secret', 'api_key', 'apikey', 'access_token', 'refresh_token',
+                        'private_key', 'credential', 'passphrase'}
+    # Exact key names that are secrets but too generic for substring matching
+    # ("code" is the 2FA / backup code on login and 2FA endpoints).
+    SENSITIVE_EXACT_FIELDS = {'code', 'otp', 'totp'}
     
     @staticmethod
     def generate_request_id() -> str:
@@ -55,8 +59,9 @@ class LoggingService:
         if isinstance(data, dict):
             masked = {}
             for key, value in data.items():
-                key_lower = key.lower()
-                if any(sensitive in key_lower for sensitive in LoggingService.SENSITIVE_FIELDS):
+                key_lower = str(key).lower()
+                if key_lower in LoggingService.SENSITIVE_EXACT_FIELDS or any(
+                        sensitive in key_lower for sensitive in LoggingService.SENSITIVE_FIELDS):
                     masked[key] = "***MASKED***"
                 else:
                     masked[key] = LoggingService.mask_sensitive_data(value, depth + 1)

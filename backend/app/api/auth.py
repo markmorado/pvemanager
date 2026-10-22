@@ -1,4 +1,5 @@
 import hashlib
+import html
 import secrets
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Form, BackgroundTasks
@@ -25,6 +26,7 @@ from ..auth import (
     get_current_active_admin,
     get_client_ip,
     get_current_session_token,
+    issue_ws_ticket,
     security,
 )
 from fastapi.security import HTTPAuthorizationCredentials
@@ -33,6 +35,14 @@ from ..logging_service import LoggingService
 from ..services.security_service import SecurityService
 
 router = APIRouter()
+
+_DUMMY_HASH: list = []
+
+
+def _dummy_password_hash() -> str:
+    if not _DUMMY_HASH:
+        _DUMMY_HASH.append(get_password_hash(secrets.token_urlsafe(16)))
+    return _DUMMY_HASH[0]
 
 
 @router.post("/api/auth/login", response_model=Token)
@@ -73,6 +83,9 @@ def login(login_data: LoginRequest, request: Request, db: Session = Depends(get_
     user = db.query(User).filter(User.username == login_data.username).first()
     
     if not user:
+        # Spend the same bcrypt time as a real check, so response timing does not
+        # reveal which usernames exist.
+        verify_password(login_data.password, _dummy_password_hash())
         SecurityService.record_login_attempt(
             db, client_ip, login_data.username, False, "User not found", user_agent
         )
@@ -172,7 +185,7 @@ def login(login_data: LoginRequest, request: Request, db: Session = Depends(get_
             return {"two_factor_required": True, "token_type": "bearer"}
 
         from ..services import two_factor_service as tfa
-        code_ok = tfa.verify_totp(user.two_factor_secret, login_data.code)
+        code_ok = tfa.verify_totp(user.two_factor_secret, login_data.code, replay_key=user.id)
         if not code_ok:
             backup = list(user.two_factor_backup_codes or [])
             if tfa.consume_backup_code(login_data.code, backup):
@@ -184,6 +197,14 @@ def login(login_data: LoginRequest, request: Request, db: Session = Depends(get_
             SecurityService.record_login_attempt(
                 db, client_ip, login_data.username, False, "Invalid 2FA code", user_agent
             )
+            # Count it against the account like a wrong password: with the
+            # password known, only the per-IP block limited guessing the
+            # 6-digit code, and it does not stop an attacker using many IPs.
+            if SecurityService.increment_failed_attempts(db, user):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Account locked due to too many failed attempts",
+                )
             LoggingService.log_auth(
                 db=db,
                 action="login_failed",
@@ -254,13 +275,21 @@ def login(login_data: LoginRequest, request: Request, db: Session = Depends(get_
 def refresh_token(
     current_user: User = Depends(get_current_user),
     session_token: str = Depends(get_current_session_token),
+    credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db)
 ):
     """Refresh JWT access token without re-login (extends session)"""
     session_timeout = SecurityService.get_setting_int(db, "session_timeout_minutes", 60)
     access_token_expires = timedelta(minutes=session_timeout)
+    claims = {"sub": current_user.username}
+    # Keep the impersonation link: dropping it stranded the admin in the
+    # user's account (no way back via stop-impersonate) and unmarked the
+    # session as impersonated in the audit trail.
+    impersonator = decode_access_token(credentials.credentials).get("impersonator")
+    if impersonator:
+        claims["impersonator"] = impersonator
     new_token = create_access_token(
-        data={"sub": current_user.username},
+        data=claims,
         session_token=session_token,
         expires_delta=access_token_expires
     )
@@ -268,6 +297,19 @@ def refresh_token(
         "access_token": new_token,
         "token_type": "bearer"
     }
+
+
+@router.post("/api/auth/ws-ticket")
+def create_ws_ticket(
+    current_user: User = Depends(get_current_user),
+    session_token: str = Depends(get_current_session_token),
+):
+    """Single-use, short-lived ticket for one WebSocket handshake (?ticket=).
+
+    Browsers cannot send headers on WebSocket requests; this keeps the session
+    JWT out of WebSocket URLs.
+    """
+    return {"ticket": issue_ws_ticket(current_user.id, session_token)}
 
 
 @router.post("/api/auth/logout")
@@ -385,6 +427,17 @@ def stop_impersonating(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Not currently impersonating"
         )
 
+    # The impersonation token is exchanged for a fresh admin token, so it must
+    # still be backed by a live session — otherwise a leaked token keeps being
+    # redeemable for admin access after logout/termination until its JWT expiry.
+    impersonation_session = payload.get("session")
+    if not impersonation_session or not SecurityService.validate_session(db, impersonation_session):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session expired or invalid. Please login again.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     admin = db.query(User).filter(User.username == impersonator_username).first()
     if not admin or not admin.is_active or not _user_is_admin(admin):
         raise HTTPException(
@@ -393,9 +446,7 @@ def stop_impersonating(
         )
 
     # Terminate the impersonation session so it does not linger.
-    impersonation_session = payload.get("session")
-    if impersonation_session:
-        SecurityService.terminate_session(db, impersonation_session)
+    SecurityService.terminate_session(db, impersonation_session)
 
     client_ip = get_client_ip(request)
     user_agent = request.headers.get("user-agent", "")[:500]
@@ -556,7 +607,7 @@ def two_factor_disable(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Incorrect password")
 
     if current_user.two_factor_enabled:
-        code_ok = tfa.verify_totp(current_user.two_factor_secret, data.code or "")
+        code_ok = tfa.verify_totp(current_user.two_factor_secret, data.code or "", replay_key=current_user.id)
         if not code_ok:
             backup = list(current_user.two_factor_backup_codes or [])
             code_ok = tfa.consume_backup_code(data.code or "", backup)
@@ -713,6 +764,7 @@ def change_password(
     new_password: str = Form(...),
     request: Request = None,
     current_user: User = Depends(get_current_user),
+    session_token: str = Depends(get_current_session_token),
     db: Session = Depends(get_db)
 ):
     """
@@ -750,6 +802,10 @@ def change_password(
     current_user.last_password_change = utcnow()
     current_user.require_password_change = False
     db.commit()
+
+    # A changed password must lock out whoever may have used the old one:
+    # end every other session, keep the one that made the change.
+    SecurityService.terminate_all_user_sessions(db, current_user.id, except_token=session_token)
     
     LoggingService.log_auth(
         db=db,
@@ -772,6 +828,27 @@ def change_password(
 _FORGOT_PASSWORD_GENERIC = {
     "message": "If an account with that email exists, a password reset link has been sent."
 }
+
+
+def _reset_link_origin(request: Request) -> str:
+    """Origin the password-reset link points to.
+
+    The request's Origin/Host headers are attacker-controlled: anyone can ask
+    for a reset of the victim's address with ``Origin: https://evil.example``
+    and the emailed link would hand the one-time token to that host (reset
+    poisoning). Prefer the configured PANEL_URL, then a single explicit
+    CORS origin; the request origin is only a last-resort fallback.
+    """
+    if settings.PANEL_URL:
+        return settings.PANEL_URL.rstrip("/")
+    cors = [o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()]
+    if len(cors) == 1 and cors[0] != "*":
+        return cors[0].rstrip("/")
+    logger.warning(
+        "PANEL_URL is not set: password-reset links are built from request headers. "
+        "Set PANEL_URL (e.g. https://panel.example.com) to prevent reset-link poisoning."
+    )
+    return (request.headers.get("origin") or str(request.base_url)).rstrip("/")
 
 
 def _hash_reset_token(raw_token: str) -> str:
@@ -813,16 +890,18 @@ async def _send_reset_email(to_email: str, display_name: str, lang: str, link: s
             btn = "Reset password"
             note = f"This link is valid for {expire_minutes} minutes. If you didn't request a reset, ignore this email."
 
+        # full_name is user-editable — escape everything interpolated into HTML.
+        esc = html.escape
         html_body = f"""
         <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;max-width:480px;margin:0 auto;color:#1a1a1a">
-          <h2 style="font-size:20px;margin:0 0 16px">{panel}</h2>
-          <p style="font-size:15px;line-height:1.5;margin:0 0 20px">{body.splitlines()[0]}</p>
+          <h2 style="font-size:20px;margin:0 0 16px">{esc(panel)}</h2>
+          <p style="font-size:15px;line-height:1.5;margin:0 0 20px">{esc(body.splitlines()[0])}</p>
           <p style="margin:0 0 24px">
-            <a href="{link}" style="display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;
+            <a href="{esc(link)}" style="display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;
                padding:10px 20px;border-radius:8px;font-size:15px;font-weight:600">{btn}</a>
           </p>
           <p style="font-size:13px;color:#666;line-height:1.5;margin:0 0 8px">{note}</p>
-          <p style="font-size:12px;color:#999;word-break:break-all;margin:0">{link}</p>
+          <p style="font-size:12px;color:#999;word-break:break-all;margin:0">{esc(link)}</p>
         </div>
         """
 
@@ -894,9 +973,7 @@ def forgot_password(
     db.add(reset)
     db.commit()
 
-    # Build the reset link from the request origin (SPA and API share an origin)
-    origin = request.headers.get("origin") or str(request.base_url).rstrip("/")
-    link = f"{origin}/reset-password?token={raw_token}"
+    link = f"{_reset_link_origin(request)}/reset-password?token={raw_token}"
 
     background.add_task(
         _send_reset_email,

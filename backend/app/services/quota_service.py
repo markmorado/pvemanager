@@ -46,6 +46,43 @@ def get_user_usage(db: Session, user_id: int) -> Dict[str, int]:
     }
 
 
+# DeployTask kinds that end with a new instance (LXC creation uses the default).
+_CREATING_KINDS = ('deploy', 'clone', 'vm_iso')
+
+
+def _in_flight_creations(db: Session, owner_id: int) -> int:
+    """Queued/running creations not yet in vm_instances.
+
+    The instance row appears only after the clone/create finishes (a minute
+    or more), so parallel requests all passed a max_instances check against
+    the same usage. Tasks whose guest is already cached are not counted twice.
+    """
+    from ..models import DeployTask, InstalledApp
+    rows = (
+        db.query(DeployTask.vmid)
+        .filter(
+            DeployTask.user_id == owner_id,
+            DeployTask.kind.in_(_CREATING_KINDS),
+            DeployTask.status.in_(('pending', 'running')),
+        )
+        .all()
+    )
+    # App Store installs: the LXC is created by a background job.
+    rows += (
+        db.query(InstalledApp.vmid)
+        .filter(InstalledApp.owner_id == owner_id, InstalledApp.status == 'installing')
+        .all()
+    )
+    if not rows:
+        return 0
+    cached = {
+        v for (v,) in db.query(VMInstance.vmid).filter(
+            VMInstance.owner_id == owner_id, VMInstance.deleted_at.is_(None),
+        )
+    }
+    return sum(1 for (vmid,) in rows if vmid is None or vmid not in cached)
+
+
 def check_quota(
     db: Session,
     owner_id: int,
@@ -63,9 +100,10 @@ def check_quota(
         return
 
     usage = get_user_usage(db, owner_id)
+    in_flight = _in_flight_creations(db, owner_id)
 
     checks = [
-        (quota.max_instances, usage["instances"] + 1, "инстансов", "instances"),
+        (quota.max_instances, usage["instances"] + in_flight + 1, "инстансов", "instances"),
         (quota.max_cores, usage["cores"] + (add_cores or 0), "vCPU (ядер)", "vCPU"),
         (quota.max_memory_mb, usage["memory_mb"] + (add_memory_mb or 0), "MB памяти", "MB of RAM"),
         (quota.max_disk_gb, usage["disk_gb"] + (add_disk_gb or 0), "GB диска", "GB of disk"),

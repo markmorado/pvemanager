@@ -11,6 +11,8 @@ on:
     paths:
       - "backend/**"
       - ".github/workflows/backend-tests.yml"
+  # Reused by deploy.yml so production is only updated from a green build.
+  workflow_call:
 
 jobs:
   pytest:
@@ -50,7 +52,8 @@ jobs:
 
       - name: Upload coverage artifact
         if: always()
-        uses: actions/upload-artifact@v3
+        # v3 of the artifact actions was shut down by GitHub (jobs using it fail).
+        uses: actions/upload-artifact@v4
         with:
           name: backend-coverage-${{ matrix.python-version }}
           path: backend/coverage.xml

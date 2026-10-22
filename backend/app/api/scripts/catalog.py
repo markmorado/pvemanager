@@ -18,13 +18,13 @@ import re
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from ...auth import PermissionChecker
 from ...db import get_db
 from ...models import ScriptCatalog, ScriptGitRepo, User
-from ...services import script_catalog_sync
+from ...services import script_catalog_sync, script_engine
 
 router = APIRouter()
 
@@ -38,6 +38,20 @@ class ParamField(BaseModel):
     required: bool = False
     default: Optional[str] = None
 
+    @field_validator("name")
+    @classmethod
+    def _check_name(cls, v: str) -> str:
+        # Parameters become `export NAME=...` lines in the rendered script.
+        if not script_engine.is_valid_param_name(v):
+            raise ValueError("Parameter name must match [A-Za-z_][A-Za-z0-9_]*")
+        return v
+
+
+def _check_interpreter(v: Optional[str]) -> Optional[str]:
+    if v is not None and not script_engine.is_valid_interpreter(v):
+        raise ValueError("Interpreter must be an absolute path like /bin/bash")
+    return v
+
 
 class ScriptCreateRequest(BaseModel):
     name: str
@@ -49,6 +63,8 @@ class ScriptCreateRequest(BaseModel):
     content: str
     params_schema: List[ParamField] = []
 
+    _interpreter = field_validator("interpreter")(_check_interpreter)
+
 
 class ScriptUpdateRequest(BaseModel):
     name: Optional[str] = None
@@ -59,6 +75,8 @@ class ScriptUpdateRequest(BaseModel):
     content: Optional[str] = None
     params_schema: Optional[List[ParamField]] = None
 
+    _interpreter = field_validator("interpreter")(_check_interpreter)
+
 
 class RepoCreateRequest(BaseModel):
     url: str
@@ -66,6 +84,21 @@ class RepoCreateRequest(BaseModel):
     path_glob: str = "**/*.sh"
     metadata_format: str = Field(default="header-comment", pattern="^(header-comment|community-scripts-ct)$")
     enabled: bool = True
+
+    @field_validator("url")
+    @classmethod
+    def _check_url(cls, v: str) -> str:
+        return script_catalog_sync.validate_repo_url(v)
+
+    @field_validator("branch")
+    @classmethod
+    def _check_branch(cls, v: str) -> str:
+        return script_catalog_sync.validate_branch(v)
+
+    @field_validator("path_glob")
+    @classmethod
+    def _check_glob(cls, v: str) -> str:
+        return script_catalog_sync.validate_path_glob(v)
 
 
 @router.get("/api/scripts")

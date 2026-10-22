@@ -20,7 +20,11 @@ from ._helpers import (check_vm_access, require_vm_access, _get_proxmox_client,
                         get_next_vmid, archive_and_delete_snapshots,
                         save_vm_instance, get_vm_instance, soft_delete_vm_instance)
 
-router = APIRouter()
+from ._helpers import enforce_server_visibility  # noqa: E402
+
+# Every {server_id} route: tenants only reach servers assigned to them
+# (directly or through a workspace) — see enforce_server_visibility.
+router = APIRouter(dependencies=[Depends(enforce_server_visibility)])
 
 
 # ==================== Snapshots ====================
@@ -48,6 +52,8 @@ def get_vm_snapshots(
         # Filter out 'current' pseudo-snapshot if present
         snapshots = [s for s in snapshots if s.get('name') != 'current']
         return JSONResponse(content={"snapshots": snapshots})
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting VM {vmid} snapshots: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -225,6 +231,8 @@ def get_container_snapshots(
         # Filter out 'current' pseudo-snapshot if present
         snapshots = [s for s in snapshots if s.get('name') != 'current']
         return JSONResponse(content={"snapshots": snapshots})
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting container {vmid} snapshots: {e}")
         raise HTTPException(status_code=500, detail=str(e))

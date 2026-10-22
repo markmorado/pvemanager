@@ -1,4 +1,6 @@
 from typing import List, Dict, Optional, Union, Any
+import re
+import shlex
 import time
 import urllib3
 from loguru import logger
@@ -295,9 +297,12 @@ class ClusterMixin:
             )
             try:
                 if not ssh.connect():
-                    return {'success': False, 'error': 'SSH connection failed'}
+                    return {'success': False, 'error': ssh.last_error or 'SSH connection failed'}
     
-                output, exit_code = ssh.execute(f"pvecm delnode {node_name}", return_exit_code=True)
+                # node_name comes from the API request and runs in a root shell.
+                if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]{0,62}", node_name or ""):
+                    return {'success': False, 'error': f'Invalid node name: {node_name!r}'}
+                output, exit_code = ssh.execute(f"pvecm delnode {shlex.quote(node_name)}", return_exit_code=True)
                 ssh.close()
     
                 # "Could not kill node (error = CS_ERR_NOT_EXIST)" — ignorable per Proxmox docs

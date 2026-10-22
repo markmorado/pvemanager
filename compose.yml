@@ -41,7 +41,10 @@ services:
     pull_policy: build
     container_name: pvemanager-app
     ports:
-      - "8000:8000"
+      # Loopback only: the UI reaches the API through the frontend's nginx on
+      # the compose network. Published on all interfaces, the API bypassed it,
+      # and a LAN client (a private peer) could set X-Forwarded-For freely.
+      - "127.0.0.1:8000:8000"
     env_file:
       - path: ./backend/.env
         required: false

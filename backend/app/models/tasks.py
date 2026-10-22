@@ -99,7 +99,9 @@ class ProxmoxTask(Base):
             'description': self.description,
             'status': self.status,
             'exit_status': self.exit_status,
-            'log_text': self.log_text,
+            # log_text is deliberately left out: this dict is sent in task lists
+            # (polled every few seconds) and on every WS task_update tick. The
+            # log is served on demand by /api/proxmox-tasks/{id}/log.
             'progress': self.progress,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'completed_at': self.completed_at.isoformat() if self.completed_at else None,

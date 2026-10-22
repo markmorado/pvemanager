@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router';
 import { useTranslation } from 'react-i18next';
-import { Server, Monitor, Container, Plus, Pencil, Trash2, Wifi, Loader2, Clock, Layers, LayoutGrid, ExternalLink, KeyRound } from 'lucide-react';
+import { Server, Monitor, Container, Plus, Pencil, Trash2, Wifi, Loader2, Clock, Layers, LayoutGrid, ExternalLink, KeyRound, FingerprintPattern } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from '@/components/ui/dialog';
-import { useServers, useCreateServer, useUpdateServer, useDeleteServer, useTestServerCredentials, useProvisionServerToken, useNodes } from '@/hooks/use-nodes';
+import { useServers, useCreateServer, useUpdateServer, useDeleteServer, useTestServerCredentials, useProvisionServerToken, useResetSshHostKey, useNodes } from '@/hooks/use-nodes';
 import { useVirtualMachines } from '@/hooks/use-instances';
 import type { ProxmoxServer, ProxmoxServerCreate } from '@/types';
 import { formatUptime } from '@/lib/format';
@@ -308,6 +308,7 @@ export default function NodesPage() {
   const updateServer = useUpdateServer();
   const deleteServer = useDeleteServer();
   const provisionToken = useProvisionServerToken();
+  const resetHostKey = useResetSshHostKey();
 
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -344,6 +345,14 @@ export default function NodesPage() {
     if (!await confirm(t('nodes.switch_to_token_confirm', { name }), { title: t('nodes.switch_to_token') })) return;
     provisionToken.mutate(id, {
       onSuccess: (res) => toast.success(t('nodes.switch_to_token_ok', { token: res.token_name })),
+      onError: (err) => toast.error(err.message),
+    });
+  };
+
+  const handleResetHostKey = async (id: number, name: string) => {
+    if (!await confirm(t('nodes.reset_ssh_host_key_confirm', { name }), { title: t('nodes.reset_ssh_host_key') })) return;
+    resetHostKey.mutate(id, {
+      onSuccess: (res) => toast.success(t('nodes.reset_ssh_host_key_ok', { count: res.removed })),
       onError: (err) => toast.error(err.message),
     });
   };
@@ -403,6 +412,16 @@ export default function NodesPage() {
                         <KeyRound className="h-3.5 w-3.5" />
                       </Button>
                     )}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      title={t('nodes.reset_ssh_host_key')}
+                      disabled={resetHostKey.isPending}
+                      onClick={() => handleResetHostKey(srv.id, srv.name)}
+                    >
+                      <FingerprintPattern className="h-3.5 w-3.5" />
+                    </Button>
                     <Button
                       variant="ghost"
                       size="icon"

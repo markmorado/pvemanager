@@ -198,6 +198,7 @@ def mock_proxmox():
     
     mock_client_instance = MagicMock()
     mock_client_instance.is_connected.return_value = True
+    mock_client_instance.check_connection.return_value = (True, None, None)
     mock_client_instance.get_next_vmid.return_value = 101
     mock_client_instance.get_nodes.return_value = [{"node": "pve1", "uptime": 99999}]
     mock_client_instance.get_all_resources.return_value = {

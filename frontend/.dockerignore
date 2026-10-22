@@ -11,3 +11,4 @@ dist
 *.md
 coverage
 .DS_Store
+graphify-out

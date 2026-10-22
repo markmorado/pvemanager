@@ -148,7 +148,9 @@ function ClusterOverviewCard({ serverList, nodeStats, allVMs, memPercent, diskPe
 // ==================== Tasks Today Card ====================
 function TasksTodayCard() {
   const { t } = useTranslation()
-  const { data: tasksData } = useAllTasks({ limit: 500 })
+  // Up to 500 rows from five tables just to count today's tasks: the live
+  // "running" number comes from useActiveTaskCount, so refresh this slowly.
+  const { data: tasksData } = useAllTasks({ limit: 500 }, { refetchInterval: 30_000 })
   const { data: activeData } = useActiveTaskCount()
 
   const startOfDay = new Date()

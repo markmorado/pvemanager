@@ -9,7 +9,11 @@ from ...auth import PermissionChecker
 from ._helpers import _get_proxmox_client
 from ...proxmox import _run_in_executor
 
-router = APIRouter()
+from ._helpers import enforce_server_visibility  # noqa: E402
+
+# Every {server_id} route: tenants only reach servers assigned to them
+# (directly or through a workspace) — see enforce_server_visibility.
+router = APIRouter(dependencies=[Depends(enforce_server_visibility)])
 
 
 def _resolve_client(db: Session, server_id: int):

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Request, HTTPException, Query, Form, status, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 from sqlalchemy import func
 from loguru import logger
 from typing import List
@@ -22,7 +22,11 @@ from ._helpers import (check_vm_access, require_vm_access, _get_proxmox_client,
                         get_next_vmid, archive_and_delete_snapshots,
                         save_vm_instance, get_vm_instance, soft_delete_vm_instance)
 
-router = APIRouter()
+from ._helpers import enforce_server_visibility  # noqa: E402
+
+# Every {server_id} route: tenants only reach servers assigned to them
+# (directly or through a workspace) — see enforce_server_visibility.
+router = APIRouter(dependencies=[Depends(enforce_server_visibility)])
 
 
 # ==================== ProxmoxTaskService ====================
@@ -79,6 +83,26 @@ class ProxmoxTaskService:
         )
 
 
+def _require_upid_access(db: Session, user: User, server_id: int, upid: str) -> None:
+    """Tenants may only read tasks they started or that target their own guests.
+
+    Task logs carry node paths, storage names and other tenants' guest details;
+    vm:view (granted to every standard user) must not open all of them.
+    """
+    from ._helpers import can_view_all_instances, get_owned_vmids
+    if can_view_all_instances(user):
+        return
+    if db.query(ProxmoxTask.id).filter(
+        ProxmoxTask.upid == upid, ProxmoxTask.user_id == user.id
+    ).first():
+        return
+    # UPID:<node>:<pid>:<pstart>:<starttime>:<type>:<id>:<user>:
+    parts = upid.split(":")
+    if len(parts) >= 7 and parts[6].isdigit() and int(parts[6]) in get_owned_vmids(db, user, server_id):
+        return
+    raise HTTPException(status_code=403, detail="You do not have access to this task")
+
+
 @router.get("/api/{server_id}/task/{upid}/status")
 def get_task_status(
     server_id: int,
@@ -91,6 +115,7 @@ def get_task_status(
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Proxmox server not found")
+    _require_upid_access(db, current_user, server_id, upid)
     
     try:
         client = _get_proxmox_client(server)
@@ -121,6 +146,7 @@ def get_task_log(
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Proxmox server not found")
+    _require_upid_access(db, current_user, server_id, upid)
     
     try:
         client = _get_proxmox_client(server)
@@ -209,11 +235,14 @@ def get_all_tasks(
     Return both TaskQueue (bulk ops) and ProxmoxTask (UPID) records for the
     current user, merged and sorted by created_at descending.
     """
+    # Large text columns are not part of the list payload — don't load them.
     bulk_q = db.query(TaskQueue).filter(TaskQueue.user_id == current_user.id)
-    proxmox_q = db.query(ProxmoxTask).filter(ProxmoxTask.user_id == current_user.id)
+    proxmox_q = (db.query(ProxmoxTask).options(defer(ProxmoxTask.log_text))
+                 .filter(ProxmoxTask.user_id == current_user.id))
     deploy_q = db.query(DeployTask).filter(DeployTask.user_id == current_user.id)
     appstore_q = db.query(AppOperation).filter(AppOperation.user_id == current_user.id)
-    script_q = db.query(ScriptExecution).filter(ScriptExecution.user_id == current_user.id)
+    script_q = (db.query(ScriptExecution).options(defer(ScriptExecution.output))
+                .filter(ScriptExecution.user_id == current_user.id))
 
     if status_filter:
         # Normalise statuses: proxmox uses running/completed/failed; bulk uses the same + pending/cancelled

@@ -111,34 +111,25 @@ def query_instance_metrics(db, server_id, vmid, from_ts, to_ts, nic="all"):
     start = datetime.fromtimestamp(from_ts, tz=_tz.utc)
     end = datetime.fromtimestamp(to_ts, tz=_tz.utc)
 
-    base = (db.query(InstanceMetric)
-              .filter(InstanceMetric.server_id == server_id,
-                      InstanceMetric.vmid == vmid,
-                      InstanceMetric.ts >= start, InstanceMetric.ts <= end)
-              .order_by(InstanceMetric.ts.asc()).all())
+    # Plain column tuples, not ORM entities: a month window is tens of
+    # thousands of rows, and entity construction dominated the request.
+    M = InstanceMetric
+    base = (db.query(M.ts, M.cpu, M.mem, M.maxmem, M.netin_rate, M.netout_rate,
+                     M.diskread_rate, M.diskwrite_rate, M.disk_used, M.disk_total,
+                     M.iops_read, M.iops_write)
+              .filter(M.server_id == server_id, M.vmid == vmid,
+                      M.ts >= start, M.ts <= end)
+              .order_by(M.ts.asc()).all())
 
     # Distinct NICs seen in the window (for the selector).
-    if nic == "all":
-        # Only fetch distinct dev names — avoids loading all NIC rows.
-        dev_rows = (db.query(InstanceNicMetric.dev)
-                      .filter(InstanceNicMetric.server_id == server_id,
-                              InstanceNicMetric.vmid == vmid,
-                              InstanceNicMetric.ts >= start, InstanceNicMetric.ts <= end)
-                      .distinct().all())
-        nics = sorted({r.dev for r in dev_rows})
-        nic_by_ts: dict[int, tuple] = {}
-    else:
-        # Load full NIC rows for the requested dev to build per-ts override map.
-        nic_rows = (db.query(InstanceNicMetric)
-                      .filter(InstanceNicMetric.server_id == server_id,
-                              InstanceNicMetric.vmid == vmid,
-                              InstanceNicMetric.ts >= start, InstanceNicMetric.ts <= end)
-                      .order_by(InstanceNicMetric.ts.asc()).all())
-        nics = sorted({r.dev for r in nic_rows})
-        nic_by_ts = {}
-        for r in nic_rows:
-            if r.dev == nic:
-                nic_by_ts[_to_ts(r.ts)] = (r.in_rate, r.out_rate)
+    N = InstanceNicMetric
+    nic_window = (N.server_id == server_id, N.vmid == vmid, N.ts >= start, N.ts <= end)
+    nics = sorted({r.dev for r in db.query(N.dev).filter(*nic_window).distinct().all()})
+    nic_by_ts: dict[int, tuple] = {}
+    if nic != "all":
+        # Per-ts override map for the requested dev only.
+        for r in db.query(N.ts, N.in_rate, N.out_rate).filter(*nic_window, N.dev == nic).all():
+            nic_by_ts[_to_ts(r.ts)] = (r.in_rate, r.out_rate)
 
     rows = []
     for m in base:

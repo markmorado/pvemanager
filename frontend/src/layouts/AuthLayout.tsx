@@ -2,8 +2,10 @@ import { Outlet } from 'react-router';
 import { Monitor } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useThemeStore } from '@/stores/theme-store';
-import authBgDark from '@/assets/auth/auth-bg-dark.png';
-import authBgLight from '@/assets/auth/auth-bg-light.png';
+// WebP (~20 KB each) instead of the original 1.2 MB PNGs — the login page is
+// the first thing every user loads.
+import authBgDark from '@/assets/auth/auth-bg-dark.webp';
+import authBgLight from '@/assets/auth/auth-bg-light.webp';
 
 function LanguageSwitcher() {
   const { i18n } = useTranslation();
@@ -35,6 +37,7 @@ export default function AuthLayout() {
           src={authBg}
           alt=""
           aria-hidden="true"
+          decoding="async"
           className="absolute inset-0 h-full w-full object-cover"
         />
         {/* Плавный бесшовный переход к панели формы (в обеих темах) */}

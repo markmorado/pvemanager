@@ -6,9 +6,12 @@ etc. Backup (recovery) codes are single-use and stored only as SHA-256 hashes.
 """
 
 import hashlib
+import hmac
 import io
 import secrets
-from typing import List
+import threading
+import time
+from typing import Dict, List, Optional
 
 import pyotp
 import qrcode
@@ -30,15 +33,40 @@ def build_otpauth_uri(secret: str, username: str, issuer: str = "PVEmanager") ->
     return pyotp.TOTP(secret).provisioning_uri(name=username, issuer_name=issuer)
 
 
-def verify_totp(secret: str, code: str) -> bool:
-    """Verify a 6-digit TOTP code against the secret."""
+# Last accepted time step per user. RFC 6238 §5.2: a code must not be accepted
+# twice — otherwise a shoulder-surfed or phished code stays usable for the
+# whole ±1-step window (~90 s). Kept in memory: the panel runs one worker.
+_last_used_step: Dict[object, int] = {}
+_last_used_lock = threading.Lock()
+
+
+def verify_totp(secret: str, code: str, *, replay_key: Optional[object] = None) -> bool:
+    """Verify a 6-digit TOTP code against the secret.
+
+    With ``replay_key`` (e.g. the user id) a code is accepted only once, and
+    never for a time step older than the last accepted one.
+    """
     if not secret or not code:
         return False
     code = code.strip().replace(" ", "")
     if not code.isdigit():
         return False
     try:
-        return pyotp.TOTP(secret).verify(code, valid_window=TOTP_VALID_WINDOW)
+        totp = pyotp.TOTP(secret)
+        now = time.time()
+        for offset in range(-TOTP_VALID_WINDOW, TOTP_VALID_WINDOW + 1):
+            at = now + offset * totp.interval
+            if not hmac.compare_digest(totp.at(at), code):
+                continue
+            if replay_key is None:
+                return True
+            step = int(at // totp.interval)
+            with _last_used_lock:
+                if step <= _last_used_step.get(replay_key, -1):
+                    return False
+                _last_used_step[replay_key] = step
+            return True
+        return False
     except Exception:
         return False
 

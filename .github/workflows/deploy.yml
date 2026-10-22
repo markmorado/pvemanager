@@ -4,11 +4,24 @@ on:
   push:
     branches: [main]
 
+# Never run two deploys at once; a newer push supersedes a queued one.
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
 jobs:
+  backend-tests:
+    uses: ./.github/workflows/backend-tests.yml
+
+  frontend-build:
+    uses: ./.github/workflows/frontend-checks.yml
+
   deploy:
     name: Trigger production update
     runs-on: ubuntu-latest
-    needs: []
+    # Previously `needs: []`: every push to main reached production even when
+    # the test suite was red.
+    needs: [backend-tests, frontend-build]
     steps:
       - name: SSH and trigger update
         uses: appleboy/ssh-action@v1

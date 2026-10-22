@@ -4,7 +4,7 @@ import { useParams, useSearchParams } from 'react-router';
 import { Maximize, Minimize, Loader2, PackageCheck, TerminalSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { apiClient } from '@/lib/api-client';
+import { fetchWsTicket } from '@/lib/websocket';
 import '@xterm/xterm/css/xterm.css';
 
 /**
@@ -55,6 +55,8 @@ export default function NodeShellPage() {
         import('@xterm/addon-fit'),
         import('@xterm/addon-web-links'),
       ]);
+      if (guard.cancelled) return;
+      const ticket = await fetchWsTicket();
 
       if (guard.cancelled || !containerRef.current) return;
 
@@ -79,9 +81,7 @@ export default function NodeShellPage() {
       requestAnimationFrame(() => fitAddon.fit());
 
       const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const authToken = apiClient.getToken();
-      const params = new URLSearchParams({ cmd });
-      if (authToken) params.set('token', authToken);
+      const params = new URLSearchParams({ cmd, ticket });
       const wsUrl = `${wsProto}//${window.location.host}/proxmox/ws/node-shell/${sid}/${node}?${params}`;
       const ws = new WebSocket(wsUrl);
       ws.binaryType = 'arraybuffer';

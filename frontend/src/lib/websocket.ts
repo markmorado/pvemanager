@@ -1,4 +1,18 @@
+import { apiClient } from '@/lib/api-client';
+
 type MessageHandler = (data: unknown) => void;
+
+/**
+ * Single-use, ~30 s ticket for one WebSocket handshake (?ticket=).
+ *
+ * Browsers cannot send headers on WebSocket requests; putting the session JWT
+ * in the URL leaked it into proxy logs and browser history. Fetch a fresh
+ * ticket right before every (re)connect — it cannot be reused.
+ */
+export async function fetchWsTicket(): Promise<string> {
+  const { ticket } = await apiClient.post<{ ticket: string }>('/api/auth/ws-ticket');
+  return ticket;
+}
 
 interface WSOptions {
   url: string;
@@ -7,9 +21,16 @@ interface WSOptions {
   onClose?: () => void;
   onError?: (event: Event) => void;
   reconnect?: boolean;
+  /** Initial reconnect delay; doubles per failed attempt up to MAX_RECONNECT_DELAY. */
   reconnectInterval?: number;
+  /** 0 / undefined = keep retrying (with backoff) until disconnect(). */
   maxReconnectAttempts?: number;
 }
+
+const MAX_RECONNECT_DELAY = 30_000;
+// Close codes the backend uses for rejected credentials: retrying with the same
+// token cannot succeed, so wait for an explicit connect() (e.g. after login).
+const AUTH_CLOSE_CODES = new Set([4001, 4003]);
 
 export class WebSocketManager {
   private ws: WebSocket | null = null;
@@ -20,12 +41,19 @@ export class WebSocketManager {
   private subscribers = new Map<string, Set<MessageHandler>>();
   private typeListeners = new Map<string, Set<MessageHandler>>();
   private _isConnected = false;
+  private manualClose = false;
+  // Bumped by every connect()/disconnect(): a ticket fetch that finishes after
+  // a newer call must not open a socket.
+  private connectGeneration = 0;
+  private ticketPending = false;
 
   constructor(options: WSOptions) {
     this.options = {
       reconnect: true,
-      reconnectInterval: 3000,
-      maxReconnectAttempts: 10,
+      reconnectInterval: 1000,
+      // Was 10 tries x 3 s: a backend restart longer than ~30 s (self-update)
+      // silently ended real-time updates until the page was reloaded.
+      maxReconnectAttempts: 0,
       ...options,
     };
   }
@@ -37,13 +65,43 @@ export class WebSocketManager {
   connect() {
     // Don't create a new socket if one is already open or connecting
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) return;
+    if (this.ticketPending) return;
 
-    const token = localStorage.getItem('access_token');
-    const separator = this.options.url.includes('?') ? '&' : '?';
-    const url = token
-      ? `${this.options.url}${separator}token=${encodeURIComponent(token)}`
-      : this.options.url;
+    // An explicit connect() (e.g. after logging in again) re-enables reconnects
+    // that disconnect() switched off.
+    this.manualClose = false;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
 
+    // Logged out: nothing to authenticate with; an explicit connect() after
+    // login (resetTasksWebSocket) opens the socket.
+    if (!apiClient.getToken()) return;
+
+    const generation = ++this.connectGeneration;
+    this.ticketPending = true;
+    fetchWsTicket().then(
+      (ticket) => {
+        if (generation !== this.connectGeneration) return;
+        this.ticketPending = false;
+        if (this.manualClose) return;
+        const separator = this.options.url.includes('?') ? '&' : '?';
+        this.open(`${this.options.url}${separator}ticket=${encodeURIComponent(ticket)}`);
+      },
+      (err: unknown) => {
+        if (generation !== this.connectGeneration) return;
+        this.ticketPending = false;
+        // 401/403: the session is gone (api-client already redirects to
+        // /login). Anything else (backend restarting) — back off and retry.
+        const status = (err as { status?: number })?.status;
+        if (status === 403 || (err instanceof Error && err.message === 'Unauthorized')) return;
+        this.tryReconnect();
+      },
+    );
+  }
+
+  private open(url: string) {
     this.ws = new WebSocket(url);
 
     this.ws.onopen = () => {
@@ -82,10 +140,14 @@ export class WebSocketManager {
       }
     };
 
-    this.ws.onclose = () => {
+    const socket = this.ws;
+    this.ws.onclose = (event) => {
+      // A socket replaced by a newer connect() must not drive reconnects.
+      if (this.ws !== socket) return;
       this._isConnected = false;
       this.stopPing();
       this.options.onClose?.();
+      if (AUTH_CLOSE_CODES.has(event.code)) return;
       this.tryReconnect();
     };
 
@@ -95,7 +157,9 @@ export class WebSocketManager {
   }
 
   disconnect() {
-    this.options.reconnect = false;
+    this.manualClose = true;
+    this.connectGeneration++;
+    this.ticketPending = false;
     this.stopPing();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
@@ -144,17 +208,20 @@ export class WebSocketManager {
   }
 
   private tryReconnect() {
-    if (
-      !this.options.reconnect ||
-      this.reconnectAttempts >= (this.options.maxReconnectAttempts ?? 10)
-    ) {
+    const max = this.options.maxReconnectAttempts ?? 0;
+    if (!this.options.reconnect || this.manualClose || (max > 0 && this.reconnectAttempts >= max)) {
       return;
     }
 
+    // Exponential backoff: quick recovery from blips without hammering a
+    // backend that is down for a while.
+    const base = this.options.reconnectInterval ?? 1000;
+    const delay = Math.min(base * 2 ** Math.min(this.reconnectAttempts, 10), MAX_RECONNECT_DELAY);
     this.reconnectAttempts++;
     this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
       this.connect();
-    }, this.options.reconnectInterval);
+    }, delay);
   }
 
   private startPing() {
@@ -174,6 +241,19 @@ export class WebSocketManager {
 
 // Singleton for tasks WebSocket
 let tasksWs: WebSocketManager | null = null;
+
+/**
+ * Re-open the tasks socket for a new identity (login, logout, impersonation).
+ *
+ * The backend authenticates a socket once, at connect time: without this the
+ * tab kept streaming under the previous user's session after a token switch.
+ * Channel subscriptions are replayed on open and re-authorized server-side.
+ */
+export function resetTasksWebSocket(reconnect: boolean): void {
+  if (!tasksWs) return;
+  tasksWs.disconnect();
+  if (reconnect) tasksWs.connect();
+}
 
 export function getTasksWebSocket(): WebSocketManager {
   if (!tasksWs) {

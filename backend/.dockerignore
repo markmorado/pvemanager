@@ -11,8 +11,13 @@ build/
 
 # Virtual environments
 venv/
+.venv/
 env/
 ENV/
+
+# Local secrets / generated artifacts — never part of the image build context
+.env
+graphify-out/
 
 # IDE
 .vscode/

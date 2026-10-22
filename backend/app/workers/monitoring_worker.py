@@ -11,7 +11,7 @@ from typing import Dict, Any, List, Optional
 from loguru import logger
 
 
-from ..config import utcnow
+from ..config import utcnow, make_tz_aware
 
 
 # qmrestore / vma extract emit lines like "progress 47% (read ...)".
@@ -461,8 +461,9 @@ class MonitoringWorker:
                                 level = "success"
                                 logger.info(f"[VM STARTED] Server: {server.name} | VM: {vm['name']} (ID: {vm['vmid']}) is now running")
                             
-                            # Notify all users (in production, filter by permissions)
-                            for user in users:
+                            # Admins and the guest's owner only: other tenants
+                            # must not learn about (or be spammed by) foreign VMs.
+                            for user in self._vm_recipients(db, users, server, vm['vmid']):
                                 NotificationService.notify_vm_status(
                                     db,
                                     user_id=user.id,
@@ -492,6 +493,23 @@ class MonitoringWorker:
         finally:
             db.close()
     
+    @staticmethod
+    def _vm_recipients(db, users: List[User], server: ProxmoxServer, vmid: int) -> List[User]:
+        """Users to notify about a guest: global-view users plus its owner."""
+        from ..api.proxmox._helpers import can_view_all_instances
+        server_ids = {server.id}
+        if getattr(server, 'cluster_name', None):
+            # The cache keys clustered guests by one member server's id.
+            server_ids |= {sid for (sid,) in db.query(ProxmoxServer.id).filter(
+                ProxmoxServer.cluster_name == server.cluster_name)}
+        owner_ids = {oid for (oid,) in db.query(VMInstance.owner_id).filter(
+            VMInstance.vmid == vmid,
+            VMInstance.server_id.in_(server_ids),
+            VMInstance.deleted_at.is_(None),
+            VMInstance.owner_id.isnot(None),
+        )}
+        return [u for u in users if u.id in owner_ids or can_view_all_instances(u)]
+
     def run_resource_monitoring(self):
         """Monitor resource usage (CPU, RAM, Disk)"""
         db = SessionLocal()
@@ -513,8 +531,11 @@ class MonitoringWorker:
                         vm_key = f"{server.id}:{vm['vmid']}"
                         
                         try:
-                            # Get VM statistics
-                            stats = client.get_vm_stats(vm['node'], vm['vmid'])
+                            # The /nodes/{n}/qemu listing already carries cpu/mem/
+                            # disk — only fall back to a per-VM call when it doesn't
+                            # (was one extra API request per running VM per minute).
+                            stats = vm if vm.get('cpu') is not None else (
+                                client.get_vm_stats(vm['node'], vm['vmid']) or {})
                             
                             # Check CPU usage
                             if 'cpu' in stats and stats['cpu'] is not None:
@@ -522,7 +543,7 @@ class MonitoringWorker:
                                 if cpu_percent > 80:
                                     alert_key = f"{vm_key}:cpu"
                                     if self._should_send_alert(alert_key):
-                                        for user in users:
+                                        for user in self._vm_recipients(db, users, server, vm['vmid']):
                                             NotificationService.notify_resource_alert(
                                                 db,
                                                 user_id=user.id,
@@ -540,7 +561,7 @@ class MonitoringWorker:
                                     if ram_percent > 85:
                                         alert_key = f"{vm_key}:ram"
                                         if self._should_send_alert(alert_key):
-                                            for user in users:
+                                            for user in self._vm_recipients(db, users, server, vm['vmid']):
                                                 NotificationService.notify_resource_alert(
                                                     db,
                                                     user_id=user.id,
@@ -558,7 +579,7 @@ class MonitoringWorker:
                                     if disk_percent > 90:
                                         alert_key = f"{vm_key}:disk"
                                         if self._should_send_alert(alert_key):
-                                            for user in users:
+                                            for user in self._vm_recipients(db, users, server, vm['vmid']):
                                                 NotificationService.notify_resource_alert(
                                                     db,
                                                     user_id=user.id,
@@ -643,10 +664,12 @@ class MonitoringWorker:
             # Group servers by their node set
             server_nodes = {}  # server_id -> set of node names
             cluster_map = {}  # server_id -> cluster_id (first server_id in cluster)
+            clients_by_server = {}  # server_id -> ProxmoxClient, reused by the collect loop
             
             for server in servers:
                 try:
                     client = self._create_proxmox_client(server)
+                    clients_by_server[server.id] = client
                     if client.is_connected():
                         nodes = client.get_nodes()
                         node_names = frozenset([n.get('node', '') for n in nodes if n.get('node')])
@@ -681,7 +704,7 @@ class MonitoringWorker:
             # Collect all VMs from all servers with proper dedup
             for server in servers:
                 try:
-                    client = self._create_proxmox_client(server)
+                    client = clients_by_server.get(server.id) or self._create_proxmox_client(server)
                     
                     if not client.is_connected():
                         logger.warning(f"[VM SYNC] Server {server.name} not connected, skipping")
@@ -746,6 +769,14 @@ class MonitoringWorker:
             status_changes = []  # list of (server_id, vmid, node, old_status, new_status)
             # Track newly-created VMs for WebSocket broadcast
             created_vms = []  # list of (server_id, vmid, node, name, vm_type)
+
+            # One query for every cached row of the synced servers instead of a
+            # SELECT per guest every 10 seconds.
+            sync_server_ids = {sid for sid, _, _ in all_vms_data}
+            existing_rows = {}
+            if sync_server_ids:
+                for row in db.query(VMInstance).filter(VMInstance.server_id.in_(sync_server_ids)):
+                    existing_rows.setdefault((row.server_id, row.vmid), row)
             
             # Upsert all VMs to database
             for server_id, vm_data, vm_type in all_vms_data:
@@ -813,10 +844,7 @@ class MonitoringWorker:
                     new_status = vm_data.get('status', 'unknown')
                     
                     # Find existing by (server_id, vmid)
-                    existing = db.query(VMInstance).filter(
-                        VMInstance.server_id == server_id,
-                        VMInstance.vmid == vmid
-                    ).first()
+                    existing = existing_rows.get((server_id, vmid))
                     
                     if existing:
                         # Detect status change for WS broadcast
@@ -844,7 +872,11 @@ class MonitoringWorker:
                         # IPAM and detected IPs take priority; otherwise preserve existing
                         if ip_address:
                             existing.ip_address = ip_address
-                        existing.last_sync_at = sync_time
+                        # last_sync_at alone changing would UPDATE every row on
+                        # every 10 s tick; refresh it at most once a minute.
+                        last = make_tz_aware(existing.last_sync_at)
+                        if last is None or (sync_time - last).total_seconds() >= 60 or db.is_modified(existing):
+                            existing.last_sync_at = sync_time
                         existing.deleted_at = None
                     else:
                         # Create new entry
@@ -865,6 +897,7 @@ class MonitoringWorker:
                             last_sync_at=sync_time
                         )
                         db.add(new_vm)
+                        existing_rows[(server_id, vmid)] = new_vm
                         created_vms.append((server_id, vmid, node_name, vm_name, vm_type))
                         
                 except Exception as e:
@@ -947,12 +980,13 @@ class MonitoringWorker:
                     from app.websocket_manager import ws_manager, run_async_safe
                     for srv_id, vmid, node_name, vm_name, vm_type in deleted_broadcasts:
                         logger.info(f"[VM SYNC] VM deleted: server={srv_id} vmid={vmid} name={vm_name}")
+                        # Broadcast goes to every connected user: no guest
+                        # names (other tenants' data), ids are enough to refetch.
                         run_async_safe(ws_manager.broadcast({
                             "type": "vm_deleted",
                             "server_id": srv_id,
                             "vmid": vmid,
                             "node": node_name,
-                            "name": vm_name,
                             "vm_type": vm_type,
                         }))
                 except Exception as _we:
@@ -969,7 +1003,6 @@ class MonitoringWorker:
                             "server_id": srv_id,
                             "vmid": vmid,
                             "node": node_name,
-                            "name": vm_name,
                             "vm_type": vm_type,
                         }))
                 except Exception as _we:
@@ -1208,10 +1241,18 @@ monitoring_worker = MonitoringWorker()
 
 def start_monitoring_worker():
     """Start background monitoring tasks using APScheduler"""
+    from datetime import datetime as _dt
     from apscheduler.schedulers.background import BackgroundScheduler
     from apscheduler.triggers.interval import IntervalTrigger
     
-    scheduler = BackgroundScheduler()
+    # coalesce: a job that fell behind (slow Proxmox, GC pause) runs once instead
+    # of firing every missed tick back-to-back; max_instances=1 keeps a slow
+    # sync from overlapping itself.
+    scheduler = BackgroundScheduler(job_defaults={
+        'coalesce': True,
+        'max_instances': 1,
+        'misfire_grace_time': 30,
+    })
     
     # Server availability check - every 30 seconds
     # Sends notifications on offline, repeats every 10 minutes, notifies immediately on recovery
@@ -1256,7 +1297,9 @@ def start_monitoring_worker():
         trigger=IntervalTrigger(seconds=10),
         id='vm_cache_sync',
         name='Sync VM cache from Proxmox',
-        replace_existing=True
+        replace_existing=True,
+        # First run right away, on the scheduler thread — see below.
+        next_run_time=_dt.now(),
     )
     
     # Task queue processing - every 5 seconds
@@ -1313,12 +1356,10 @@ def start_monitoring_worker():
     except ImportError as e:
         logger.warning(f"Proxmox cache cleanup not available: {e}")
     
-    # Run initial VM cache sync on startup
-    try:
-        logger.info("Running initial VM cache sync...")
-        monitoring_worker.sync_vm_cache()
-    except Exception as e:
-        logger.warning(f"Initial VM cache sync failed: {e}")
+    # The initial VM cache sync used to run inline here, i.e. inside the
+    # FastAPI lifespan: with a slow or unreachable Proxmox node the panel did
+    # not accept requests (nor pass its healthcheck) until every server timed
+    # out. It now runs immediately on the scheduler (next_run_time above).
     
     # Run initial update check on startup (delayed by 60 seconds to let the app fully start)
     def delayed_update_check():

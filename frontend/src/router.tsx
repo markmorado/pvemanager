@@ -7,11 +7,14 @@ import { ProtectedRoute, PublicRoute, RequirePermission } from '@/components/sha
 import LoginPage from '@/features/auth/LoginPage';
 const ForgotPasswordPage = lazy(() => import('./features/auth/ForgotPasswordPage.tsx'));
 const ResetPasswordPage = lazy(() => import('./features/auth/ResetPasswordPage.tsx'));
-import DashboardPage from '@/features/dashboard/DashboardPage';
+// Dashboard and instance detail carry recharts (~0.4 MB): out of the entry
+// chunk, which tenants (no dashboard:view) load on every visit.
+const DashboardPage = lazy(() => import('./features/dashboard/DashboardPage.tsx'));
 import InstancesPage from '@/features/instances/InstancesPage';
-import InstanceDetailPage from '@/features/instances/InstanceDetailPage';
+const InstanceDetailPage = lazy(() => import('./features/instances/InstanceDetailPage.tsx'));
 const SnapshotArchivesPage = lazy(() => import('./features/instances/SnapshotArchivesPage.tsx'));
-import ConsolePage from '@/features/console/ConsolePage';
+// Lazy like NodeShellPage: it pulls in xterm (and its global CSS) for every user otherwise.
+const ConsolePage = lazy(() => import('./features/console/ConsolePage.tsx'));
 const NodeShellPage = lazy(() => import('./features/console/NodeShellPage.tsx'));
 
 // Lazy-loaded pages

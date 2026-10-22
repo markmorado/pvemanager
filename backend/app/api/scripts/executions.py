@@ -11,12 +11,12 @@ from __future__ import annotations
 import threading
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from loguru import logger
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
-from ...auth import PermissionChecker
+from ...auth import PermissionChecker, check_permission
 from ...db import SessionLocal, get_db
 from ...models import ProxmoxServer, ScriptCatalog, ScriptExecution, User
 from ...services import script_engine
@@ -66,7 +66,8 @@ def _run_execution_bg(execution_id: int, server_id: int, target_type: str,
 
 class ExecuteRequest(BaseModel):
     server_id: int
-    node: Optional[str] = None
+    # Goes into Proxmox API paths (guest agent): plain node names only.
+    node: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9.-]{0,62}$")
     vmid: Optional[int] = None
     vm_type: Optional[str] = Field(default=None, pattern="^(qemu|lxc)$")
     params: dict = {}
@@ -91,19 +92,31 @@ def _can_admin(user: User) -> bool:
 def execute_script(
     script_id: int,
     req: ExecuteRequest,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(PermissionChecker("script:execute")),
 ):
+    from ..proxmox._helpers import get_visible_server_ids, require_vm_access
+
     script = db.get(ScriptCatalog, script_id)
     if not script:
         raise HTTPException(status_code=404, detail="Скрипт не найден")
 
     server = db.get(ProxmoxServer, req.server_id)
-    if not server:
+    visible = get_visible_server_ids(request, db, current_user) if server else None
+    if not server or (visible is not None and server.id not in visible):
         raise HTTPException(status_code=404, detail="Сервер не найден")
 
     if script.target_type == "guest" and (req.vmid is None or not req.node or not req.vm_type):
         raise HTTPException(status_code=400, detail="Для guest-скрипта нужны node, vmid и vm_type")
+
+    # script:execute alone used to allow running anything anywhere: a tenant
+    # could target other users' guests or get a root shell on the host.
+    if script.target_type == "node":
+        if not check_permission(current_user, "node:manage"):
+            raise HTTPException(status_code=403, detail="Для запуска на ноде нужно право node:manage")
+    else:
+        require_vm_access(db, current_user, server.id, req.vmid)
 
     # Валидация обязательных параметров по схеме скрипта.
     schema = script.params_schema or []
@@ -155,11 +168,12 @@ def list_executions(
     db: Session = Depends(get_db),
     current_user: User = Depends(PermissionChecker("script:view")),
 ):
-    q = db.query(ScriptExecution)
+    # Output (up to 200 KB per run) is only needed by the detail endpoint.
+    q = db.query(ScriptExecution).options(defer(ScriptExecution.output))
     if not _can_admin(current_user):
         q = q.filter(ScriptExecution.user_id == current_user.id)
-    items = q.order_by(ScriptExecution.started_at.desc()).limit(min(limit, 200)).all()
-    return {"items": [e.to_dict() for e in items]}
+    items = q.order_by(ScriptExecution.started_at.desc()).limit(max(1, min(limit, 200))).all()
+    return {"items": [e.to_dict(with_output=False) for e in items]}
 
 
 @router.get("/api/scripts/executions/{execution_id}")

@@ -390,7 +390,9 @@
     "reinstall": "Переустановить",
     "done": "Готово",
     "copied": "Скопировано",
-    "message": "Сообщение"
+    "message": "Сообщение",
+    "changePassword": "Сменить пароль",
+    "runCommand": "Выполнить команду"
   },
   "snap_archive": {
     "title": "Архив снапшотов",
@@ -809,6 +811,9 @@
     "switch_to_token": "Перевести на API-токен",
     "switch_to_token_confirm": "Создать API-токен для сервера «{{name}}» и переключить панель на него? Используется сохранённый пароль.",
     "switch_to_token_ok": "Сервер переключён на токен «{{token}}»",
+    "reset_ssh_host_key": "Сбросить SSH-ключ хоста",
+    "reset_ssh_host_key_confirm": "Панель запоминает SSH-ключ ноды при первом подключении и отказывается подключаться, если он изменился (защита от подмены узла). Сбрасывайте ключ, только если ноду «{{name}}» переустановили или сменили её SSH-ключ — при следующем подключении будет запомнен новый ключ.",
+    "reset_ssh_host_key_ok": "Закреплённый SSH-ключ сброшен (записей: {{count}})",
     "verify_ssl": "Проверять SSL",
     "connection_ok": "Соединение успешно",
     "connection_failed": "Ошибка соединения",
@@ -1110,7 +1115,23 @@
     "upgrade": "Обновить",
     "repo_updated": "Репозиторий обновлён",
     "enable": "Включить",
-    "disable": "Выключить"
+    "disable": "Выключить",
+    "certs": "Сертификаты",
+    "dns_saved": "DNS сохранён",
+    "node_time": "Локальное время ноды",
+    "syslog": "Журнал",
+    "syslog_hint": "Последние записи системного журнала ноды",
+    "system": "Система",
+    "task_id": "Объект",
+    "task_running": "выполняется",
+    "task_start": "Начало",
+    "task_type": "Тип",
+    "task_user": "Пользователь",
+    "tasks": "Задачи",
+    "tasks_hint": "Задачи Proxmox, выполненные на этой ноде",
+    "time": "Время",
+    "timezone": "Часовой пояс",
+    "tz_saved": "Часовой пояс сохранён"
   },
   "ha": {
     "title": "Высокая доступность (HA)",
@@ -1733,7 +1754,8 @@
     "active_count_one": "{{count}} активная задача",
     "active_count_few": "{{count}} активные задачи",
     "active_count_many": "{{count}} активных задач",
-    "no_active": "Нет активных задач"
+    "no_active": "Нет активных задач",
+    "active_count_other": "{{count}} активной задачи"
   },
   "notifications": {
     "title": "Уведомления",
@@ -2137,7 +2159,10 @@
       "nodes_count_many": "{{count}} нод",
       "guests_count_one": "{{count}} гость",
       "guests_count_few": "{{count}} гостя",
-      "guests_count_many": "{{count}} гостей"
+      "guests_count_many": "{{count}} гостей",
+      "clusters_count_other": "{{count}} кластера",
+      "guests_count_other": "{{count}} гостя",
+      "nodes_count_other": "{{count}} ноды"
     },
     "group": {
       "count_one": "{{count}} VM",
@@ -2146,7 +2171,8 @@
       "count_other": "{{count}} VM",
       "expand": "Показать все",
       "collapse": "Свернуть",
-      "breakdown": "{{running}} запущено · {{stopped}} остановлено"
+      "breakdown": "{{running}} запущено · {{stopped}} остановлено",
+      "count": "{{count}} VM"
     },
     "warning": {
       "offline": "{{server}} недоступен — показаны данные из кэша",

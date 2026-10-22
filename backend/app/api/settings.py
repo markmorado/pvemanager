@@ -12,7 +12,10 @@ from typing import Optional
 
 from ..db import get_db
 from ..models import User, PanelSettings
-from ..auth import get_current_user, get_current_user_optional, get_password_hash, verify_password, PermissionChecker
+from ..auth import (get_current_user, get_current_user_optional, get_password_hash, verify_password,
+                    PermissionChecker, get_current_session_token)
+from ..config import utcnow
+from ..crypto import encrypt_value
 from ..logging_service import LoggingService
 from ..i18n import I18nService, t
 from ..services.logo_service import LogoService
@@ -177,6 +180,12 @@ async def update_profile(
     if data.ssh_public_key is not None:
         # Validate SSH key format (basic validation)
         ssh_key = data.ssh_public_key.strip()
+        if "\n" in ssh_key or "\r" in ssh_key:
+            # Written verbatim into authorized_keys / cloud-init: one key per line.
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="SSH-ключ должен быть одной строкой"
+            )
         if ssh_key and not ssh_key.startswith(('ssh-rsa', 'ssh-ed25519', 'ecdsa-sha2', 'ssh-dss')):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -213,10 +222,12 @@ async def update_profile(
 @router.post("/api/change-password")
 async def change_password(
     data: ChangePasswordRequest,
+    request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    session_token: str = Depends(get_current_session_token),
 ):
-    """Change user password"""
+    """Change user password (the profile page uses this endpoint)"""
     
     # Verify current password
     if not verify_password(data.current_password, current_user.hashed_password):
@@ -242,9 +253,23 @@ async def change_password(
             detail="Новые пароли не совпадают"
         )
     
+    # Same password policy as every other password-setting path — this one
+    # used to accept anything of 6+ characters.
+    from ..services.security_service import SecurityService
+    is_valid, errors = SecurityService.validate_password(
+        db, data.new_password, request.cookies.get("language") or current_user.language or "en"
+    )
+    if not is_valid:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="; ".join(errors))
+
     # Update password
     current_user.hashed_password = get_password_hash(data.new_password)
+    current_user.last_password_change = utcnow()
+    current_user.require_password_change = False
     db.commit()
+
+    # End every other session: whoever may have used the old password is out.
+    SecurityService.terminate_all_user_sessions(db, current_user.id, except_token=session_token)
     
     # Log password change
     LoggingService.log(
@@ -512,7 +537,8 @@ async def update_smtp_settings(
         updated_fields.append("smtp_user")
 
     if data.password is not None:
-        set_setting(db, "smtp_password", data.password, "SMTP пароль")
+        # Encrypted at rest like server passwords (read back in notification_channels).
+        set_setting(db, "smtp_password", encrypt_value(data.password), "SMTP пароль")
         updated_fields.append("smtp_password")
 
     if data.from_email is not None:
@@ -562,7 +588,7 @@ async def update_telegram_settings(
     updated_fields = []
     
     if data.telegram_bot_token is not None:
-        set_setting(db, "telegram_bot_token", data.telegram_bot_token, "Токен Telegram бота")
+        set_setting(db, "telegram_bot_token", encrypt_value(data.telegram_bot_token), "Токен Telegram бота")
         updated_fields.append("telegram_bot_token")
     
     if updated_fields:
@@ -718,11 +744,12 @@ async def set_repository_url(
     current_user: User = Depends(PermissionChecker("setting:manage"))
 ):
     """Set git repository URL for updates"""
-    # Validate URL format
-    if not repository_url.startswith(('http://', 'https://')):
+    # The update pulls, builds and runs this code as root on the host: over
+    # plain http anyone on the path could substitute it.
+    if not repository_url.startswith('https://'):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Repository URL must start with http:// or https://"
+            detail="Repository URL must start with https://"
         )
     
     set_setting(db, "git_repository_url", repository_url, "Git repository URL for updates")

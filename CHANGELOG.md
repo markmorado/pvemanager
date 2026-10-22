@@ -6,7 +6,81 @@ All notable changes to PVEmanager will be documented in this file.
 
 ## [Unreleased]
 
+### 🔒 Security
+
+- **Tenants can no longer act on other users' guests** — 28 VM/LXC endpoints (command execution via guest agent and `pct exec`, config read/write, disks, cloud-init, unlock, HA, metrics, RRD) and the guest firewall endpoints checked only the permission, not ownership. Any user with `vm:console` (part of the stock `user` role) could run commands in any VM. Backup create/restore/list and Proxmox task logs are scoped the same way
+- **Server-scoped endpoints honour server assignment** — node syslog/services/APT, cluster firewall, disks/ZFS, networks, pools, SDN, backups and templates of servers that are not assigned to a tenant (directly or via a workspace) now return 404
+- **Privilege escalation in user management closed** — `user:create` could mint administrators (`is_admin` was taken from the request), `user:update` could reset the password of an account that is admin through its role or assign the admin role to oneself, `role:manage` could grant permissions the actor did not hold
+- **Script catalog hardening** — `script:execute` no longer runs scripts on any server/guest: node scripts need `node:manage`, guest scripts need access to the guest. Git sources: option-injection-safe `git clone`, URL/branch/glob validation, symlinks and paths outside the clone are ignored (a repository could import `/proc/self/environ`). Parameter names and the interpreter are validated; temp files get random names
+- **WebSocket**: `/ws/tasks` validates the session like the REST API (a logged-out token kept streaming); channel subscriptions and RRD requests are authorized (tenants could stream other users' guest metrics); the shared instance list is filtered per subscriber
+- **Password reset links ignore the request's `Origin`/`Host`** (reset poisoning) — new `PANEL_URL` setting, filled by `deploy.sh` when a domain is configured
+- **Plaintext passwords no longer reach the audit log** — form-encoded bodies (e.g. `/api/auth/change-password`) were stored raw; 2FA codes and private keys are masked too
+- **Stored XSS via template group icons** fixed (rendered with `dangerouslySetInnerHTML`, editable with `template:manage`)
+- **SSRF**: `/api/images/resolve-filename` requires `template:manage` and refuses loopback/link-local targets on every redirect hop
+- **Client IP can no longer be spoofed** with `X-Forwarded-For` to dodge brute-force blocking; proxy headers are trusted only from private peers
+- **2FA**: TOTP codes are single-use (RFC 6238), the TOTP secret is stored encrypted (migration 44), login timing no longer reveals whether a username exists
+- **Sessions**: changing a password ends the user's other sessions (both endpoints; the profile endpoint also enforces the password policy now), `stop-impersonate` requires a live session, a placeholder `SECRET_KEY` is replaced by a generated key stored on the data volume
+- **SSH host keys are pinned on first use (TOFU)** — the panel used to accept any key presented by a node (`WarningPolicy`), so anyone able to intercept the connection could pose as the node and receive the root password. The first key seen is now stored in `/app/data/ssh_known_hosts` (`SSH_KNOWN_HOSTS_FILE`), a different key later is refused with a clear error, and the new **Reset SSH host key** button on the server card (`DELETE /proxmox/api/servers/{id}/ssh-host-key`, `server:update`) clears the pin after a node reinstall. `SSH_REJECT_UNKNOWN_HOSTS=true` keeps strict mode
+- **Quotas** apply to clones and App Store installs; App Store install validates storage/bridge/node and server access
+- VM notifications and resource alerts go to the guest's owner and administrators only (they were sent to every user); WebSocket broadcasts no longer carry other tenants' guest names or the new owner's e-mail
+- **Consoles no longer hand out the panel's Proxmox root ticket** — opening a VNC console or terminal returned the `PVEAuthCookie` of the panel's Proxmox account (usually `root@pam`) and the node IP to the browser, so any tenant with `vm:console` on their own guest got full API access to the cluster for two hours. The ticket now stays on the backend; the browser gets a single-use handle bound to the user and guest
+- **Bulk operations check every guest** — `/api/bulk-operation` checked only `vm:manage`, and a role holding `vm:*` passed it without being treated as global elsewhere, so it could stop or delete other tenants' guests. Each item now needs the action's own permission (as the single-guest endpoints: `vm:start`, `vm:stop`, `vm:delete`, `vm:migrate`/`lxc:migrate`) and access to the guest — owners can use bulk actions on their own guests
+- **Backups are scoped to the guest's owner** — a tenant could restore someone else's archive into their own guest (taking over its disks), restore to a new untracked VMID, force-overwrite foreign guests with bulk restore, delete foreign backup files and read any task log via `/api/backups/task`. Scheduled backup jobs validate VMIDs against ownership (with `keep_last` pruning, a foreign VMID wiped that guest's backups), validate cron expressions, and `toggle` / `run-now` check the job owner
+- **Command injection in the App Store golden template** — `POST /api/appstore/golden-template` put `template_storage`, `rootfs_storage` and `bridge` from the request into root shell commands on the node (`app:manage` → root on the node); they are validated now, and the server must be visible to the user
+- **Deploy from template honours server assignment** — the request names a template, so the router-level check did not apply and a tenant could deploy onto any server; the template list shows tenants only templates of their servers
+- App Store logos (often SVG from third-party catalogs) are served with a sandboxing CSP — opened directly, a script inside ran on the panel's origin next to the session token; the global security-headers middleware no longer overrides an endpoint's stricter CSP
+- "Open app" after an App Store install opens the app without `window.opener` (the third-party app could navigate the panel tab)
+- **LXC / ISO creation could read other guests' data** — `ostemplate` accepted a vzdump archive (`pct create` from a backup is a restore, so a tenant got another guest's filesystem) and `iso` / `extra_iso` accepted any volume (another guest's disk attached as a CD-ROM); only `<storage>:vztmpl/…` and `<storage>:iso/…` are accepted now. Both endpoints honour server assignment (the server comes from the body), and privileged containers (root in them is root on the node) require `vm:manage`
+- **Parallel creations no longer bypass `max_instances`** — the instance row appears only after the clone finishes, so N simultaneous deploys all passed the check; queued/running deploys, clones, ISO VMs and App Store installs now count
+- **Node names and other identifiers are validated before reaching the Proxmox API** — `node`, path segments, storage ids, backup volume ids and UPIDs from requests were inserted into Proxmox API URL paths unescaped, so a crafted value could make a request authorized for one guest address a different resource. Every `/proxmox` route (HTTP and WebSocket) now rejects such values, and request bodies validate node names
+- **Open consoles close when access ends** — WebSocket access was checked only at the handshake, so a VNC/terminal/serial console or a root node shell stayed usable after logout, a password change, a terminated session, an account lock or a revoked permission / guest ownership. Access is now re-checked every 30 s on all console bridges and `/ws/tasks`
+- The panel page itself is served with `frame-ancestors 'self'` / `X-Frame-Options`, `nosniff` and a referrer policy: the security headers were set only on API responses (the outer nginx's ones were not inherited by the SSL server block), so any site could frame the panel
+- Without the SSL profile, `compose.yml` published the API on every host interface (port 8000), bypassing nginx; it is bound to `127.0.0.1` now (the UI goes through the frontend's nginx as before)
+- The SMTP password and Telegram bot token are stored encrypted (migration 46 encrypts existing values), like server passwords and TOTP seeds
+- Wrong two-factor codes count toward the account lockout like wrong passwords (with the password known, only the per-IP block limited guessing the 6-digit code)
+- The update repository URL must be `https://` — updates pull, build and run that code as root on the host
+- Session tokens and console handles in WebSocket query strings are no longer written to the logs (uvicorn and both nginx configs)
+- **The session JWT is no longer put in WebSocket URLs** (where it ended up in proxy logs and browser history) — the panel fetches a single-use ticket (`POST /api/auth/ws-ticket`, valid 30 s, bound to the user and session) before every WebSocket (re)connect and passes `?ticket=`. **`?token=<jwt>` is no longer accepted** — WebSocket clients outside the panel must fetch a ticket first; browser tabs opened before the update need a reload
+- Guest password change rejects user names and passwords that would inject extra `chpasswd` lines
+- Console WebSocket bridges verify the Proxmox TLS certificate when the server is set to verify it (they always skipped verification, while the root password is sent there)
+
+### ⚡ Performance
+
+- Session validation writes to the DB at most once a minute per session instead of on every request; security settings cache is per key
+- Task lists and WebSocket task updates no longer carry full Proxmox task logs; script execution lists no longer carry outputs (up to 200 KB each)
+- VM cache sync: one query for all cached rows instead of one per guest every 10 s, `last_sync_at` written at most once a minute, one Proxmox client per server
+- Resource monitoring reuses the VM list instead of one extra API call per running VM per minute
+- Request audit logging and the WebSocket initial snapshot run off the event loop; uploads are written to disk in a worker thread
+- Scheduler jobs coalesce instead of piling up; the first VM cache sync no longer blocks application startup
+- Metrics broadcaster tasks are kept referenced (they could be garbage-collected and silently stop)
+- **Translations are loaded per language** — `ru.json` and `en.json` (~210 KB) were bundled into the entry for everyone; now only the active language is fetched, and switching languages loads the other on demand. Russian sessions do not download English as a fallback: `ru.json` was completed (18 strings of the node administration page were shown in English) and CI checks that it covers every key of `en.json`
+- Login page backgrounds: 2.4 MB PNG → 36 KB WebP; `index.html` is served with `Cache-Control: no-cache`
+- Dashboard task counters refresh every 30 s instead of pulling 500 tasks every 5 s; finished task logs stop polling
+- Migration 45: indexes for per-user task polling
+
+### 🛠 Process
+
+- Production deploy waits for the backend tests and the frontend build (it ran on every push to `main` regardless); deploys no longer overlap
+- New `Frontend Checks` workflow (build, typecheck and lint reported); `upload-artifact` bumped to v4 (v3 is shut down)
+- `.dockerignore` excludes `.venv`, `.env` and `graphify-out` from build contexts
+- The backend image no longer installs `docker.io` (unused: self-update runs on the host via a trigger file, no Docker socket is mounted)
+
 ### 🐛 Fixes
+
+- WebSocket client keeps reconnecting with backoff (it gave up after ~30 s, e.g. during a self-update) and reconnects under the new identity after login, logout and impersonation
+- A failed token refresh during a backend restart (5xx) no longer logs the user out
+- `HTTPException`s raised inside `try` blocks are no longer turned into 500 errors (28 endpoints)
+- A token refresh during impersonation no longer drops the impersonation link — the admin was stranded in the user's account (no way back) and further actions were not marked as impersonated
+- VNC, terminal, serial and node-shell consoles work on servers registered with a non-default API port (`:8006` was hard-coded)
+- App Store data files and catalog scripts larger than ~96 KB failed to install (`Argument list too long`: the whole file went into one shell argument); they are now written in chunks, temp files get random names
+- Deploys, App Store operations and script runs interrupted by a backend restart are marked failed at startup — they stayed `running` forever, inflating the active-task counter; the instances page stops polling a stored deploy task the backend returns 404/403 for (it polled every 2 s indefinitely)
+- Template list: two queries instead of two per template
+- Apps stuck in `installing` / `updating` / `deleting` after a restart are moved to their failure state (retry is available; `installing` also held a quota slot)
+- Metrics history reads column tuples instead of ORM objects (month windows are tens of thousands of rows) and loads only the selected NIC
+- The console, dashboard and instance detail pages are loaded on demand: xterm (with its CSS) and recharts (~0.4 MB) were in the entry bundle for every user, including tenants without a dashboard
+- Image upload copies the spooled file in one worker call instead of two thread hops per 4 MB chunk
+- Scheduled backups no longer block the event loop while talking to Proxmox; a job with malformed VMIDs is marked failed instead of hanging in `running`
+- `backend/.env` keys unknown to the settings model (e.g. `ALLOWED_HOSTS`) no longer prevent startup
 
 - **`guest-exec` is unblocked in the Rocky Linux, AlmaLinux, CentOS Stream and Fedora images** — the RHEL-family `qemu-guest-agent` package runs the agent with an allow-list that omits `guest-exec`, `guest-exec-status` and `guest-file-*` (`FILTER_RPC_ARGS` in `/etc/sysconfig/qemu-ga`; older packages expressed the same thing through `BLOCK_RPCS`/`BLACKLIST_RPC`). Because of it, script execution, extra IP addresses and filesystem growth after a disk resize did not work in such VMs
 - **Five mirror images were rebuilt** — release `2026-08-22`, and the bundled catalog now points at it; Ubuntu and Debian are untouched and stay in the previous releases, so older panel versions keep working

@@ -5,7 +5,7 @@ and supports channel-based subscriptions for metrics streaming.
 """
 import asyncio
 import json
-from typing import Dict, List, Set
+from typing import Callable, Dict, List, Optional, Set
 
 from fastapi import WebSocket
 from loguru import logger
@@ -19,6 +19,9 @@ class ConnectionManager:
         self._connections: Dict[int, Set[WebSocket]] = {}
         # channel_name -> set of subscribed WebSocket connections
         self._channel_subscribers: Dict[str, Set[WebSocket]] = {}
+        # (websocket, channel) -> payload filter applied before sending, used to
+        # trim shared payloads down to what that subscriber may see.
+        self._channel_filters: Dict[tuple, Callable[[dict], dict]] = {}
 
     async def connect(self, websocket: WebSocket, user_id: int) -> None:
         await websocket.accept()
@@ -37,11 +40,16 @@ class ConnectionManager:
 
     # ── Channel subscription helpers ──────────────────────────────────
 
-    def subscribe(self, websocket: WebSocket, channel: str) -> None:
+    def subscribe(self, websocket: WebSocket, channel: str,
+                  payload_filter: Optional[Callable[[dict], dict]] = None) -> None:
         """Subscribe a WebSocket connection to a named channel."""
         if channel not in self._channel_subscribers:
             self._channel_subscribers[channel] = set()
         self._channel_subscribers[channel].add(websocket)
+        if payload_filter is not None:
+            self._channel_filters[(websocket, channel)] = payload_filter
+        else:
+            self._channel_filters.pop((websocket, channel), None)
         logger.debug(f"[WS] Subscribed to channel '{channel}'")
 
     def unsubscribe(self, websocket: WebSocket, channel: str) -> None:
@@ -50,14 +58,21 @@ class ConnectionManager:
             self._channel_subscribers[channel].discard(websocket)
             if not self._channel_subscribers[channel]:
                 del self._channel_subscribers[channel]
+        self._channel_filters.pop((websocket, channel), None)
         logger.debug(f"[WS] Unsubscribed from channel '{channel}'")
 
     def unsubscribe_all(self, websocket: WebSocket) -> None:
         """Remove a WebSocket from every channel it is subscribed to."""
         for channel in list(self._channel_subscribers):
             self._channel_subscribers[channel].discard(websocket)
+            self._channel_filters.pop((websocket, channel), None)
             if not self._channel_subscribers[channel]:
                 del self._channel_subscribers[channel]
+
+    def filter_payload(self, websocket: WebSocket, channel: str, data: dict) -> dict:
+        """Apply the subscriber's payload filter (if any) to *data*."""
+        payload_filter = self._channel_filters.get((websocket, channel))
+        return payload_filter(data) if payload_filter else data
 
     def has_channel_subscribers(self, channel: str) -> bool:
         """Return True if at least one connection is subscribed to *channel*."""
@@ -76,11 +91,18 @@ class ConnectionManager:
         dead: Set[WebSocket] = set()
         for ws in list(connections):
             try:
-                await ws.send_text(message)
+                payload_filter = self._channel_filters.get((ws, channel))
+                if payload_filter is None:
+                    await ws.send_text(message)
+                else:
+                    await ws.send_text(json.dumps(payload_filter(data), default=str))
             except Exception:
                 dead.add(ws)
+        subscribers = self._channel_subscribers.get(channel)
         for ws in dead:
-            self._channel_subscribers[channel].discard(ws)
+            if subscribers is not None:
+                subscribers.discard(ws)
+            self._channel_filters.pop((ws, channel), None)
         if not self._channel_subscribers.get(channel):
             self._channel_subscribers.pop(channel, None)
 
@@ -155,8 +177,9 @@ def run_async_safe(coro) -> None:
         else:
             loop.run_until_complete(coro)
     except RuntimeError:
-        # No event loop yet (e.g. during startup); silently skip
-        pass
+        # No event loop yet (e.g. during startup); silently skip — close the
+        # coroutine so it is not reported as "never awaited".
+        coro.close()
 
 
 def broadcast_task_update(user_id: int, event_type: str, task_data: dict) -> None:

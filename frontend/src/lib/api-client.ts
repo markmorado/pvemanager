@@ -27,6 +27,23 @@ function formatApiError(detail: unknown, status: number): string {
   return `HTTP ${status}`;
 }
 
+// JWT segments are base64url (RFC 7515): '-'/'_' instead of '+'/'/', no padding.
+// atob() rejects '-'/'_', so decoding the payload with it failed for most
+// tokens — the refresh was never scheduled and sessions simply expired.
+function decodeJwtPayload(token: string): { exp?: number } | null {
+  const part = token.split('.')[1];
+  if (!part) return null;
+  const b64 = part.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
+  try {
+    return JSON.parse(atob(padded));
+  } catch {
+    return null;
+  }
+}
+
+const REFRESH_RETRY_MS = 30_000;
+
 class ApiClient {
   private token: string | null = null;
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -58,12 +75,8 @@ class ApiClient {
 
   private getTokenExpiry(): number | null {
     if (!this.token) return null;
-    try {
-      const payload = JSON.parse(atob(this.token.split('.')[1]));
-      return payload.exp ? payload.exp * 1000 : null;
-    } catch {
-      return null;
-    }
+    const payload = decodeJwtPayload(this.token);
+    return payload?.exp ? payload.exp * 1000 : null;
   }
 
   private scheduleRefresh() {
@@ -92,13 +105,25 @@ class ApiClient {
       if (res.ok) {
         const data = await res.json();
         this.setToken(data.access_token);
-      } else {
+      } else if (res.status === 401 || res.status === 403) {
         this.setToken(null);
         window.location.href = '/login';
+      } else {
+        // 502/503 while the panel restarts (e.g. self-update) is not a reason
+        // to log everybody out — retry while the token is still valid.
+        this.retryRefreshLater();
       }
     } catch {
       // Network error, try again later
+      this.retryRefreshLater();
     }
+  }
+
+  private retryRefreshLater() {
+    const expiry = this.getTokenExpiry();
+    if (!this.token || (expiry && expiry <= Date.now())) return;
+    if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    this.refreshTimer = setTimeout(() => this.refreshToken(), REFRESH_RETRY_MS);
   }
 
   async request<T>(
@@ -172,7 +197,7 @@ class ApiClient {
       const error: ApiError = await res.json().catch(() => ({
         detail: `HTTP ${res.status}: ${res.statusText}`,
       }));
-      throw new Error(formatApiError(error.detail, res.status));
+      throw Object.assign(new Error(formatApiError(error.detail, res.status)), { status: res.status });
     }
 
     if (res.status === 204) return undefined as T;

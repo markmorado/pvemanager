@@ -1939,6 +1939,92 @@ def migrate_setting_view_panel_only(conn):
         logger.info("✓ No roles needed the setting:view split")
 
 
+def migrate_encrypt_two_factor_secret(conn):
+    """Migration 44: store users.two_factor_secret encrypted (Fernet).
+
+    A plaintext TOTP seed in a DB dump or backup lets anyone generate valid
+    codes and skip the second factor. The column is widened first — a Fernet
+    token of a 32-char base32 seed is ~140 chars. Idempotent; the encryption
+    step is skipped when FERNET_KEY is not set (the model then stores
+    plaintext, as before).
+    """
+    import os
+    if not column_exists(conn, 'users', 'two_factor_secret'):
+        return
+    conn.execute(text("ALTER TABLE users ALTER COLUMN two_factor_secret TYPE VARCHAR(255)"))
+
+    fernet_key = os.environ.get("FERNET_KEY")
+    if not fernet_key:
+        return
+    from cryptography.fernet import Fernet, InvalidToken
+    f = Fernet(fernet_key.encode())
+    rows = conn.execute(text(
+        "SELECT id, two_factor_secret FROM users "
+        "WHERE two_factor_secret IS NOT NULL AND two_factor_secret != ''"
+    )).fetchall()
+    count = 0
+    for row in rows:
+        try:
+            f.decrypt(row.two_factor_secret.encode())
+            continue  # already encrypted
+        except (InvalidToken, Exception):
+            pass
+        conn.execute(
+            text("UPDATE users SET two_factor_secret = :s WHERE id = :id"),
+            {"s": f.encrypt(row.two_factor_secret.encode()).decode(), "id": row.id},
+        )
+        count += 1
+    if count:
+        logger.info(f"Migration 44: Encrypted {count} two-factor secret(s)")
+
+
+def migrate_hot_path_indexes(conn):
+    """Migration 45: indexes for per-user task polling.
+
+    /api/all-tasks and the active-task badge poll every few seconds per
+    logged-in user and filter these tables by user_id; without an index each
+    poll scans the whole table.
+    """
+    for table, name, cols in (
+        ("app_operations", "idx_app_operations_user", "user_id, started_at"),
+        ("proxmox_tasks", "idx_proxmox_tasks_user_created", "user_id, created_at"),
+        ("deploy_tasks", "idx_deploy_tasks_user_created", "user_id, created_at"),
+        ("script_executions", "idx_script_executions_user_started", "user_id, started_at"),
+    ):
+        if table_exists(conn, table):
+            conn.execute(text(f"CREATE INDEX IF NOT EXISTS {name} ON {table}({cols})"))
+
+
+def migrate_encrypt_notification_secrets(conn):
+    """Migration 46: encrypt the SMTP password and Telegram bot token at rest.
+
+    They sat in panel_settings in plaintext while server passwords and TOTP
+    seeds are Fernet-encrypted. Idempotent; skipped without FERNET_KEY.
+    """
+    import os
+    fernet_key = os.environ.get("FERNET_KEY")
+    if not fernet_key or not table_exists(conn, 'panel_settings'):
+        return
+    from cryptography.fernet import Fernet, InvalidToken
+    f = Fernet(fernet_key.encode())
+    rows = conn.execute(text(
+        "SELECT id, value FROM panel_settings "
+        "WHERE key IN ('smtp_password', 'telegram_bot_token') AND value IS NOT NULL AND value != ''"
+    )).fetchall()
+    count = 0
+    for row in rows:
+        try:
+            f.decrypt(row.value.encode())
+            continue  # already encrypted
+        except (InvalidToken, Exception):
+            pass
+        conn.execute(text("UPDATE panel_settings SET value = :v WHERE id = :id"),
+                     {"v": f.encrypt(row.value.encode()).decode(), "id": row.id})
+        count += 1
+    if count:
+        logger.info(f"Migration 46: Encrypted {count} notification secret(s)")
+
+
 def run_all_migrations(engine, db_session=None):
     """
     Run all migrations in order.
@@ -2295,6 +2381,30 @@ def run_all_migrations(engine, db_session=None):
                 conn.commit()
             except Exception as e:
                 logger.warning(f"IPAM multi-IP migration: {e}")
+                conn.rollback()
+
+            # Migration 44: encrypt users.two_factor_secret at rest
+            try:
+                migrate_encrypt_two_factor_secret(conn)
+                conn.commit()
+            except Exception as e:
+                logger.warning(f"Two-factor secret encryption migration: {e}")
+                conn.rollback()
+
+            # Migration 45: indexes for per-user task polling
+            try:
+                migrate_hot_path_indexes(conn)
+                conn.commit()
+            except Exception as e:
+                logger.warning(f"Hot-path index migration: {e}")
+                conn.rollback()
+
+            # Migration 46: encrypt SMTP password / Telegram token at rest
+            try:
+                migrate_encrypt_notification_secrets(conn)
+                conn.commit()
+            except Exception as e:
+                logger.warning(f"Notification secrets encryption migration: {e}")
                 conn.rollback()
 
         logger.info("=" * 50)

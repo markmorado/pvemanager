@@ -14,9 +14,9 @@ import asyncio
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
@@ -105,7 +105,14 @@ def get_app_logo(
     # защита от path traversal: файл обязан лежать внутри data-каталога
     if base not in path.parents or not path.is_file():
         raise HTTPException(status_code=404, detail="Файл логотипа отсутствует")
-    return FileResponse(str(path))
+    # Logos come from third-party catalog repos and are often SVG, served from
+    # the panel's origin: opened directly, a script inside would run next to the
+    # session token. The sandbox CSP keeps <img> rendering and blocks scripts.
+    return FileResponse(str(path), headers={
+        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox",
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "public, max-age=86400",
+    })
 
 
 @router.post("/api/appstore/catalog/sync")
@@ -129,22 +136,31 @@ async def trigger_sync(
 
 # ── Золотой шаблон (Workstream B) ─────────────────────────────────────────────
 
+_PVE_ID = r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"
+
+
 class GoldenTemplateRequest(BaseModel):
+    # These go into root shell commands on the node (pct create / pvesm).
     server_id: int
-    node: Optional[str] = None
-    template_storage: str = "local"     # dir-storage для итогового vztmpl
-    rootfs_storage: str = "local-lvm"   # storage для rootfs временного CT
-    bridge: str = "vmbr0"
+    node: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9.-]{0,62}$")
+    template_storage: str = Field(default="local", pattern=_PVE_ID)    # dir-storage для итогового vztmpl
+    rootfs_storage: str = Field(default="local-lvm", pattern=_PVE_ID)  # storage для rootfs временного CT
+    bridge: str = Field(default="vmbr0", pattern=_PVE_ID)
     force: bool = False                 # пересобрать, даже если шаблон уже есть
 
 
 @router.post("/api/appstore/golden-template")
 def build_golden_template(
     req: GoldenTemplateRequest,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(PermissionChecker("app:manage")),
 ):
     """Собрать золотой LXC-шаблон на ноде (фоновая операция). Прогресс — по WebSocket."""
+    from ..proxmox._helpers import get_visible_server_ids
+    visible = get_visible_server_ids(request, db, current_user)
+    if visible is not None and req.server_id not in visible:
+        raise HTTPException(status_code=404, detail="Proxmox сервер не найден")
     try:
         result = engine.prepare_golden_template(
             db, current_user, server_id=req.server_id, node=req.node,

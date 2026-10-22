@@ -2,9 +2,13 @@
 Authentication module with enhanced security
 """
 
+import asyncio
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Callable, Optional, Tuple
 from functools import wraps
+import secrets
+import threading
+import time
 import jwt
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status, Request
@@ -136,13 +140,12 @@ def get_current_session_token(
 
 
 def authenticate_ws_token(token: Optional[str], db: Session) -> Optional[User]:
-    """Authenticate a WebSocket connection from a JWT passed as a query parameter.
+    """Authenticate a raw JWT (e.g. from an Authorization header).
 
-    Browsers cannot set Authorization headers on WebSocket handshakes, so the
-    token is supplied via ?token=<jwt>. Returns the authenticated, active User
-    (with a valid session, if the token is session-bound) or ``None`` on any
-    failure. Unlike ``decode_access_token`` this never raises — callers close
-    the socket with an appropriate code instead.
+    Returns the authenticated, active User (with a valid session, if the
+    token is session-bound) or ``None`` on any failure. Unlike
+    ``decode_access_token`` this never raises. WebSocket handshakes do not
+    use it: they authenticate with a ticket (:func:`authenticate_ws`).
     """
     if not token:
         return None
@@ -169,6 +172,99 @@ def authenticate_ws_token(token: Optional[str], db: Session) -> Optional[User]:
         return None
 
     return user
+
+
+# WebSocket tickets. The session JWT used to travel in ?token= on WebSocket
+# URLs, where it ends up in proxy logs and browser history. The client now
+# trades it for an opaque ticket (POST /api/auth/ws-ticket) right before each
+# connect; the ticket is single use, short-lived and bound to the user and
+# session. In-memory: the backend runs one uvicorn worker.
+_WS_TICKET_TTL = 30.0
+_ws_tickets: dict = {}
+_ws_tickets_lock = threading.Lock()
+
+
+def issue_ws_ticket(user_id: int, session_token: Optional[str]) -> str:
+    ticket = secrets.token_urlsafe(32)
+    now = time.monotonic()
+    with _ws_tickets_lock:
+        for key in [k for k, v in _ws_tickets.items() if v[2] < now]:
+            del _ws_tickets[key]
+        _ws_tickets[ticket] = (user_id, session_token, now + _WS_TICKET_TTL)
+    return ticket
+
+
+def authenticate_ws(ticket: Optional[str], db: Session) -> Optional[User]:
+    """Authenticate a WebSocket handshake from its ``?ticket=``.
+
+    Redeems the ticket (once) and returns its active, unlocked user, or
+    ``None`` on any failure. Never raises — callers close the socket instead.
+    """
+    return authenticate_ws_session(ticket, db)[0]
+
+
+def authenticate_ws_session(ticket: Optional[str], db: Session) -> Tuple[Optional[User], Optional[str]]:
+    """Like :func:`authenticate_ws`, also returning the session token behind
+    the ticket — for :func:`watch_ws_access` on long-lived sockets."""
+    if not ticket:
+        return None, None
+    with _ws_tickets_lock:
+        entry = _ws_tickets.pop(ticket, None)
+    if not entry or entry[2] < time.monotonic():
+        return None, None
+    user_id, session_token, _ = entry
+
+    # The session may have been logged out or terminated since issuance.
+    if session_token:
+        from .services.security_service import SecurityService
+        if not SecurityService.validate_session(db, session_token):
+            return None, None
+
+    user = db.query(User).options(joinedload(User.role)).filter(User.id == user_id).first()
+    if user is None or not user.is_active or user.is_locked():
+        return None, None
+    return user, session_token
+
+
+_WS_RECHECK_SECONDS = 30.0
+
+
+def ws_access_still_valid(user_id: int, session_token: Optional[str],
+                         allowed: Optional[Callable[[Session, User], bool]] = None) -> bool:
+    from .db import SessionLocal
+    db = SessionLocal()
+    try:
+        if session_token:
+            from .services.security_service import SecurityService
+            # Read-only: validate_session would slide the expiry, so an idle
+            # tab with an open socket would never time out.
+            if not SecurityService.is_session_live(db, session_token):
+                return False
+        user = db.query(User).options(joinedload(User.role)).filter(User.id == user_id).first()
+        if user is None or not user.is_active or user.is_locked():
+            return False
+        return bool(allowed(db, user)) if allowed else True
+    finally:
+        db.close()
+
+
+async def watch_ws_access(user_id: int, session_token: Optional[str],
+                          allowed: Optional[Callable[[Session, User], bool]] = None,
+                          interval: float = _WS_RECHECK_SECONDS) -> None:
+    """Return once the user may no longer use a long-lived WebSocket.
+
+    Access was checked only at the handshake: a root console stayed open after
+    logout, a password change, a terminated session, an account lock or a
+    revoked permission. Run it next to the bridge tasks and close on return.
+    """
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            ok = await asyncio.to_thread(ws_access_still_valid, user_id, session_token, allowed)
+        except Exception:
+            continue  # transient DB error: try again next round
+        if not ok:
+            return
 
 
 def get_current_active_admin(current_user: User = Depends(get_current_user)) -> User:
@@ -225,26 +321,41 @@ def _validate_ip(ip: str) -> bool:
         return False
 
 
+def _is_proxy_peer(ip: Optional[str]) -> bool:
+    """Whether a direct peer may be a reverse proxy whose headers we trust."""
+    import ipaddress
+    try:
+        addr = ipaddress.ip_address(ip or "")
+    except ValueError:
+        return False
+    return addr.is_private or addr.is_loopback
+
+
 def get_client_ip(request: Request) -> str:
     """Get client IP from request, handling proxies.
 
-    Only X-Forwarded-For / X-Real-IP values that parse as valid IP addresses
-    are trusted, preventing header-injection / IP-spoofing attacks.
+    Proxy headers are honoured only when the direct peer is a private/loopback
+    address (the bundled nginx on the docker network); a client reaching the
+    API directly cannot spoof its address. X-Real-IP is preferred — nginx sets
+    it to $remote_addr. For X-Forwarded-For the right-most entry is used: it is
+    the one appended by our proxy, while left-most entries are client-supplied
+    ($proxy_add_x_forwarded_for keeps them), so trusting the first one let
+    anyone rotate fake IPs past brute-force blocking and poison the audit log.
     """
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        candidate = forwarded.split(",")[0].strip()
-        if _validate_ip(candidate):
-            return candidate
+    peer = request.client.host if request.client else None
 
-    real_ip = request.headers.get("x-real-ip", "").strip()
-    if real_ip and _validate_ip(real_ip):
-        return real_ip
+    if _is_proxy_peer(peer):
+        real_ip = request.headers.get("x-real-ip", "").strip()
+        if real_ip and _validate_ip(real_ip):
+            return real_ip
 
-    if request.client:
-        return request.client.host
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            candidate = forwarded.split(",")[-1].strip()
+            if _validate_ip(candidate):
+                return candidate
 
-    return "unknown"
+    return peer or "unknown"
 
 
 # Optional auth - allows both authenticated and anonymous access

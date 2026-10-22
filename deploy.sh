@@ -380,8 +380,27 @@ setup_nginx_config() {
     
     # Replace domain name
     sed -i "s/DOMAIN_NAME/${domain}/g" nginx/conf.d/pvemanager.conf
+
+    # Public URL for links in e-mails (password reset). Without it the backend
+    # falls back to request headers, which an attacker controls.
+    set_panel_url "$domain" "$use_ssl"
     
     print_success "NGINX configuration created for domain: ${domain}"
+}
+
+# Write PANEL_URL=<scheme>://<domain> into backend/.env (replace or append).
+set_panel_url() {
+    local domain=$1
+    local use_ssl=$2
+    local scheme="http"
+    [ "$use_ssl" = true ] && scheme="https"
+    [ -f backend/.env ] || return 0
+    if grep -q '^PANEL_URL=' backend/.env; then
+        sed -i "s|^PANEL_URL=.*|PANEL_URL=${scheme}://${domain}|" backend/.env
+    else
+        printf '\nPANEL_URL=%s://%s\n' "$scheme" "$domain" >> backend/.env
+    fi
+    print_info "PANEL_URL set to ${scheme}://${domain}"
 }
 
 # Check whether a usable certificate for the domain is already on disk.

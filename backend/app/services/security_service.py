@@ -32,29 +32,33 @@ def make_tz_aware(dt: Optional[datetime]) -> Optional[datetime]:
 class SecurityService:
     """Service for security operations"""
     
-    # Cache for security settings
-    _settings_cache: Dict[str, str] = {}
-    _cache_time: datetime = None
+    # Cache for security settings: key -> (stored value or None, cached_at).
+    # Each key carries its own timestamp — a single shared timestamp was
+    # refreshed by every miss, so a frequently-missed key kept every other
+    # cached value alive forever and changes made by other code paths were
+    # never picked up.
+    _settings_cache: Dict[str, Tuple[Optional[str], datetime]] = {}
     _cache_ttl = 60  # seconds
+
+    # Sliding-session bookkeeping is written at most this often per session.
+    # validate_session runs on every authenticated request; committing an
+    # UPDATE each time turned every API call (and every poll) into a DB write.
+    _SESSION_TOUCH_INTERVAL = 60  # seconds
     
     @classmethod
     def get_setting(cls, db: Session, key: str, default: str = None) -> str:
         """Get security setting with caching"""
-        # Check cache
         now = utcnow()
-        if cls._cache_time and (now - cls._cache_time).seconds < cls._cache_ttl:
-            if key in cls._settings_cache:
-                return cls._settings_cache[key]
-        
-        # Query from DB
-        setting = db.query(SecuritySetting).filter(SecuritySetting.key == key).first()
-        value = setting.value if setting else default
-        
-        # Update cache
-        cls._settings_cache[key] = value
-        cls._cache_time = now
-        
-        return value
+        cached = cls._settings_cache.get(key)
+        if cached and (now - cached[1]).total_seconds() < cls._cache_ttl:
+            value = cached[0]
+        else:
+            setting = db.query(SecuritySetting).filter(SecuritySetting.key == key).first()
+            # Cache the stored value only (None when absent), so callers that
+            # pass different defaults for the same key each get their own.
+            value = setting.value if setting else None
+            cls._settings_cache[key] = (value, now)
+        return default if value is None else value
     
     @classmethod
     def get_setting_int(cls, db: Session, key: str, default: int = 0) -> int:
@@ -319,15 +323,27 @@ class SecurityService:
             db.commit()
             return None
         
-        # Update last activity and extend session expiration (sliding expiration)
-        session.last_activity = utcnow()
-        # Get session timeout setting
-        session_timeout = SecurityService.get_setting_int(db, "session_timeout_minutes", 60)
-        session.expires_at = utcnow() + timedelta(minutes=session_timeout)
-        db.commit()
+        # Update last activity and extend session expiration (sliding expiration),
+        # throttled so steady polling does not write on every request.
+        last = make_tz_aware(session.last_activity)
+        if last is None or (now - last).total_seconds() >= SecurityService._SESSION_TOUCH_INTERVAL:
+            session.last_activity = now
+            session_timeout = SecurityService.get_setting_int(db, "session_timeout_minutes", 60)
+            session.expires_at = now + timedelta(minutes=session_timeout)
+            db.commit()
         
         return session
     
+    @staticmethod
+    def is_session_live(db: Session, token: str) -> bool:
+        """Read-only validity check: active and not expired, WITHOUT the sliding
+        extension of validate_session — background checks (WebSocket watchdog)
+        must not keep an idle session alive."""
+        session = db.query(ActiveSession).filter(
+            ActiveSession.session_token == token, ActiveSession.is_active == True  # noqa: E712
+        ).first()
+        return bool(session and make_tz_aware(session.expires_at) >= utcnow())
+
     @staticmethod
     def terminate_session(db: Session, token: str) -> bool:
         """Terminate a session"""
@@ -342,14 +358,17 @@ class SecurityService:
         return False
     
     @staticmethod
-    def terminate_all_user_sessions(db: Session, user_id: int) -> int:
-        """Terminate all sessions for a user"""
-        count = db.query(ActiveSession).filter(
+    def terminate_all_user_sessions(db: Session, user_id: int, except_token: Optional[str] = None) -> int:
+        """Terminate all sessions for a user (optionally keeping one session alive)"""
+        query = db.query(ActiveSession).filter(
             and_(
                 ActiveSession.user_id == user_id,
                 ActiveSession.is_active == True
             )
-        ).update({"is_active": False})
+        )
+        if except_token:
+            query = query.filter(ActiveSession.session_token != except_token)
+        count = query.update({"is_active": False}, synchronize_session=False)
         db.commit()
         return count
     
@@ -387,7 +406,7 @@ class SecurityService:
         max_attempts = cls.get_setting_int(db, "max_login_attempts", 5)
         lockout_minutes = cls.get_setting_int(db, "lockout_duration_minutes", 30)
         
-        user.failed_login_attempts += 1
+        user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
         
         if user.failed_login_attempts >= max_attempts:
             user.locked_until = utcnow() + timedelta(minutes=lockout_minutes)

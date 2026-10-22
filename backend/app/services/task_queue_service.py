@@ -346,6 +346,36 @@ class TaskQueueProcessor:
                 pass
 
 
+def _fail_interrupted_operations(db: Session) -> int:
+    """Deploys, App Store operations and script runs execute in threads of this
+    process; after a restart nothing will ever finish them. Left as
+    pending/running they inflated the active-task counter and the UI polled
+    them forever (deploy tasks are kept in the browser's storage).
+    """
+    from ..models import AppOperation, DeployTask, InstalledApp, ScriptExecution
+    now = utcnow()
+    reason = 'Interrupted by backend restart'
+    count = 0
+    for t in db.query(DeployTask).filter(DeployTask.status.in_(['pending', 'running'])):
+        t.status, t.error_message, t.completed_at = 'failed', reason, now
+        count += 1
+    for op in db.query(AppOperation).filter(AppOperation.status == 'running'):
+        op.status, op.error_text, op.finished_at = 'failed', reason, now
+        count += 1
+    for ex in db.query(ScriptExecution).filter(ScriptExecution.status == 'running'):
+        ex.status, ex.error_text, ex.finished_at = 'failed', reason, now
+        count += 1
+    # Apps mid-install/update/delete: same terminal states the engine uses on
+    # failure (both allow a retry). 'installing' also held a quota slot.
+    stuck_app = {'installing': 'error', 'deleting': 'error', 'updating': 'update_failed'}
+    for ia in db.query(InstalledApp).filter(InstalledApp.status.in_(list(stuck_app))):
+        ia.status = stuck_app[ia.status]
+        count += 1
+    if count:
+        logger.warning(f"[TASK QUEUE] Marked {count} interrupted deploy/app/script operation(s) as failed")
+    return count
+
+
 def recover_interrupted_tasks() -> int:
     """Пометить задачи, зависшие в статусе 'running' после рестарта бэкенда.
 
@@ -364,7 +394,8 @@ def recover_interrupted_tasks() -> int:
             task.status = 'failed'
             task.error_message = 'Interrupted by backend restart'
             task.completed_at = utcnow()
-        if stuck:
+        other = _fail_interrupted_operations(db)
+        if stuck or other:
             db.commit()
             for task in stuck:
                 _ws_broadcast(task, "task_update")
@@ -372,7 +403,7 @@ def recover_interrupted_tasks() -> int:
                     f"[TASK QUEUE] Task #{task.id} ({task.task_type}) was interrupted "
                     f"by restart — marked as failed"
                 )
-        return len(stuck)
+        return len(stuck) + other
     except Exception as e:
         logger.error(f"[TASK QUEUE] Failed to recover interrupted tasks: {e}")
         try:

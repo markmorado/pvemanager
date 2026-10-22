@@ -27,7 +27,11 @@ from ._helpers import (check_vm_access, require_vm_access, _get_proxmox_client,
                         save_vm_instance, get_vm_instance, soft_delete_vm_instance,
                         can_view_all_instances, get_owned_vmids, get_visible_server_ids)
 
-router = APIRouter()
+from ._helpers import enforce_server_visibility  # noqa: E402
+
+# Every {server_id} route: tenants only reach servers assigned to them
+# (directly or through a workspace) — see enforce_server_visibility.
+router = APIRouter(dependencies=[Depends(enforce_server_visibility)])
 
 
 def _attach_workspaces(db: Session, servers: list) -> None:
@@ -457,6 +461,59 @@ def test_proxmox_credentials(
         return {"success": False, "status": "error", "message": str(e)}
 
 
+def _ssh_hosts(server: ProxmoxServer) -> list:
+    """Host names the panel uses for SSH to this server (port suffix stripped)."""
+    hosts = []
+    for value in (server.ip_address, server.hostname):
+        host = (value or "").split(":")[0].strip()
+        if host and host not in hosts:
+            hosts.append(host)
+    return hosts
+
+
+@router.get("/api/servers/{server_id}/ssh-host-key")
+def get_ssh_host_key(
+    server_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(PermissionChecker("server:update"))
+):
+    """Pinned (trust-on-first-use) SSH host keys of the server."""
+    from ...ssh_client import pinned_host_keys
+    server = db.query(ProxmoxServer).filter(ProxmoxServer.id == server_id).first()
+    if not server:
+        raise HTTPException(status_code=404, detail="Proxmox server not found")
+    return {"hosts": [{"host": h, "keys": pinned_host_keys(h)} for h in _ssh_hosts(server)]}
+
+
+@router.delete("/api/servers/{server_id}/ssh-host-key")
+def reset_ssh_host_key(
+    server_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(PermissionChecker("server:update"))
+):
+    """Forget the pinned SSH host key — e.g. after the node was reinstalled.
+
+    The next SSH connection pins whatever key the host presents then, so only
+    do this when the key change is expected.
+    """
+    from ...ssh_client import forget_host_key
+    server = db.query(ProxmoxServer).filter(ProxmoxServer.id == server_id).first()
+    if not server:
+        raise HTTPException(status_code=404, detail="Proxmox server not found")
+    removed = sum(forget_host_key(h) for h in _ssh_hosts(server))
+    logger.warning(
+        f"User {current_user.username} reset pinned SSH host key of server {server.name} "
+        f"({removed} entr{'y' if removed == 1 else 'ies'} removed)"
+    )
+    LoggingService.log_proxmox_action(
+        db=db, action="ssh_host_key_reset", resource_type="server",
+        resource_id=server.id, username=current_user.username,
+        server_id=server.id, server_name=server.name, success=True,
+        details={"removed": removed},
+    )
+    return {"success": True, "removed": removed}
+
+
 @router.post("/api/servers/{server_id}/provision-token", status_code=status.HTTP_200_OK)
 def provision_server_token(
     server_id: int,
@@ -628,6 +685,8 @@ def get_server_resources(
             "containers": containers,
             "node_uptime": node_uptime
         })
+    except HTTPException:
+        raise
     except Exception as e:
         server.update_status(False, str(e))
         db.commit()
@@ -786,6 +845,8 @@ def get_storages(
         storages.sort(key=lambda x: (not x.get('active', 1), x.get('storage', '')))
         
         return JSONResponse(content={"storages": storages})
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting storages: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -814,6 +875,8 @@ def get_node_status(
             raise HTTPException(status_code=404, detail="Node status not found")
         
         return JSONResponse(content=status)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting node {node} status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -840,6 +903,8 @@ def get_node_rrddata(
         
         rrddata = client.get_node_rrddata(node, timeframe)
         return JSONResponse(content=rrddata)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting node {node} RRD data: {e}")
         raise HTTPException(status_code=500, detail=str(e))

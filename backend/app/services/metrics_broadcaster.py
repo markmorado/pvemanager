@@ -621,17 +621,35 @@ async def handle_rrd_request(
 # Entry-point — call from lifespan
 # ──────────────────────────────────────────────────────────────────────────────
 
+# Strong references to the long-running loops. The event loop only keeps weak
+# references to tasks, so a task nobody holds can be garbage-collected mid-run
+# and the corresponding metrics stream silently stops.
+_background_tasks: set = set()
+
+
+def _spawn(coro, name: str) -> None:
+    task = asyncio.create_task(coro, name=name)
+    _background_tasks.add(task)
+
+    def _done(t: asyncio.Task) -> None:
+        _background_tasks.discard(t)
+        if not t.cancelled() and t.exception() is not None:
+            logger.error(f"[metrics_broadcaster] task {t.get_name()} crashed: {t.exception()!r}")
+
+    task.add_done_callback(_done)
+
+
 def start_metrics_broadcaster(db_factory) -> None:
     """
     Schedule all metrics broadcasting coroutines as asyncio Tasks.
     Must be called from within a running asyncio event loop (e.g. lifespan).
     """
-    asyncio.create_task(dashboard_metrics_loop(db_factory), name="metrics:dashboard")
-    asyncio.create_task(server_metrics_loop(db_factory), name="metrics:servers")
-    asyncio.create_task(instance_metrics_loop(db_factory), name="metrics:instances")
-    asyncio.create_task(instances_list_metrics_loop(db_factory), name="metrics:instances_list")
+    _spawn(dashboard_metrics_loop(db_factory), "metrics:dashboard")
+    _spawn(server_metrics_loop(db_factory), "metrics:servers")
+    _spawn(instance_metrics_loop(db_factory), "metrics:instances")
+    _spawn(instances_list_metrics_loop(db_factory), "metrics:instances_list")
     # Import inside function to avoid circular imports
     from .metrics_collector import metrics_collector_loop, metrics_retention_loop
-    asyncio.create_task(metrics_collector_loop(db_factory), name="metrics:collector")
-    asyncio.create_task(metrics_retention_loop(db_factory), name="metrics:retention")
+    _spawn(metrics_collector_loop(db_factory), "metrics:collector")
+    _spawn(metrics_retention_loop(db_factory), "metrics:retention")
     logger.info("[metrics_broadcaster] Metrics broadcasting tasks started")

@@ -304,6 +304,11 @@ def install(db, user, *, app_id: str, name: str, form_answers: dict,
     if not server:
         raise EngineError("Proxmox сервер не найден")
 
+    # Каждое приложение — отдельный LXC владельца: квоты действуют так же, как
+    # при обычном деплое (иначе App Store был обходом лимитов).
+    from .quota_service import check_quota
+    check_quota(db, user.id, add_cores=cores, add_memory_mb=memory, add_disk_gb=disk)
+
     # Кастомный порт из формы имеет приоритет над портом каталога (app.port).
     if port is not None and not (1 <= port <= 65535):
         raise EngineError("Порт должен быть в диапазоне 1..65535")
@@ -820,7 +825,7 @@ def get_logs(db, installed_app_id: int, tail: int = 200) -> str:
     server, client = _client_for(db, ia.server_id)
     ssh = _node_ssh(server, client)
     if not ssh.connect():
-        raise EngineError("SSH к ноде не установлен")
+        raise EngineError(ssh.last_error or "SSH к ноде не установлен")
     try:
         tail = max(1, min(int(tail or 200), 2000))
         inner = f"cd {APP_DIR} && docker compose logs --tail {tail} --no-color 2>&1"

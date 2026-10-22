@@ -30,7 +30,11 @@ from ...schemas import (NetworkTopologyResponse, TopologyBridge, TopologyCluster
                         TopologyPanelSummary, TopologyWarning)
 from ._helpers import _get_proxmox_client, can_view_all_instances, get_visible_server_ids
 
-router = APIRouter()
+from ._helpers import enforce_server_visibility  # noqa: E402
+
+# Every {server_id} route: tenants only reach servers assigned to them
+# (directly or through a workspace) — see enforce_server_visibility.
+router = APIRouter(dependencies=[Depends(enforce_server_visibility)])
 
 # Live cluster/resources + node networks, keyed by server id. Short TTL: the
 # page auto-refreshes every 30s and several users may watch it at once.

@@ -22,9 +22,15 @@ from ...logging_service import LoggingService
 from ...models import DeployTask, IPAMNetwork, ProxmoxServer, User, VMInstance
 from ...proxmox import ProxmoxClient
 from ...websocket_manager import broadcast_task_update
-from ._helpers import _get_proxmox_client, get_next_vmid, save_vm_instance
+from ._helpers import (_get_proxmox_client, get_next_vmid, save_vm_instance,
+                       can_view_all_instances, require_server_visible, VZTMPL_VOLID_RE,
+                       PveNode)
 
-router = APIRouter()
+from ._helpers import enforce_server_visibility  # noqa: E402
+
+# Every {server_id} route: tenants only reach servers assigned to them
+# (directly or through a workspace) — see enforce_server_visibility.
+router = APIRouter(dependencies=[Depends(enforce_server_visibility)])
 
 _lxc_deploy_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="lxc_deploy")
 
@@ -38,7 +44,7 @@ def _utcnow() -> datetime:
 class LXCDeployRequest(BaseModel):
     server_id: int
     ostemplate: str          # volid, e.g. "local:vztmpl/debian-13-standard_13.1-2_amd64.tar.zst"
-    node: Optional[str] = None
+    node: Optional[PveNode] = None
     name: str                # hostname / display name
     vmid: Optional[int] = None
     cores: int = 1
@@ -454,9 +460,17 @@ async def deploy_lxc_from_template(
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == req.server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Proxmox сервер не найден")
+    require_server_visible(db, current_user, server.id)
 
     if not req.ostemplate:
         raise HTTPException(status_code=400, detail="Необходимо указать ostemplate")
+    # A vzdump archive is accepted by `pct create` too (that is a restore):
+    # it would hand over another guest's filesystem.
+    if not VZTMPL_VOLID_RE.match(req.ostemplate):
+        raise HTTPException(status_code=400, detail="ostemplate must be a CT template (<storage>:vztmpl/<file>)")
+    # root in a privileged container is root on the node.
+    if not req.unprivileged and not can_view_all_instances(current_user):
+        raise HTTPException(status_code=403, detail="Privileged containers require the vm:manage permission")
     if not req.name or len(req.name) < 1:
         raise HTTPException(status_code=400, detail="Укажите имя контейнера")
     from ...schemas import validate_instance_name

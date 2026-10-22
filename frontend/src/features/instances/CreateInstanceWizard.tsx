@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ServerStatusBadge } from '@/components/shared/ServerStatusBadge';
+import { GroupIcon } from '@/components/shared/GroupIcon';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useServers, useNodes } from '@/hooks/use-nodes';
 import { useTemplates, useTemplateGroups } from '@/hooks/use-templates';
@@ -641,7 +642,7 @@ export default function CreateInstanceWizard({ onClose }: { onClose?: () => void
                       <CardContent className="p-3">
                         <div className="flex items-center gap-2">
                           {tpl.group_icon ? (
-                            <span className="text-lg" dangerouslySetInnerHTML={{ __html: tpl.group_icon }} />
+                            <GroupIcon icon={tpl.group_icon} />
                           ) : (
                             <Monitor className="h-5 w-5 text-muted-foreground" />
                           )}

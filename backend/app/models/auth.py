@@ -64,7 +64,9 @@ class User(Base):
     last_password_change = Column(DateTime(timezone=True), nullable=True)
     require_password_change = Column(Boolean, default=False, nullable=False)
     two_factor_enabled = Column(Boolean, default=False, nullable=False)
-    two_factor_secret = Column(String(100), nullable=True)
+    # Encrypted at rest (Fernet) — see migration 44; legacy plaintext rows are
+    # still readable (decrypt falls back) until the migration rewrites them.
+    two_factor_secret = Column(EncryptedString(255), nullable=True)
     # List of SHA-256 hashes of single-use recovery codes (JSON array).
     two_factor_backup_codes = Column(JSON, nullable=True)
     

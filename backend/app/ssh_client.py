@@ -1,10 +1,14 @@
+import base64
+import hashlib
 import logging
 import asyncio
+import os
 import threading
-from typing import Dict, Optional, Union
+from pathlib import Path
+from typing import Dict, List, Optional, Union
 from concurrent.futures import ThreadPoolExecutor
 import paramiko
-from paramiko.ssh_exception import SSHException, NoValidConnectionsError
+from paramiko.ssh_exception import SSHException, NoValidConnectionsError, BadHostKeyException
 import socket
 from functools import lru_cache
 import time
@@ -13,6 +17,134 @@ logger = logging.getLogger(__name__)
 
 # Thread pool for blocking SSH operations
 ssh_executor = ThreadPoolExecutor(max_workers=10, thread_name_prefix="ssh_")
+
+
+# ── Host key pinning (trust on first use) ────────────────────────────────────
+#
+# The panel connects to Proxmox nodes as root. Accepting any host key
+# (WarningPolicy) let anyone who can intercept that traffic pose as the node
+# and collect the root password / run commands. Strict checking
+# (SSH_REJECT_UNKNOWN_HOSTS) needs a pre-filled known_hosts that most installs
+# never set up. TOFU sits in between: the key seen on the first connection is
+# pinned in a panel-owned known_hosts file on the data volume, and a different
+# key later is refused until an administrator resets the pin (e.g. after a node
+# reinstall: "Reset SSH host key" on the server card).
+
+_known_hosts_lock = threading.Lock()
+
+
+# sshd runs a command as `sh -c <command>`, and Linux caps one argument at
+# MAX_ARG_STRLEN (128 KiB): an inline base64 payload above ~96 KiB of data
+# failed with "Argument list too long". The chunk is a multiple of 4, so each
+# piece decodes on its own.
+_B64_CHUNK = 64 * 1024
+
+
+def write_file_commands(path: str, data: bytes) -> List[str]:
+    """Shell commands that write ``data`` to ``path`` (mode 0600) via base64.
+
+    Run them in order. ``path`` is inserted verbatim — pass generated names only.
+    """
+    b64 = base64.b64encode(data).decode("ascii")
+    if not b64:
+        return [f"umask 077 && : > {path}"]
+    cmds = []
+    for i in range(0, len(b64), _B64_CHUNK):
+        redirect = ">" if i == 0 else ">>"
+        # base64 alphabet [A-Za-z0-9+/=] is safe inside single quotes.
+        cmds.append(f"umask 077 && printf '%s' '{b64[i:i + _B64_CHUNK]}' | base64 -d {redirect} {path}")
+    return cmds
+
+
+def known_hosts_path() -> Path:
+    """Panel-owned known_hosts file (persistent volume by default)."""
+    from .config import settings
+    if settings.SSH_KNOWN_HOSTS_FILE:
+        return Path(settings.SSH_KNOWN_HOSTS_FILE)
+    return Path(settings.APPSTORE_DATA_DIR).parent / "ssh_known_hosts"
+
+
+def host_key_entry(hostname: str, port: int = 22) -> str:
+    """known_hosts host field: bare host for port 22, ``[host]:port`` otherwise."""
+    return hostname if int(port) == 22 else f"[{hostname}]:{port}"
+
+
+def key_fingerprint(key: paramiko.PKey) -> str:
+    digest = hashlib.sha256(key.asbytes()).digest()
+    return "SHA256:" + base64.b64encode(digest).decode().rstrip("=")
+
+
+def _load_known_hosts() -> paramiko.HostKeys:
+    keys = paramiko.HostKeys()
+    path = known_hosts_path()
+    if path.is_file():
+        try:
+            keys.load(str(path))
+        except (OSError, SSHException) as e:
+            logger.warning(f"Cannot read pinned SSH host keys from {path}: {e}")
+    return keys
+
+
+def _save_known_hosts(keys: paramiko.HostKeys) -> None:
+    """Atomically rewrite the pinned-keys file. Caller holds _known_hosts_lock."""
+    path = known_hosts_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    keys.save(str(tmp))
+    try:
+        os.chmod(tmp, 0o600)
+    except OSError:
+        pass
+    os.replace(tmp, path)
+
+
+def pin_host_key(entry: str, key: paramiko.PKey) -> None:
+    """Remember ``key`` for ``entry`` (merging with what other threads pinned)."""
+    with _known_hosts_lock:
+        keys = _load_known_hosts()
+        keys.add(entry, key.get_name(), key)
+        _save_known_hosts(keys)
+
+
+def pinned_host_keys(hostname: str, port: int = 22) -> List[Dict[str, str]]:
+    """Pinned keys of a host as [{type, fingerprint}] (for the UI)."""
+    found = _load_known_hosts().lookup(host_key_entry(hostname, port)) or {}
+    return [{"type": ktype, "fingerprint": key_fingerprint(k)} for ktype, k in found.items()]
+
+
+def forget_host_key(hostname: str, port: int = 22) -> int:
+    """Drop the pinned key(s) of a host; returns how many entries were removed."""
+    entry = host_key_entry(hostname, port)
+    removed = 0
+    with _known_hosts_lock:
+        keys = _load_known_hosts()
+        while True:
+            try:
+                del keys[entry]
+            except KeyError:
+                break
+            removed += 1
+        if removed:
+            _save_known_hosts(keys)
+    # Cached connections were authenticated against the old key.
+    SSHClient.drop_cached_connections(hostname, port)
+    return removed
+
+
+class _TrustOnFirstUsePolicy(paramiko.MissingHostKeyPolicy):
+    """Accept and pin an unknown host key; known keys are verified by paramiko."""
+
+    def missing_host_key(self, client, hostname, key):
+        try:
+            pin_host_key(hostname, key)
+        except OSError as e:
+            # Still connect (previous behaviour), but say that nothing is pinned.
+            logger.error(f"SSH: could not pin host key of {hostname} in {known_hosts_path()}: {e}")
+        client.get_host_keys().add(hostname, key.get_name(), key)
+        logger.warning(
+            f"SSH: first connection to {hostname} — trusting and pinning "
+            f"{key.get_name()} key {key_fingerprint(key)}"
+        )
 
 
 class SSHClient:
@@ -36,6 +168,22 @@ class SSHClient:
         self.client = None
         self.connection_key = f"{hostname}:{port}:{username}"
         self._connected = False
+        # Human-readable reason of the last failed connect() (for API errors).
+        self.last_error: Optional[str] = None
+
+    @classmethod
+    def drop_cached_connections(cls, hostname: str, port: int = 22) -> None:
+        """Close cached connections to a host (any user)."""
+        prefix = f"{hostname}:{port}:"
+        with cls._cache_lock:
+            for key in [k for k in cls._connections if k.startswith(prefix)]:
+                client = cls._connections.pop(key, None)
+                cls._connection_times.pop(key, None)
+                try:
+                    if client is not None:
+                        client.close()
+                except Exception:
+                    pass
     
     def _get_cached_connection(self) -> Optional[paramiko.SSHClient]:
         """Get cached connection if available and valid"""
@@ -94,17 +242,21 @@ class SSHClient:
             try:
                 client = paramiko.SSHClient()
                 client.load_system_host_keys()
-                # Strict host-key checking is opt-in to avoid breaking existing
-                # deployments whose known_hosts isn't populated yet.
+                # Keys pinned on earlier connections (TOFU); a mismatch makes
+                # paramiko raise BadHostKeyException below.
+                for entry, by_type in _load_known_hosts().items():
+                    for ktype, key in by_type.items():
+                        client.get_host_keys().add(entry, ktype, key)
                 try:
                     from .config import settings
                     strict = settings.SSH_REJECT_UNKNOWN_HOSTS
                 except Exception:
                     strict = False
                 if strict:
+                    # Only keys already in known_hosts / pinned are accepted.
                     client.set_missing_host_key_policy(paramiko.RejectPolicy())
                 else:
-                    client.set_missing_host_key_policy(paramiko.WarningPolicy())
+                    client.set_missing_host_key_policy(_TrustOnFirstUsePolicy())
                 
                 connect_kwargs = {
                     'hostname': self.hostname,
@@ -132,22 +284,36 @@ class SSHClient:
                 
                 self.client = client
                 self._connected = True
+                self.last_error = None
                 self._cache_connection(client)
                 logger.info(f"Successfully connected to {self.hostname} (attempt {attempt + 1})")
                 return True
-                
+
+            except BadHostKeyException as e:
+                # Must precede SSHException (its parent): retrying cannot help.
+                self.last_error = (
+                    f"SSH host key of {self.hostname} does not match the pinned key "
+                    f"(got {key_fingerprint(e.key)}, expected {key_fingerprint(e.expected_key)}). "
+                    f"Possible MITM — if the node was reinstalled, reset the SSH host key "
+                    f"on the server card."
+                )
+                logger.error(self.last_error)
+                return False
             except paramiko.AuthenticationException as e:
+                self.last_error = f"SSH authentication failed for {self.hostname}: {e}"
                 logger.error(f"Authentication failed for {self.hostname}: {e}")
                 return False
             except (SSHException, NoValidConnectionsError, socket.timeout, 
                    socket.error, ConnectionRefusedError) as e:
                 logger.warning(f"Connection attempt {attempt + 1} failed for {self.hostname}: {e}")
                 if attempt == self.max_retries - 1:
+                    self.last_error = f"SSH connection to {self.hostname} failed: {e}"
                     logger.error(f"All connection attempts failed for {self.hostname}")
                     return False
                 # Wait before retry
                 time.sleep(2 ** attempt)  # Exponential backoff
             except Exception as e:
+                self.last_error = f"SSH connection to {self.hostname} failed: {e}"
                 logger.error(f"Unexpected error connecting to {self.hostname}: {e}")
                 return False
         

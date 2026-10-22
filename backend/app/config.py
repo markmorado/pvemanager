@@ -53,10 +53,17 @@ class Settings(BaseSettings):
     # Default False preserves legacy behaviour (warn & accept); enable in production
     # once your servers' host keys are in known_hosts.
     SSH_REJECT_UNKNOWN_HOSTS: bool = Field(default=False, env="SSH_REJECT_UNKNOWN_HOSTS")
+    # Without strict mode, node host keys are pinned on first use (TOFU) in this
+    # file; default: <APPSTORE_DATA_DIR>/../ssh_known_hosts (the data volume).
+    SSH_KNOWN_HOSTS_FILE: Optional[str] = Field(default=None, env="SSH_KNOWN_HOSTS_FILE")
     
     # Metrics history
     METRICS_COLLECT_INTERVAL: int = Field(default=15, env="METRICS_COLLECT_INTERVAL")
     METRICS_RETENTION_DAYS: int = Field(default=30, env="METRICS_RETENTION_DAYS")
+
+    # Public URL of the panel (e.g. https://panel.example.com). Used to build
+    # links in emails (password reset) instead of trusting request headers.
+    PANEL_URL: Optional[str] = Field(default=None, env="PANEL_URL")
 
     # CORS — comma-separated list of allowed origins; "*" is insecure in production
     CORS_ORIGINS: str = Field(default="*", env="CORS_ORIGINS")
@@ -111,6 +118,9 @@ class Settings(BaseSettings):
         "env_file": ".env",
         "env_file_encoding": "utf-8",
         "case_sensitive": False,
+        # deploy.sh-generated .env files carry keys this class does not model
+        # (e.g. ALLOWED_HOSTS); don't refuse to start because of them.
+        "extra": "ignore",
     }
 
     @property

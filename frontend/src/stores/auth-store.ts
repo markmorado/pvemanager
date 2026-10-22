@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { apiClient } from '@/lib/api-client';
 import { queryClient } from '@/lib/query-client';
+import { resetTasksWebSocket } from '@/lib/websocket';
 import { useWorkspaceStore } from '@/stores/workspace-store';
 import type { User, LoginRequest, AuthResponse } from '@/types';
 
@@ -28,6 +29,7 @@ async function switchToken(
 ): Promise<void> {
   apiClient.setToken(token);
   queryClient.clear();
+  resetTasksWebSocket(true);
   // Reset the active workspace: the previous identity's selection (sent via the
   // X-Active-Workspace header) may not belong to the new one.
   useWorkspaceStore.getState().setActiveWorkspace(null);
@@ -58,6 +60,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       // Сбрасываем кэш React Query: иначе новый пользователь увидит
       // закэшированные данные предыдущего (список инстансов и т.п.).
       queryClient.clear();
+      resetTasksWebSocket(true);
       set({ token: data.access_token, isAuthenticated: true, isLoading: false });
 
       // Load user info
@@ -81,6 +84,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     // Полностью очищаем кэш запросов, чтобы данные не утекли следующему
     // пользователю, который войдёт в этой же вкладке.
     queryClient.clear();
+    resetTasksWebSocket(false);
     set({ user: null, token: null, isAuthenticated: false });
   },
 

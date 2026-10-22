@@ -15,14 +15,17 @@ from ...models import ProxmoxServer, VMInstance, User, IPAMAllocation, IPAMNetwo
 from ...schemas import ProxmoxServerCreate, ProxmoxServerUpdate, ProxmoxServerResponse
 from ...proxmox import ProxmoxClient, get_proxmox_resources
 from ...auth import (get_current_user, PermissionChecker, require_permission,
-                     check_permission, authenticate_ws_token)
+                     check_permission, authenticate_ws_session, watch_ws_access)
 from ...rbac import PermissionEngine
 from ...logging_service import LoggingService
 from ...ipam_service import IPAMService
+from ._helpers import enforce_server_visibility, pve_authority, stash_pve_ticket, claim_pve_ticket
+from ._helpers import PveNode, require_node_name
 from ._helpers import (check_vm_access, require_vm_access, _get_proxmox_client,
                         get_next_vmid, archive_and_delete_snapshots,
                         save_vm_instance, get_vm_instance, soft_delete_vm_instance,
-                        can_view_all_instances, pretty_os_from_template)
+                        can_view_all_instances, pretty_os_from_template,
+                        get_visible_server_ids, _NO_WORKSPACE_HEADER)
 from ...services.metrics_history import query_instance_metrics, timeframe_to_range
 
 router = APIRouter()
@@ -77,22 +80,34 @@ from ...models import TaskQueue
 from ...services.task_queue_service import TaskQueueService, process_task_queue
 from ...api.proxmox.tasks import ProxmoxTaskService
 from pydantic import BaseModel
-from typing import List as TypingList, Optional
+from typing import List as TypingList, Literal, Optional
+from pydantic import Field
 
 
 class BulkOperationItem(BaseModel):
     server_id: int
     vmid: int
-    vm_type: str  # 'qemu' or 'lxc'
-    name: str
-    node: str
-    target_node: Optional[str] = None  # для action=migrate
+    vm_type: Literal['qemu', 'lxc']
+    name: str = Field(..., max_length=255)
+    node: PveNode
+    target_node: Optional[PveNode] = None  # для action=migrate
     online: Optional[bool] = None       # live-миграция запущенной VM
 
 
 class BulkOperationRequest(BaseModel):
     action: str  # start, stop, restart, shutdown, delete, migrate
-    items: TypingList[BulkOperationItem]
+    items: TypingList[BulkOperationItem] = Field(..., max_length=500)
+
+
+# Same permissions as the single-guest endpoints (control_vm / migrate / delete).
+_BULK_ACTION_PERMISSIONS = {
+    'start': {'qemu': 'vm:start', 'lxc': 'vm:start'},
+    'stop': {'qemu': 'vm:stop', 'lxc': 'vm:stop'},
+    'shutdown': {'qemu': 'vm:stop', 'lxc': 'vm:stop'},
+    'restart': {'qemu': 'vm:restart', 'lxc': 'vm:restart'},
+    'delete': {'qemu': 'vm:delete', 'lxc': 'vm:delete'},
+    'migrate': {'qemu': 'vm:migrate', 'lxc': 'lxc:migrate'},
+}
 
 
 class VMOwnerUpdate(BaseModel):
@@ -387,6 +402,7 @@ def execute_vm_command(
     - free -m
     - systemctl status nginx
     """
+    require_vm_access(db, current_user, server_id, vmid)
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Proxmox server not found")
@@ -399,6 +415,8 @@ def execute_vm_command(
         
         result = client.execute_command(node, vmid, command, timeout)
         return JSONResponse(content=result)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error executing command on VM {vmid}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -421,6 +439,7 @@ def execute_vm_script(
     Скрипт будет сохранен во временный файл на VM и выполнен.
     После выполнения временный файл будет удален.
     """
+    require_vm_access(db, current_user, server_id, vmid)
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Proxmox server not found")
@@ -433,6 +452,8 @@ def execute_vm_script(
         
         result = client.execute_script(node, vmid, script, interpreter, timeout)
         return JSONResponse(content=result)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error executing script on VM {vmid}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -443,7 +464,7 @@ def execute_vm_script(
 class CloneRequest(BaseModel):
     new_name: str
     full: bool = True
-    target_node: Optional[str] = None
+    target_node: Optional[PveNode] = None
     target_storage: Optional[str] = None
     description: Optional[str] = None
     owner_id: Optional[int] = None
@@ -462,15 +483,31 @@ def _resolve_clone_owner(db: Session, current_user: User, owner_id: Optional[int
     return current_user.id
 
 
+def _check_clone_quota(db: Session, server_id: int, vmid: int, owner_id: int) -> None:
+    """A clone is a new instance with the source's resources — count it.
+
+    Deploy, LXC and ISO creation enforced quotas, cloning did not, so a tenant
+    could multiply one small allowed VM past every limit.
+    """
+    from ...services.quota_service import check_quota
+    src = get_vm_instance(db, server_id, vmid)
+    check_quota(
+        db, owner_id,
+        add_cores=(src.cores or 0) if src else 0,
+        add_memory_mb=(src.memory or 0) if src else 0,
+        add_disk_gb=(src.disk_size or 0) if src else 0,
+    )
+
+
 class MigrateRequest(BaseModel):
-    target_node: str
+    target_node: PveNode
     target_storage: Optional[str] = None
     online: bool = False
 
 
 class RemoteMigrateRequest(BaseModel):
     target_server_id: int
-    target_node: str
+    target_node: PveNode
     target_vmid: Optional[int] = None
     target_storage: Optional[str] = None
     target_bridge: Optional[str] = None
@@ -479,8 +516,10 @@ class RemoteMigrateRequest(BaseModel):
 
 
 class ChangePasswordRequest(BaseModel):
-    username: str = "root"
-    password: str
+    # Fed to chpasswd as "user:password" lines: a newline would add a second
+    # entry, a colon in the name would shift the password field.
+    username: str = Field(default="root", pattern=r"^[^:\s]{1,64}$")
+    password: str = Field(..., min_length=1, max_length=256, pattern=r"^[^\r\n]+$")
 
 
 def _resolve_server(db: Session, server_id: int) -> ProxmoxServer:
@@ -516,6 +555,7 @@ def clone_vm_endpoint(
     require_vm_access(db, current_user, server_id, vmid)
     _resolve_server(db, server_id)
     owner_id = _resolve_clone_owner(db, current_user, body.owner_id)
+    _check_clone_quota(db, server_id, vmid, owner_id)
 
     task = DeployTask(
         kind='clone', name=body.new_name, status='pending', step='В очереди...', progress=0,
@@ -548,6 +588,7 @@ def clone_container_endpoint(
     require_vm_access(db, current_user, server_id, vmid)
     _resolve_server(db, server_id)
     owner_id = _resolve_clone_owner(db, current_user, body.owner_id)
+    _check_clone_quota(db, server_id, vmid, owner_id)
 
     task = DeployTask(
         kind='clone', name=body.new_name, status='pending', step='В очереди...', progress=0,
@@ -1102,7 +1143,7 @@ async def delete_vm(
 
 # ==================== High Availability (HA) Endpoints ====================
 
-@router.get("/api/{server_id}/ha/status")
+@router.get("/api/{server_id}/ha/status", dependencies=[Depends(enforce_server_visibility)])
 def get_ha_status(
     server_id: int,
     db: Session = Depends(get_db),
@@ -1146,6 +1187,7 @@ def get_resource_ha_status(
     current_user: User = Depends(PermissionChecker("vm:view"))
 ):
     """Получить HA статус конкретной VM или контейнера"""
+    require_vm_access(db, current_user, server_id, vmid)
     if vm_type not in ['vm', 'ct']:
         raise HTTPException(status_code=400, detail="vm_type must be 'vm' or 'ct'")
     
@@ -1200,6 +1242,7 @@ def add_resource_to_ha(
     current_user: User = Depends(PermissionChecker("server:manage"))
 ):
     """Добавить VM или контейнер в HA"""
+    require_vm_access(db, current_user, server_id, vmid)
     if vm_type not in ['vm', 'ct']:
         raise HTTPException(status_code=400, detail="vm_type must be 'vm' or 'ct'")
     
@@ -1263,6 +1306,7 @@ def remove_resource_from_ha(
     current_user: User = Depends(PermissionChecker("server:manage"))
 ):
     """Удалить VM или контейнер из HA"""
+    require_vm_access(db, current_user, server_id, vmid)
     if vm_type not in ['vm', 'ct']:
         raise HTTPException(status_code=400, detail="vm_type must be 'vm' or 'ct'")
     
@@ -1453,6 +1497,7 @@ def get_vm_config(
     current_user: User = Depends(PermissionChecker("vm:view"))
 ):
     """Получить конфигурацию VM"""
+    require_vm_access(db, current_user, server_id, vmid)
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Proxmox server not found")
@@ -1465,12 +1510,14 @@ def get_vm_config(
         
         config = client.get_vm_config(node, vmid)
         return JSONResponse(content=config)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting VM {vmid} config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/api/{server_id}/nodes/{node}/hardware/pci")
+@router.get("/api/{server_id}/nodes/{node}/hardware/pci", dependencies=[Depends(enforce_server_visibility)])
 def list_node_pci_devices(
     server_id: int,
     node: str,
@@ -1487,7 +1534,7 @@ def list_node_pci_devices(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/api/{server_id}/nodes/{node}/hardware/usb")
+@router.get("/api/{server_id}/nodes/{node}/hardware/usb", dependencies=[Depends(enforce_server_visibility)])
 def list_node_usb_devices(
     server_id: int,
     node: str,
@@ -1514,6 +1561,7 @@ async def update_vm_config(
     current_user: User = Depends(PermissionChecker("server:manage"))
 ):
     """Обновить конфигурацию VM (CPU, Memory, etc.)"""
+    require_vm_access(db, current_user, server_id, vmid)
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Proxmox server not found")
@@ -1549,6 +1597,7 @@ async def resize_vm_disk(
     current_user: User = Depends(PermissionChecker("server:manage"))
 ):
     """Изменить размер диска VM"""
+    require_vm_access(db, current_user, server_id, vmid)
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Proxmox server not found")
@@ -1625,6 +1674,7 @@ async def move_vm_disk(
     current_user: User = Depends(PermissionChecker("server:manage"))
 ):
     """Переместить диск VM в другое хранилище (move_disk)."""
+    require_vm_access(db, current_user, server_id, vmid)
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Proxmox server not found")
@@ -1666,6 +1716,7 @@ async def add_vm_disk(
     current_user: User = Depends(PermissionChecker("server:manage"))
 ):
     """Добавить новый диск VM."""
+    require_vm_access(db, current_user, server_id, vmid)
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Proxmox server not found")
@@ -1709,6 +1760,7 @@ async def attach_vm_physical_disk(
     current_user: User = Depends(PermissionChecker("server:manage"))
 ):
     """Пробросить физический диск ноды в VM (raw device passthrough)."""
+    require_vm_access(db, current_user, server_id, vmid)
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Proxmox server not found")
@@ -1752,6 +1804,7 @@ async def detach_vm_disk(
     current_user: User = Depends(PermissionChecker("server:manage"))
 ):
     """Отключить (или удалить) диск VM."""
+    require_vm_access(db, current_user, server_id, vmid)
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Proxmox server not found")
@@ -1787,6 +1840,7 @@ def unlock_vm_endpoint(
     current_user: User = Depends(PermissionChecker("server:manage"))
 ):
     """Снять блокировку (lock) с VM — аналог qm unlock."""
+    require_vm_access(db, current_user, server_id, vmid)
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Proxmox server not found")
@@ -1815,6 +1869,7 @@ def unlock_container_endpoint(
     current_user: User = Depends(PermissionChecker("server:manage"))
 ):
     """Снять блокировку (lock) с LXC — аналог pct unlock."""
+    require_vm_access(db, current_user, server_id, vmid)
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Proxmox server not found")
@@ -1844,6 +1899,7 @@ async def update_vm_cloud_init(
     current_user: User = Depends(PermissionChecker("server:manage"))
 ):
     """Обновить cloud-init параметры VM (user/password/SSH/IP/DNS)."""
+    require_vm_access(db, current_user, server_id, vmid)
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Proxmox server not found")
@@ -1887,6 +1943,7 @@ def enable_vm_serial(
     Возвращает added=True, если устройство было только что добавлено (тогда для
     появления в гостевой ОС может потребоваться перезагрузка VM).
     """
+    require_vm_access(db, current_user, server_id, vmid)
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Proxmox server not found")
@@ -1920,6 +1977,7 @@ async def resize_container_disk(
     current_user: User = Depends(PermissionChecker("server:manage"))
 ):
     """Изменить размер диска контейнера"""
+    require_vm_access(db, current_user, server_id, vmid)
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Proxmox server not found")
@@ -1978,6 +2036,7 @@ async def move_container_disk(
     current_user: User = Depends(PermissionChecker("server:manage"))
 ):
     """Переместить том контейнера в другое хранилище (move_volume)."""
+    require_vm_access(db, current_user, server_id, vmid)
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Proxmox server not found")
@@ -2017,6 +2076,7 @@ def get_container_config(
     current_user: User = Depends(PermissionChecker("vm:view"))
 ):
     """Получить конфигурацию LXC контейнера"""
+    require_vm_access(db, current_user, server_id, vmid)
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Proxmox server not found")
@@ -2029,6 +2089,8 @@ def get_container_config(
         
         config = client.get_container_config(node, vmid)
         return JSONResponse(content=config)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting container {vmid} config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2044,6 +2106,7 @@ async def update_container_config(
     current_user: User = Depends(PermissionChecker("server:manage"))
 ):
     """Обновить конфигурацию LXC контейнера"""
+    require_vm_access(db, current_user, server_id, vmid)
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Proxmox server not found")
@@ -2069,7 +2132,7 @@ async def update_container_config(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/api/{server_id}/nodes")
+@router.get("/api/{server_id}/nodes", dependencies=[Depends(enforce_server_visibility)])
 def get_server_nodes(
     server_id: int,
     db: Session = Depends(get_db),
@@ -2114,6 +2177,8 @@ def get_server_nodes(
 
         logger.info(f"Nodes for server {server_id} ({server.name}), cluster_id={cluster_id}: {len(nodes)} node(s)")
         return JSONResponse(content={"nodes": nodes, "cluster_id": cluster_id, "version": version})
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting nodes from {server.name}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2143,6 +2208,8 @@ def get_vm_status(
 
         status = client.get_vm_status(node, vmid)
         return JSONResponse(content=status)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting VM {vmid} status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2170,6 +2237,8 @@ def get_container_status(
 
         status = client.get_container_status(node, vmid)
         return JSONResponse(content=status)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting container {vmid} status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2184,6 +2253,7 @@ def get_vm_interfaces(
     current_user: User = Depends(PermissionChecker("vm:view"))
 ):
     """Получить сетевые интерфейсы и IP адреса VM через QEMU guest agent"""
+    require_vm_access(db, current_user, server_id, vmid)
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Proxmox server not found")
@@ -2196,6 +2266,8 @@ def get_vm_interfaces(
         
         interfaces = client.get_vm_interfaces(node, vmid)
         return JSONResponse(content={"interfaces": interfaces})
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting VM {vmid} interfaces: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2210,6 +2282,7 @@ def get_container_interfaces(
     current_user: User = Depends(PermissionChecker("vm:view"))
 ):
     """Получить сетевые интерфейсы и IP адреса контейнера"""
+    require_vm_access(db, current_user, server_id, vmid)
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Proxmox server not found")
@@ -2222,6 +2295,8 @@ def get_container_interfaces(
         
         interfaces = client.get_container_interfaces(node, vmid)
         return JSONResponse(content={"interfaces": interfaces})
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting container {vmid} interfaces: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2248,6 +2323,8 @@ def get_container_status_api(
         
         status = client.get_container_status(node, vmid)
         return JSONResponse(content=status)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting container {vmid} status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2263,6 +2340,7 @@ def get_vm_rrddata(
     current_user: User = Depends(PermissionChecker("vm:view"))
 ):
     """Получить исторические данные VM для графиков (CPU, RAM, Network, Disk IO)"""
+    require_vm_access(db, current_user, server_id, vmid)
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Proxmox server not found")
@@ -2275,6 +2353,8 @@ def get_vm_rrddata(
         
         rrddata = client.get_vm_rrddata(node, vmid, timeframe)
         return JSONResponse(content=rrddata)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting VM {vmid} RRD data: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2290,6 +2370,7 @@ def get_container_rrddata(
     current_user: User = Depends(PermissionChecker("vm:view"))
 ):
     """Получить исторические данные контейнера для графиков"""
+    require_vm_access(db, current_user, server_id, vmid)
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Proxmox server not found")
@@ -2302,6 +2383,8 @@ def get_container_rrddata(
         
         rrddata = client.get_container_rrddata(node, vmid, timeframe)
         return JSONResponse(content=rrddata)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting container {vmid} RRD data: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2335,6 +2418,7 @@ def get_vm_metrics(
     current_user: User = Depends(PermissionChecker("vm:view")),
 ):
     """Retrieve VM metrics time-series from the local DB (no Proxmox call)."""
+    require_vm_access(db, current_user, server_id, vmid)
     f, t = _resolve_metrics_window(timeframe, from_ts, to_ts)
     return query_instance_metrics(db, server_id, vmid, f, t, nic)
 
@@ -2352,6 +2436,7 @@ def get_container_metrics(
     current_user: User = Depends(PermissionChecker("vm:view")),
 ):
     """Retrieve container metrics time-series from the local DB (no Proxmox call)."""
+    require_vm_access(db, current_user, server_id, vmid)
     f, t = _resolve_metrics_window(timeframe, from_ts, to_ts)
     return query_instance_metrics(db, server_id, vmid, f, t, nic)
 
@@ -2387,7 +2472,7 @@ def get_vm_vnc(
         
         # 1. Получаем auth ticket
         auth_response = requests.post(
-            f"https://{server.ip_address}:8006/api2/json/access/ticket",
+            f"https://{pve_authority(server)}/api2/json/access/ticket",
             data={
                 "username": auth_username,
                 "password": password_to_use
@@ -2407,7 +2492,7 @@ def get_vm_vnc(
         # generate-password=1: Proxmox 8.x возвращает случайный VNC пароль для VNCAuth;
         # в Proxmox 9.x (NoAuth) поле password пустое, но соединение проходит без пароля.
         vnc_response = requests.post(
-            f"https://{server.ip_address}:8006/api2/json/nodes/{node}/qemu/{vmid}/vncproxy",
+            f"https://{pve_authority(server)}/api2/json/nodes/{node}/qemu/{vmid}/vncproxy",
             data={"websocket": 1, "generate-password": 1},
             headers={
                 "CSRFPreventionToken": csrf_token
@@ -2429,11 +2514,11 @@ def get_vm_vnc(
             'port': vnc_data.get('port'),
             'ticket': vnc_data.get('ticket'),
             'password': vnc_password,
-            'host': server.ip_address,
             'node': node,
             'vmid': vmid,
             'type': 'qemu',
-            'auth_ticket': auth_ticket
+            # Opaque handle, redeemed by the WS proxy — never the PVE ticket itself.
+            'auth_ticket': stash_pve_ticket(auth_ticket, current_user.id, server_id, vmid),
         }
         
         logger.info(f"User {current_user.username} opened VNC console for VM {vmid} (password_len={len(vnc_password)}, has_generate_password={'password' in vnc_data})")
@@ -2473,7 +2558,7 @@ def get_container_vnc(
         
         # 1. Получаем auth ticket
         auth_response = requests.post(
-            f"https://{server.ip_address}:8006/api2/json/access/ticket",
+            f"https://{pve_authority(server)}/api2/json/access/ticket",
             data={
                 "username": auth_username,
                 "password": password_to_use
@@ -2492,7 +2577,7 @@ def get_container_vnc(
         # 2. Создаём VNC proxy с этим же ticket
         # LXC vncproxy не поддерживает generate-password; используем ticket как VNCAuth пароль
         vnc_response = requests.post(
-            f"https://{server.ip_address}:8006/api2/json/nodes/{node}/lxc/{vmid}/vncproxy",
+            f"https://{pve_authority(server)}/api2/json/nodes/{node}/lxc/{vmid}/vncproxy",
             data={"websocket": 1},
             headers={
                 "CSRFPreventionToken": csrf_token
@@ -2513,11 +2598,11 @@ def get_container_vnc(
             'port': vnc_data.get('port'),
             'ticket': vnc_data.get('ticket'),
             'password': vnc_password,
-            'host': server.ip_address,
             'node': node,
             'vmid': vmid,
             'type': 'lxc',
-            'auth_ticket': auth_ticket
+            # Opaque handle, redeemed by the WS proxy — never the PVE ticket itself.
+            'auth_ticket': stash_pve_ticket(auth_ticket, current_user.id, server_id, vmid),
         }
         
         logger.info(f"User {current_user.username} opened VNC console for container {vmid}")
@@ -2542,7 +2627,7 @@ async def vnc_websocket_proxy(
     vncticket: str,
     vnc_password: str = None,  # VNC пароль сгенерированный через generate-password
     auth_ticket: str = None,  # Auth ticket переданный с frontend
-    token: str = Query(None),  # JWT панели (?token=) — браузеры не шлют заголовки на WS
+    ticket: str = Query(None),  # WS-тикет панели (POST /api/auth/ws-ticket)
     db: Session = Depends(get_db)
 ):
     """WebSocket прокси для VNC подключения к Proxmox"""
@@ -2550,14 +2635,15 @@ async def vnc_websocket_proxy(
     import urllib.parse
 
     # --- Authenticate the panel user before bridging to Proxmox ------------
-    user = authenticate_ws_token(token, db)
+    user, ws_session = authenticate_ws_session(ticket, db)
     if not user:
         await websocket.close(code=4001, reason="Authentication required")
         return
-    if not PermissionEngine.has_permission(user, "vm:console"):
-        await websocket.close(code=4003, reason="Permission denied")
-        return
-    if not check_vm_access(db, user, server_id, vmid):
+
+    def _still_allowed(db_, u):
+        return PermissionEngine.has_permission(u, "vm:console") and check_vm_access(db_, u, server_id, vmid)
+
+    if not _still_allowed(db, user):
         await websocket.close(code=4003, reason="Access denied")
         return
 
@@ -2570,15 +2656,19 @@ async def vnc_websocket_proxy(
         await websocket.close(code=1008, reason="Proxmox server not found")
         return
     
-    # Используем auth_ticket переданный с frontend (он создан в той же сессии что и vncticket)
+    # auth_ticket is the handle from GET .../vnc; the PVE ticket behind it was
+    # created in the same session as vncticket.
     if auth_ticket:
-        logger.info(f"Using auth_ticket from frontend for VNC WebSocket")
+        auth_ticket = claim_pve_ticket(auth_ticket, user.id, server_id, vmid)
+        if not auth_ticket:
+            await websocket.close(code=4003, reason="Console session expired, reopen the console")
+            return
     
     # Построить URL для Proxmox WebSocket
     # Преобразуем vmtype: vm -> qemu, container -> lxc
     proxmox_vmtype = "qemu" if vmtype == "vm" else "lxc"
     encoded_ticket = urllib.parse.quote(vncticket, safe='')
-    proxmox_ws_url = f"wss://{server.ip_address}:8006/api2/json/nodes/{node}/{proxmox_vmtype}/{vmid}/vncwebsocket?port={port}&vncticket={encoded_ticket}"
+    proxmox_ws_url = f"wss://{pve_authority(server)}/api2/json/nodes/{node}/{proxmox_vmtype}/{vmid}/vncwebsocket?port={port}&vncticket={encoded_ticket}"
     
     logger.info(f"Connecting to Proxmox VNC: {server.name} for {proxmox_vmtype}/{vmid}")
     
@@ -2667,7 +2757,9 @@ async def vnc_websocket_proxy(
         done, pending = await asyncio.wait(
             [
                 asyncio.create_task(client_to_proxmox()),
-                asyncio.create_task(proxmox_to_client())
+                asyncio.create_task(proxmox_to_client()),
+                # Closes the bridge once the session/permission is gone.
+                asyncio.create_task(watch_ws_access(user.id, ws_session, _still_allowed)),
             ],
             return_when=asyncio.FIRST_COMPLETED
         )
@@ -2698,6 +2790,7 @@ def get_saved_vm_config(
     current_user: User = Depends(PermissionChecker("vm:view"))
 ):
     """Get saved VM configuration from database"""
+    require_vm_access(db, current_user, server_id, vmid)
     instance = get_vm_instance(db, server_id, vmid)
     if not instance:
         return JSONResponse(content={"found": False})
@@ -2723,7 +2816,7 @@ def get_saved_vm_config(
 
 # ==================== LXC Container Creation ====================
 
-@router.get("/api/{server_id}/all-lxc-templates")
+@router.get("/api/{server_id}/all-lxc-templates", dependencies=[Depends(enforce_server_visibility)])
 def get_all_lxc_templates(
     server_id: int,
     db: Session = Depends(get_db),
@@ -2751,7 +2844,7 @@ def get_all_lxc_templates(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/api/{server_id}/available-lxc-templates")
+@router.get("/api/{server_id}/available-lxc-templates", dependencies=[Depends(enforce_server_visibility)])
 def get_available_lxc_templates(
     server_id: int,
     node: str,
@@ -2779,7 +2872,7 @@ def get_available_lxc_templates(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/api/{server_id}/download-lxc-template")
+@router.post("/api/{server_id}/download-lxc-template", dependencies=[Depends(enforce_server_visibility)])
 async def download_lxc_template(
     server_id: int,
     request: Request,
@@ -2795,6 +2888,7 @@ async def download_lxc_template(
     node = data.get('node')
     storage = data.get('storage')
     template = data.get('template')
+    require_node_name(node)
     
     if not all([node, storage, template]):
         raise HTTPException(status_code=400, detail="Missing required parameters: node, storage, template")
@@ -2876,7 +2970,7 @@ def get_vm_terminal(
         
         # 1. Получаем auth ticket
         auth_response = requests.post(
-            f"https://{server.ip_address}:8006/api2/json/access/ticket",
+            f"https://{pve_authority(server)}/api2/json/access/ticket",
             data={"username": auth_username, "password": password_to_use},
             verify=server.verify_ssl,
             timeout=10
@@ -2891,7 +2985,7 @@ def get_vm_terminal(
         
         # 2. Создаём terminal proxy
         term_response = requests.post(
-            f"https://{server.ip_address}:8006/api2/json/nodes/{node}/qemu/{vmid}/termproxy",
+            f"https://{pve_authority(server)}/api2/json/nodes/{node}/qemu/{vmid}/termproxy",
             headers={"CSRFPreventionToken": csrf_token},
             cookies={"PVEAuthCookie": auth_ticket},
             verify=server.verify_ssl,
@@ -2906,11 +3000,11 @@ def get_vm_terminal(
         response_data = {
             'port': term_data.get('port'),
             'ticket': term_data.get('ticket'),
-            'host': server.ip_address,
             'node': node,
             'vmid': vmid,
             'type': 'qemu',
-            'auth_ticket': auth_ticket
+            # Opaque handle, redeemed by the WS proxy — never the PVE ticket itself.
+            'auth_ticket': stash_pve_ticket(auth_ticket, current_user.id, server_id, vmid),
         }
         
         logger.info(f"User {current_user.username} opened terminal for VM {vmid}")
@@ -2932,6 +3026,7 @@ async def exec_in_container(
     current_user: User = Depends(PermissionChecker("vm:console"))
 ):
     """Выполнить команду в LXC контейнере через pct exec"""
+    require_vm_access(db, current_user, server_id, vmid)
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Proxmox server not found")
@@ -2971,7 +3066,7 @@ async def terminal_websocket_fixed(
     server_id: int,
     node: str,
     vmid: int,
-    token: str = Query(None),  # JWT панели (?token=) — браузеры не шлют заголовки на WS
+    ticket: str = Query(None),  # WS-тикет панели (POST /api/auth/ws-ticket)
     db: Session = Depends(get_db)
 ):
     """WebSocket терминал для LXC контейнеров через Proxmox termproxy API"""
@@ -2980,14 +3075,15 @@ async def terminal_websocket_fixed(
     from urllib.parse import quote
 
     # --- Authenticate the panel user before opening a root shell -----------
-    user = authenticate_ws_token(token, db)
+    user, ws_session = authenticate_ws_session(ticket, db)
     if not user:
         await websocket.close(code=4001, reason="Authentication required")
         return
-    if not PermissionEngine.has_permission(user, "vm:console"):
-        await websocket.close(code=4003, reason="Permission denied")
-        return
-    if not check_vm_access(db, user, server_id, vmid):
+
+    def _still_allowed(db_, u):
+        return PermissionEngine.has_permission(u, "vm:console") and check_vm_access(db_, u, server_id, vmid)
+
+    if not _still_allowed(db, user):
         await websocket.close(code=4003, reason="Access denied")
         return
 
@@ -3005,14 +3101,14 @@ async def terminal_websocket_fixed(
 
     try:
         # Шаг 1: Auth ticket
-        async with httpx.AsyncClient(verify=False, timeout=10) as client:
+        async with httpx.AsyncClient(verify=server.verify_ssl, timeout=10) as client:
             if not server.password:
                 await websocket.close(code=1011, reason="Terminal requires password authentication")
                 return
 
             auth_username = server.api_user.split("!")[0] if "!" in server.api_user else server.api_user
             auth_resp = await client.post(
-                f"https://{server.ip_address}:8006/api2/json/access/ticket",
+                f"https://{pve_authority(server)}/api2/json/access/ticket",
                 data={"username": auth_username, "password": server.password}
             )
             if auth_resp.status_code != 200:
@@ -3027,7 +3123,7 @@ async def terminal_websocket_fixed(
 
             # Шаг 2: Termproxy
             term_resp = await client.post(
-                f"https://{server.ip_address}:8006/api2/json/nodes/{node}/lxc/{vmid}/termproxy",
+                f"https://{pve_authority(server)}/api2/json/nodes/{node}/lxc/{vmid}/termproxy",
                 headers={"CSRFPreventionToken": csrf_token},
                 cookies={"PVEAuthCookie": ticket}
             )
@@ -3043,7 +3139,7 @@ async def terminal_websocket_fixed(
 
         # Шаг 3: WebSocket к Proxmox — идентично VNC handler
         proxmox_ws_url = (
-            f"wss://{server.ip_address}:8006/api2/json/nodes/{node}/lxc/{vmid}/vncwebsocket"
+            f"wss://{pve_authority(server)}/api2/json/nodes/{node}/lxc/{vmid}/vncwebsocket"
             f"?port={port}&vncticket={quote(vncticket, safe='')}"
         )
 
@@ -3121,6 +3217,8 @@ async def terminal_websocket_fixed(
             [
                 asyncio.create_task(client_to_proxmox()),
                 asyncio.create_task(proxmox_to_client()),
+                # Closes the bridge once the session/permission is gone.
+                asyncio.create_task(watch_ws_access(user.id, ws_session, _still_allowed)),
             ],
             return_when=asyncio.FIRST_COMPLETED
         )
@@ -3157,7 +3255,7 @@ async def serial_websocket(
     server_id: int,
     node: str,
     vmid: int,
-    token: str = Query(None),  # JWT панели (?token=)
+    ticket: str = Query(None),  # WS-тикет панели (POST /api/auth/ws-ticket)
     db: Session = Depends(get_db)
 ):
     """WebSocket serial-консоль для VM (qemu) через Proxmox termproxy.
@@ -3169,14 +3267,15 @@ async def serial_websocket(
     import httpx
     from urllib.parse import quote
 
-    user = authenticate_ws_token(token, db)
+    user, ws_session = authenticate_ws_session(ticket, db)
     if not user:
         await websocket.close(code=4001, reason="Authentication required")
         return
-    if not PermissionEngine.has_permission(user, "vm:console"):
-        await websocket.close(code=4003, reason="Permission denied")
-        return
-    if not check_vm_access(db, user, server_id, vmid):
+
+    def _still_allowed(db_, u):
+        return PermissionEngine.has_permission(u, "vm:console") and check_vm_access(db_, u, server_id, vmid)
+
+    if not _still_allowed(db, user):
         await websocket.close(code=4003, reason="Access denied")
         return
 
@@ -3190,14 +3289,14 @@ async def serial_websocket(
 
     proxmox_ws = None
     try:
-        async with httpx.AsyncClient(verify=False, timeout=10) as client:
+        async with httpx.AsyncClient(verify=server.verify_ssl, timeout=10) as client:
             if not server.password:
                 await websocket.close(code=1011, reason="Serial console requires password authentication")
                 return
 
             auth_username = server.api_user.split("!")[0] if "!" in server.api_user else server.api_user
             auth_resp = await client.post(
-                f"https://{server.ip_address}:8006/api2/json/access/ticket",
+                f"https://{pve_authority(server)}/api2/json/access/ticket",
                 data={"username": auth_username, "password": server.password}
             )
             if auth_resp.status_code != 200:
@@ -3209,7 +3308,7 @@ async def serial_websocket(
             csrf_token = auth_data["CSRFPreventionToken"]
 
             term_resp = await client.post(
-                f"https://{server.ip_address}:8006/api2/json/nodes/{node}/qemu/{vmid}/termproxy",
+                f"https://{pve_authority(server)}/api2/json/nodes/{node}/qemu/{vmid}/termproxy",
                 headers={"CSRFPreventionToken": csrf_token},
                 cookies={"PVEAuthCookie": ticket}
             )
@@ -3223,7 +3322,7 @@ async def serial_websocket(
             port = term_data["port"]
 
         proxmox_ws_url = (
-            f"wss://{server.ip_address}:8006/api2/json/nodes/{node}/qemu/{vmid}/vncwebsocket"
+            f"wss://{pve_authority(server)}/api2/json/nodes/{node}/qemu/{vmid}/vncwebsocket"
             f"?port={port}&vncticket={quote(vncticket, safe='')}"
         )
 
@@ -3284,6 +3383,8 @@ async def serial_websocket(
             [
                 asyncio.create_task(client_to_proxmox()),
                 asyncio.create_task(proxmox_to_client()),
+                # Closes the bridge once the session/permission is gone.
+                asyncio.create_task(watch_ws_access(user.id, ws_session, _still_allowed)),
             ],
             return_when=asyncio.FIRST_COMPLETED
         )
@@ -3321,7 +3422,7 @@ async def node_shell_websocket(
     server_id: int,
     node: str,
     cmd: str = Query("upgrade"),  # upgrade | login
-    token: str = Query(None),     # JWT панели (?token=) — браузеры не шлют заголовки на WS
+    ticket: str = Query(None),    # WS-тикет панели (POST /api/auth/ws-ticket)
     db: Session = Depends(get_db)
 ):
     """
@@ -3334,12 +3435,19 @@ async def node_shell_websocket(
     from urllib.parse import quote
 
     # --- Authenticate the panel user before opening a root shell -----------
-    user = authenticate_ws_token(token, db)
+    user, ws_session = authenticate_ws_session(ticket, db)
     if not user:
         await websocket.close(code=4001, reason="Authentication required")
         return
-    if not PermissionEngine.has_permission(user, "node:upgrade"):
-        await websocket.close(code=4003, reason="Permission denied")
+
+    def _still_allowed(db_, u):
+        # WebSocket routes are not covered by the router's enforce_server_visibility.
+        visible = get_visible_server_ids(_NO_WORKSPACE_HEADER, db_, u)
+        return (PermissionEngine.has_permission(u, "node:upgrade")
+                and (visible is None or server_id in visible))
+
+    if not _still_allowed(db, user):
+        await websocket.close(code=4003, reason="Access denied")
         return
     if cmd not in _ALLOWED_NODE_SHELL_CMDS:
         await websocket.close(code=4003, reason="Command not allowed")
@@ -3359,14 +3467,14 @@ async def node_shell_websocket(
 
     try:
         # Шаг 1: Auth ticket (termproxy требует пароль, не API-токен)
-        async with httpx.AsyncClient(verify=False, timeout=10) as client:
+        async with httpx.AsyncClient(verify=server.verify_ssl, timeout=10) as client:
             if not server.password:
                 await websocket.close(code=1011, reason="Node shell requires password authentication")
                 return
 
             auth_username = server.api_user.split("!")[0] if "!" in server.api_user else server.api_user
             auth_resp = await client.post(
-                f"https://{server.ip_address}:8006/api2/json/access/ticket",
+                f"https://{pve_authority(server)}/api2/json/access/ticket",
                 data={"username": auth_username, "password": server.password}
             )
             if auth_resp.status_code != 200:
@@ -3380,7 +3488,7 @@ async def node_shell_websocket(
 
             # Шаг 2: Termproxy на уровне ноды с нужной командой
             term_resp = await client.post(
-                f"https://{server.ip_address}:8006/api2/json/nodes/{node}/termproxy",
+                f"https://{pve_authority(server)}/api2/json/nodes/{node}/termproxy",
                 headers={"CSRFPreventionToken": csrf_token},
                 cookies={"PVEAuthCookie": ticket},
                 data={"cmd": cmd},
@@ -3397,7 +3505,7 @@ async def node_shell_websocket(
 
         # Шаг 3: WebSocket к Proxmox (node-level vncwebsocket)
         proxmox_ws_url = (
-            f"wss://{server.ip_address}:8006/api2/json/nodes/{node}/vncwebsocket"
+            f"wss://{pve_authority(server)}/api2/json/nodes/{node}/vncwebsocket"
             f"?port={port}&vncticket={quote(vncticket, safe='')}"
         )
 
@@ -3468,6 +3576,8 @@ async def node_shell_websocket(
             [
                 asyncio.create_task(client_to_proxmox()),
                 asyncio.create_task(proxmox_to_client()),
+                # Closes the bridge once the session/permission is gone.
+                asyncio.create_task(watch_ws_access(user.id, ws_session, _still_allowed)),
             ],
             return_when=asyncio.FIRST_COMPLETED
         )
@@ -3502,11 +3612,15 @@ async def node_shell_websocket(
 def create_bulk_operation(
     request: BulkOperationRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(PermissionChecker("vm:manage"))
+    current_user: User = Depends(get_current_user)
 ):
     """
     Create a bulk operation task.
     Returns task ID for tracking progress.
+
+    Every item is checked like the single-guest endpoint would check it:
+    the action's permission and access to that guest. The queue worker acts
+    with panel credentials, so items it receives must already be authorized.
     """
     # Map action to task type
     action_to_task_type = {
@@ -3525,10 +3639,12 @@ def create_bulk_operation(
     if not request.items:
         raise HTTPException(status_code=400, detail="No items selected")
 
-    # For delete action, require higher permission
-    if request.action == 'delete':
-        if not check_permission(current_user, "vm:delete"):
-            raise HTTPException(status_code=403, detail="Delete permission required")
+    perms = _BULK_ACTION_PERMISSIONS[request.action]
+    for perm in {perms[i.vm_type] for i in request.items}:
+        if not check_permission(current_user, perm):
+            raise HTTPException(status_code=403, detail=f"Permission denied: {perm}")
+    for i in request.items:
+        require_vm_access(db, current_user, i.server_id, i.vmid)
 
     # For migrate, каждый элемент обязан нести целевую ноду
     if request.action == 'migrate':
@@ -3730,8 +3846,11 @@ def set_vm_owner(
 
     # Push a real-time event so every connected client refreshes the owner
     # column without a manual page reload.
+    # The payload carries the new owner's e-mail, so it goes to administrators
+    # and the two owners involved only — not to every connected tenant.
     try:
-        from ...websocket_manager import broadcast_event
+        from ...websocket_manager import ws_manager, run_async_safe
+        from ...models import Role
         owner_user = (
             {
                 "username": target_user.username,
@@ -3740,13 +3859,22 @@ def set_vm_owner(
             }
             if target_user else None
         )
-        broadcast_event(
-            "vm_owner_changed",
-            server_id=server_id,
-            vmid=vmid,
-            owner_id=body.user_id,
-            owner_user=owner_user,
-        )
+        payload = {
+            "type": "vm_owner_changed",
+            "server_id": server_id,
+            "vmid": vmid,
+            "owner_id": body.user_id,
+            "owner_user": owner_user,
+        }
+        admin_ids = {
+            uid for (uid,) in db.query(User.id)
+            .outerjoin(Role, Role.id == User.role_id)
+            .filter(User.is_active == True)  # noqa: E712
+            .filter((User.is_admin == True) | (Role.name == "admin"))  # noqa: E712
+        }
+        recipients = admin_ids | {uid for uid in (old_owner_id, body.user_id) if uid}
+        for uid in recipients:
+            run_async_safe(ws_manager.send_to_user(uid, payload))
     except Exception as e:
         logger.debug(f"Failed to broadcast vm_owner_changed: {e}")
 
@@ -3763,9 +3891,13 @@ class NotesRequest(BaseModel):
     description: Optional[str] = ""
 
 
+# `device` becomes a VM config key: keep it to CD-ROM capable buses.
+_CDROM_DEVICE = r"^(ide|sata|scsi)\d{1,2}$"
+
+
 class IsoAttachRequest(BaseModel):
-    volid: str
-    device: str = "ide2"
+    volid: str = Field(..., pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*:iso/[^/\s]+$")
+    device: str = Field(default="ide2", pattern=_CDROM_DEVICE)
     # Поставить этот ISO первым в порядке загрузки (грузиться с образа: live-CD и т.п.).
     boot_from_iso: bool = False
     # Перезапустить ВМ, чтобы новый порядок загрузки вступил в силу (только если запущена).
@@ -3773,7 +3905,7 @@ class IsoAttachRequest(BaseModel):
 
 
 class IsoDetachRequest(BaseModel):
-    device: str = "ide2"
+    device: str = Field(default="ide2", pattern=_CDROM_DEVICE)
     # После извлечения ISO — поставить диск первым в порядке загрузки (грузиться с ОС).
     boot_from_disk: bool = True
     # Перезапустить ВМ, чтобы новый порядок загрузки вступил в силу (только если запущена).
@@ -3849,7 +3981,7 @@ def update_container_notes(
 
 # -------- ISO mount/unmount (KVM only) --------
 
-@router.get("/api/{server_id}/node/{node}/isos")
+@router.get("/api/{server_id}/node/{node}/isos", dependencies=[Depends(enforce_server_visibility)])
 def list_node_isos(
     server_id: int,
     node: str,
@@ -4189,6 +4321,8 @@ def control_container(
             return JSONResponse(content={"status": "success", "action": action_name, "vmid": vmid, "node": node, "upid": upid})
         else:
             raise HTTPException(status_code=500, detail="Failed to execute action")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error controlling container {vmid} on {server.name}: {e}")
         raise HTTPException(status_code=500, detail=str(e))

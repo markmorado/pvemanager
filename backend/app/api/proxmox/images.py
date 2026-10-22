@@ -7,8 +7,10 @@ qcow2 (content=import) / vztmpl с прогрессом через DeployTask + 
 """
 
 import asyncio
+import ipaddress
 import os
 import re
+import socket
 import shutil
 import tempfile
 from email.message import Message as _EmailMessage
@@ -26,9 +28,13 @@ from ...db import get_db
 from ...models import ProxmoxServer, User, DeployTask, ImageMirror
 from ...auth import PermissionChecker
 from ...catalog import CATALOG, get_catalog_image
-from ._helpers import _get_proxmox_client
+from ._helpers import _get_proxmox_client, PveNode, require_node_name, require_pve_id
 
-router = APIRouter()
+from ._helpers import enforce_server_visibility  # noqa: E402
+
+# Every {server_id} route: tenants only reach servers assigned to them
+# (directly or through a workspace) — see enforce_server_visibility.
+router = APIRouter(dependencies=[Depends(enforce_server_visibility)])
 
 
 def _sanitize_filename(name: str, default: str = 'upload.iso') -> str:
@@ -52,7 +58,7 @@ class ImageDownloadResponse(BaseModel):
 
 
 class ImageDownloadRequest(BaseModel):
-    node: str
+    node: PveNode
     storage: str
     # Либо ссылка на запись каталога/зеркала...
     source_id: Optional[str] = None
@@ -275,10 +281,33 @@ def _filename_from_url_response(url: str, headers) -> str:
     return unquote(path.rsplit('/', 1)[-1]) or 'download'
 
 
+async def _reject_internal_target(request: httpx.Request) -> None:
+    """httpx request hook: refuse loopback / link-local / unspecified targets.
+
+    The panel fetches the URL itself, so without this a caller could probe the
+    panel's own services (DB, API on localhost) or cloud metadata endpoints
+    (169.254.169.254) — on every redirect hop, not just the first URL.
+    Private LAN ranges stay allowed: internal mirrors are a legitimate source.
+    """
+    if request.url.scheme not in ("http", "https"):
+        raise httpx.UnsupportedProtocol(f"Scheme not allowed: {request.url.scheme}")
+    host = request.url.host
+    try:
+        infos = await asyncio.get_running_loop().getaddrinfo(host, None)
+    except socket.gaierror as e:
+        raise httpx.ConnectError(f"Cannot resolve {host}: {e}")
+    for info in infos:
+        addr = ipaddress.ip_address(info[4][0].split("%")[0])
+        if addr.is_loopback or addr.is_link_local or addr.is_unspecified or addr.is_multicast:
+            raise httpx.ConnectError(f"Destination not allowed: {host}")
+
+
 @router.get("/api/images/resolve-filename")
 async def resolve_image_filename(
     url: str = Query(..., description="URL образа для определения реального имени файла"),
-    current_user: User = Depends(PermissionChecker("template:view")),
+    # Only the download dialog (template:manage) needs this; it makes the panel
+    # issue requests to caller-chosen URLs, so it is not for read-only roles.
+    current_user: User = Depends(PermissionChecker("template:manage")),
 ):
     """
     Определить настоящее имя файла по произвольному URL.
@@ -289,8 +318,13 @@ async def resolve_image_filename(
     а если сервер не поддерживает HEAD — открываем GET-поток и сразу же его
     закрываем, не скачивая тело.
     """
+    if urlparse(url).scheme not in ("http", "https"):
+        raise HTTPException(status_code=400, detail="Поддерживаются только http(s)-ссылки")
     try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=10.0, verify=False) as hc:
+        async with httpx.AsyncClient(
+            follow_redirects=True, max_redirects=5, timeout=10.0, verify=False,
+            event_hooks={"request": [_reject_internal_target]},
+        ) as hc:
             try:
                 resp = await hc.head(url)
                 if resp.status_code >= 400:
@@ -439,6 +473,9 @@ async def upload_image_file(
 
     if content not in ('iso', 'vztmpl'):
         raise HTTPException(status_code=400, detail=f"Неподдерживаемый тип контента: {content}")
+    # Form fields are not covered by the router's query/path validation.
+    require_node_name(node)
+    require_pve_id(storage, "storage")
 
     final_name = _sanitize_filename(filename or file.filename or 'upload.iso')
     if content == 'iso':
@@ -446,15 +483,18 @@ async def upload_image_file(
 
     tmp_dir = tempfile.mkdtemp(prefix='pveup_')
     tmp_path = os.path.join(tmp_dir, final_name)
+    def _copy_upload() -> int:
+        # Starlette has already spooled the body to a temp file; copy it in one
+        # worker-thread call (two thread hops per 4 MB chunk for a multi-GB ISO
+        # before), keeping the event loop free.
+        file.file.seek(0)
+        with open(tmp_path, 'wb') as out:
+            shutil.copyfileobj(file.file, out, 16 * 1024 * 1024)
+            return out.tell()
+
     size = 0
     try:
-        with open(tmp_path, 'wb') as out:
-            while True:
-                chunk = await file.read(1024 * 1024)
-                if not chunk:
-                    break
-                out.write(chunk)
-                size += len(chunk)
+        size = await asyncio.to_thread(_copy_upload)
     except Exception as e:
         shutil.rmtree(tmp_dir, ignore_errors=True)
         raise HTTPException(status_code=400, detail=f"Не удалось сохранить файл: {e}")

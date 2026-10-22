@@ -24,6 +24,11 @@ def get_local_time() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+# Stored Fernet-encrypted (api/settings.py, migration 46); decrypt_value
+# passes legacy plaintext through unchanged.
+_ENCRYPTED_SETTINGS = {"smtp_password", "telegram_bot_token"}
+
+
 def get_notification_setting(key: str, default: str = None) -> Optional[str]:
     """Get notification setting from database"""
     from ..db import SessionLocal
@@ -32,7 +37,12 @@ def get_notification_setting(key: str, default: str = None) -> Optional[str]:
     db = SessionLocal()
     try:
         setting = db.query(PanelSettings).filter(PanelSettings.key == key).first()
-        return setting.value if setting else default
+        if not setting:
+            return default
+        if key in _ENCRYPTED_SETTINGS:
+            from ..crypto import decrypt_value
+            return decrypt_value(setting.value)
+        return setting.value
     finally:
         db.close()
 

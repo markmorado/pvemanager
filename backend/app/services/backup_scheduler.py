@@ -5,6 +5,7 @@ APScheduler-based service for running scheduled backup jobs defined in the datab
 Runs vzdump on the configured Proxmox server at the specified cron times.
 """
 
+import asyncio
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -116,7 +117,15 @@ scheduler = BackupScheduler()
 
 
 async def run_backup_job(job_id: int) -> None:
-    """Execute a single backup job. Called by APScheduler or manual trigger."""
+    """Execute a single backup job. Called by APScheduler or manual trigger.
+
+    The work is blocking (DB + Proxmox HTTP per guest); APScheduler runs this
+    coroutine on the application's event loop, so it goes to a worker thread.
+    """
+    await asyncio.to_thread(_run_backup_job_sync, job_id)
+
+
+def _run_backup_job_sync(job_id: int) -> None:
     db = SessionLocal()
     try:
         job = db.query(BackupJob).filter(BackupJob.id == job_id).first()
@@ -143,7 +152,12 @@ async def run_backup_job(job_id: int) -> None:
         if vmids == ["all"] or vmids == "all":
             target_vmids = ["all"]
         else:
-            target_vmids = [int(v) for v in vmids] if vmids else []
+            try:
+                target_vmids = [int(v) for v in vmids] if vmids else []
+            except (TypeError, ValueError):
+                # Left "running" forever otherwise (jobs created before validation).
+                _update_job_status(db, job, "failed", f"Invalid vmids: {vmids!r}")
+                return
 
         errors = []
         last_upid = None

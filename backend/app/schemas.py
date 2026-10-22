@@ -278,6 +278,17 @@ class ProxmoxVMResponse(BaseModel):
 
 # ==================== OS Template Schemas ====================
 
+# Group icons are rendered as markup in the UI: allow plain text/emoji or a
+# single empty <i>/<span> carrying CSS classes — nothing that can run script.
+_GROUP_ICON_RE = re.compile(r'^(?:[^<>&"]{0,50}|<(i|span) class="[\w\s-]{1,150}"></\1>)$')
+
+
+def _check_group_icon(v: Optional[str]) -> Optional[str]:
+    if v is not None and not _GROUP_ICON_RE.match(v):
+        raise ValueError('icon must be text/emoji or <i class="..."></i>')
+    return v
+
+
 class OSTemplateGroupBase(BaseModel):
     """Base schema for OS Template Group"""
     name: str = Field(..., min_length=1, max_length=100, description="Group name (e.g., Ubuntu, Debian)")
@@ -289,7 +300,8 @@ class OSTemplateGroupBase(BaseModel):
 
 class OSTemplateGroupCreate(OSTemplateGroupBase):
     """Schema for creating OS Template Group"""
-    pass
+    # Validated on input only, so legacy rows still serialize in responses.
+    _icon = field_validator("icon")(_check_group_icon)
 
 
 class OSTemplateGroupUpdate(BaseModel):
@@ -299,6 +311,8 @@ class OSTemplateGroupUpdate(BaseModel):
     description: Optional[str] = None
     sort_order: Optional[int] = None
     is_active: Optional[bool] = None
+
+    _icon = field_validator("icon")(_check_group_icon)
 
 
 class OSTemplateGroupResponse(OSTemplateGroupBase):

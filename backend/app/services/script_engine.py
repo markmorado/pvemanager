@@ -17,8 +17,9 @@
 
 from __future__ import annotations
 
-import base64
-import time
+import re
+import secrets
+import shlex
 from dataclasses import dataclass
 from typing import Dict, Optional
 
@@ -26,7 +27,7 @@ from loguru import logger
 
 from ..models import ProxmoxServer
 from ..proxmox import ProxmoxClient
-from ..ssh_client import SSHClient
+from ..ssh_client import SSHClient, write_file_commands
 
 _CMD_TIMEOUT = 60
 
@@ -55,6 +56,24 @@ def _shell_quote(value: str) -> str:
     return "'" + str(value).replace("'", "'\\''") + "'"
 
 
+_PARAM_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+_INTERPRETER_RE = re.compile(r"^/[A-Za-z0-9_./+-]{1,99}$")
+
+
+def is_valid_param_name(name: str) -> bool:
+    return bool(_PARAM_NAME_RE.match(name or ""))
+
+
+def is_valid_interpreter(path: str) -> bool:
+    return bool(_INTERPRETER_RE.match(path or "")) and ".." not in path
+
+
+def _tmp_name(prefix: str) -> str:
+    # Unpredictable name: a guest user cannot pre-plant a symlink or swap the
+    # file between push and exec, and parallel runs do not collide.
+    return f"/tmp/{prefix}_{secrets.token_hex(8)}"
+
+
 def render_params(content: str, params: Dict[str, str]) -> str:
     """Добавить блок export-переменных перед телом скрипта.
 
@@ -65,8 +84,11 @@ def render_params(content: str, params: Dict[str, str]) -> str:
         return content
     lines = ["#!/bin/sh", "# --- параметры, подставленные каталогом скриптов ---"]
     for name, value in params.items():
-        # Имя переменной ограничено тем, что уже провалидировано схемой
-        # (см. api/scripts.py) — здесь только защитное экранирование значения.
+        # Имена приходят и из метаданных git-репозиториев — строка вида
+        # `X;cmd;Y` стала бы командой. Невалидные имена отбрасываем.
+        if not is_valid_param_name(name):
+            logger.warning(f"[script_engine] skipping invalid parameter name {name!r}")
+            continue
         lines.append(f"export {name}={_shell_quote('' if value is None else value)}")
     lines.append("# --- конец параметров ---")
     return "\n".join(lines) + "\n" + content
@@ -97,14 +119,17 @@ def run_on_node(server: ProxmoxServer, client: ProxmoxClient, script: str,
     ssh = _node_ssh(server, client)
     if not ssh.connect():
         return ExecResult(success=False, output="", exit_code=-1,
-                           error=f"Не удалось подключиться по SSH к {server.name}")
+                           error=ssh.last_error or f"Не удалось подключиться по SSH к {server.name}")
 
-    b64 = base64.b64encode(script.encode("utf-8")).decode("ascii")
-    tmp = f"/tmp/pve_script_{abs(hash(script)) % 100000}_{int(time.time())}"
+    if not is_valid_interpreter(interpreter):
+        return ExecResult(success=False, output="", exit_code=-1,
+                          error=f"Недопустимый интерпретатор: {interpreter!r}")
+    tmp = _tmp_name("pve_script")
     try:
-        _run(ssh, f"printf '%s' '{b64}' | base64 -d > {tmp} && chmod +x {tmp}",
-             what="write script on node")
-        output, exit_code = ssh.execute(f"{_SCRIPT_ENV} {interpreter} {tmp}",
+        for cmd in write_file_commands(tmp, script.encode("utf-8")):
+            _run(ssh, cmd, what="write script on node")
+        _run(ssh, f"chmod 700 {tmp}", what="write script on node")
+        output, exit_code = ssh.execute(f"{_SCRIPT_ENV} {shlex.quote(interpreter)} {tmp}",
                                         return_exit_code=True, timeout=timeout)
         return ExecResult(success=exit_code == 0, output=output or "", exit_code=exit_code)
     except ScriptExecError as e:
@@ -122,17 +147,20 @@ def run_on_lxc(server: ProxmoxServer, client: ProxmoxClient, node: str, vmid: in
     ssh = _node_ssh(server, client)
     if not ssh.connect():
         return ExecResult(success=False, output="", exit_code=-1,
-                           error=f"Не удалось подключиться по SSH к {server.name}")
+                           error=ssh.last_error or f"Не удалось подключиться по SSH к {server.name}")
 
-    b64 = base64.b64encode(script.encode("utf-8")).decode("ascii")
-    tmp_node = f"/tmp/pve_script_{vmid}_{int(time.time())}"
-    tmp_ct = f"/tmp/pve_script_{vmid}.sh"
+    if not is_valid_interpreter(interpreter):
+        return ExecResult(success=False, output="", exit_code=-1,
+                          error=f"Недопустимый интерпретатор: {interpreter!r}")
+    vmid = int(vmid)
+    tmp_node = _tmp_name(f"pve_script_{vmid}")
+    tmp_ct = _tmp_name("pve_script") + ".sh"
     try:
-        _run(ssh, f"printf '%s' '{b64}' | base64 -d > {tmp_node}",
-             what="write script on node")
-        _run(ssh, f"pct push {vmid} {tmp_node} {tmp_ct}", what="pct push script")
+        for cmd in write_file_commands(tmp_node, script.encode("utf-8")):
+            _run(ssh, cmd, what="write script on node")
+        _run(ssh, f"pct push {vmid} {tmp_node} {tmp_ct} --perms 0700", what="pct push script")
         output, exit_code = ssh.execute(
-            f"pct exec {vmid} -- env {_SCRIPT_ENV} {interpreter} {tmp_ct}",
+            f"pct exec {vmid} -- env {_SCRIPT_ENV} {shlex.quote(interpreter)} {tmp_ct}",
             return_exit_code=True, timeout=timeout,
         )
         return ExecResult(success=exit_code == 0, output=output or "", exit_code=exit_code)

@@ -189,7 +189,9 @@ function TaskLogDialog({ task, onClose }: { task: TaskItem | null; onClose: () =
   // Poll while the task is still running.
   const running = task?.status === 'running' || task?.status === 'in_progress';
   const { data: statusData } = useTaskStatus(serverId, upid, node, open && running);
-  const { data: logData, isLoading } = useTaskLog(serverId, upid, node, open);
+  // Keep tailing the log only while the task is still running.
+  const live = running && statusData?.status !== 'stopped';
+  const { data: logData, isLoading } = useTaskLog(serverId, upid, node, open, live);
 
   const lines = logData?.logs ?? [];
   const status = statusData?.status ?? task?.status;

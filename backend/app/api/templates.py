@@ -23,6 +23,7 @@ from ..schemas import (
 )
 from ..proxmox import ProxmoxClient
 from ..api.proxmox import get_next_vmid, save_vm_instance, get_vm_instance
+from ..api.proxmox._helpers import enforce_server_visibility, get_visible_server_ids, _NO_WORKSPACE_HEADER
 from ..auth import get_current_user, PermissionChecker
 from ..ipam_service import IPAMService
 from ..logging_service import LoggingService
@@ -180,14 +181,22 @@ def list_os_templates(
         query = query.filter(OSTemplate.vm_type == vm_type)
     if active_only:
         query = query.filter(OSTemplate.is_active == True)
+    # Tenants only see templates of servers they can deploy to (see deploy).
+    visible = get_visible_server_ids(_NO_WORKSPACE_HEADER, db, current_user)
+    if visible is not None:
+        query = query.filter(OSTemplate.server_id.in_(visible))
     
     os_templates = query.order_by(OSTemplate.sort_order).all()
     
-    # Enrich with group and server info
+    # Enrich with group and server info (two queries, not two per template)
+    group_ids = {t.group_id for t in os_templates if t.group_id is not None}
+    server_ids = {t.server_id for t in os_templates if t.server_id is not None}
+    groups = {g.id: g for g in db.query(OSTemplateGroup).filter(OSTemplateGroup.id.in_(group_ids))} if group_ids else {}
+    servers = {s.id: s for s in db.query(ProxmoxServer).filter(ProxmoxServer.id.in_(server_ids))} if server_ids else {}
     result = []
     for template in os_templates:
-        group = db.query(OSTemplateGroup).filter(OSTemplateGroup.id == template.group_id).first()
-        server = db.query(ProxmoxServer).filter(ProxmoxServer.id == template.server_id).first()
+        group = groups.get(template.group_id)
+        server = servers.get(template.server_id)
         
         template_dict = {
             **template.__dict__,
@@ -319,7 +328,7 @@ def delete_os_template(
 
 # ==================== Proxmox Templates Discovery ====================
 
-@router.get("/api/discover/{server_id}")
+@router.get("/api/discover/{server_id}", dependencies=[Depends(enforce_server_visibility)])
 def discover_proxmox_templates(
     server_id: int,
     db: Session = Depends(get_db),
@@ -389,6 +398,8 @@ def discover_proxmox_templates(
             'templates': result
         })
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error discovering templates on {server.name}: {e}")
         raise HTTPException(status_code=500, detail=f"Ошибка обнаружения шаблонов: {str(e)}")
@@ -582,7 +593,7 @@ def _do_auto_import(server_id: int, username: str):
         db.close()
 
 
-@router.post("/api/auto-import/{server_id}")
+@router.post("/api/auto-import/{server_id}", dependencies=[Depends(enforce_server_visibility)])
 def auto_import_templates(
     server_id: int,
     db: Session = Depends(get_db),
@@ -1050,6 +1061,11 @@ async def deploy_vm_from_template(
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == template.server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Proxmox сервер не найден")
+    # The body names a template, not a server, so the router-level server
+    # check does not apply: a tenant could deploy onto any server.
+    visible = get_visible_server_ids(_NO_WORKSPACE_HEADER, db, current_user)
+    if visible is not None and server.id not in visible:
+        raise HTTPException(status_code=404, detail="Шаблон не найден")
 
     cores = deploy_data.cores or template.default_cores
     memory = deploy_data.memory or template.default_memory

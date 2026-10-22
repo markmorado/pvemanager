@@ -200,7 +200,8 @@ class AppOperation(Base):
     progress = Column(Integer, nullable=False, default=0)
     steps_log = Column(JSON, nullable=False, default=list)  # [{step, progress, ts}]
     error_text = Column(Text, nullable=True)
-    user_id = Column(Integer, nullable=True)
+    # Indexed: /api/all-tasks filters by user every few seconds (migration 45).
+    user_id = Column(Integer, nullable=True, index=True)
     started_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     finished_at = Column(DateTime(timezone=True), nullable=True)
 

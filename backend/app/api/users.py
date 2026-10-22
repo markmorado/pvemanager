@@ -4,7 +4,7 @@ Users and Roles Management API
 
 from datetime import datetime, timedelta
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field, EmailStr
 from loguru import logger
@@ -23,6 +23,46 @@ from ..services.security_service import SecurityService
 from ..logging_service import LoggingService
 
 router = APIRouter()
+
+
+# ==================== Privilege guards ====================
+
+def _is_admin_user(user: User) -> bool:
+    """Administrator by flag or by the system ``admin`` role."""
+    return bool(user.is_admin or (user.role and user.role.name == "admin"))
+
+
+def _guard_target(actor: User, target: User) -> None:
+    """Only administrators may manage administrator accounts.
+
+    Checking just ``is_admin`` let a user holding ``user:update`` reset the
+    password of an account that is admin through its role and log in as it.
+    """
+    if _is_admin_user(target) and not _is_admin_user(actor):
+        raise HTTPException(status_code=403, detail="Cannot manage an administrator account")
+
+
+def _guard_permission_grant(actor: User, permissions: Optional[dict]) -> None:
+    """A non-admin may only grant permissions they hold themselves."""
+    if _is_admin_user(actor):
+        return
+    from ..rbac import PermissionEngine
+    granted = {p for p, enabled in (permissions or {}).items() if enabled}
+    missing = granted - PermissionEngine.get_user_permissions(actor)
+    if missing:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Cannot grant permissions you do not have: {', '.join(sorted(missing))}",
+        )
+
+
+def _guard_role_assignment(actor: User, role: Role) -> None:
+    """Stop non-admins from handing out the admin role or broader roles."""
+    if _is_admin_user(actor):
+        return
+    if role.name == "admin":
+        raise HTTPException(status_code=403, detail="Only administrators can assign the admin role")
+    _guard_permission_grant(actor, role.permissions)
 
 
 # ==================== Schemas ====================
@@ -192,6 +232,7 @@ async def create_role(
     current_user: User = Depends(PermissionChecker("role:manage"))
 ):
     """Create a new role"""
+    _guard_permission_grant(current_user, role_data.permissions)
     # Check if role name exists
     existing = db.query(Role).filter(Role.name == role_data.name.lower()).first()
     if existing:
@@ -234,6 +275,12 @@ async def update_role(
     role = db.query(Role).filter(Role.id == role_id).first()
     if not role:
         raise HTTPException(status_code=404, detail="Role not found")
+    if not _is_admin_user(current_user):
+        # Editing one's own role (or the admin role) is a direct escalation path.
+        if role.name == "admin" or role.id == current_user.role_id:
+            raise HTTPException(status_code=403, detail="Cannot modify this role")
+        if role_data.permissions is not None:
+            _guard_permission_grant(current_user, role_data.permissions)
     
     # Update fields
     if role_data.display_name is not None:
@@ -386,11 +433,15 @@ async def create_user(
     if not is_valid:
         raise HTTPException(status_code=400, detail="; ".join(errors))
     
+    if user_data.is_admin and not _is_admin_user(current_user):
+        raise HTTPException(status_code=403, detail="Only admin can create administrators")
+
     # Validate role
     if user_data.role_id:
         role = db.query(Role).filter(Role.id == user_data.role_id).first()
         if not role:
             raise HTTPException(status_code=400, detail="Invalid role")
+        _guard_role_assignment(current_user, role)
     
     # Create user
     user = User(
@@ -451,9 +502,9 @@ async def update_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # Prevent editing admin by non-admin
-    if user.is_admin and not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Cannot edit admin user")
+    # Prevent editing admin (flag or admin role) by non-admin
+    _guard_target(current_user, user)
+    password_changed = False
     
     # Update fields
     if user_data.email is not None:
@@ -474,11 +525,14 @@ async def update_user(
             raise HTTPException(status_code=400, detail="; ".join(errors))
         user.hashed_password = get_password_hash(user_data.password)
         user.last_password_change = utcnow()
+        password_changed = True
     
     if user_data.role_id is not None:
         role = db.query(Role).filter(Role.id == user_data.role_id).first()
         if not role:
             raise HTTPException(status_code=400, detail="Invalid role")
+        if role.id != user.role_id:
+            _guard_role_assignment(current_user, role)
         user.role_id = user_data.role_id
     
     if user_data.is_active is not None:
@@ -494,9 +548,9 @@ async def update_user(
     if user_data.require_password_change is not None:
         user.require_password_change = user_data.require_password_change
     
-    if user_data.is_admin is not None:
+    if user_data.is_admin is not None and bool(user_data.is_admin) != bool(user.is_admin):
         # Only admin can change admin status
-        if not current_user.is_admin:
+        if not _is_admin_user(current_user):
             raise HTTPException(status_code=403, detail="Only admin can change admin status")
         # Cannot remove own admin status
         if user_id == current_user.id and not user_data.is_admin:
@@ -506,6 +560,10 @@ async def update_user(
     user.updated_at = utcnow()
     db.commit()
     db.refresh(user)
+
+    # Whoever knew the old password must not stay logged in.
+    if password_changed and user_id != current_user.id:
+        SecurityService.terminate_all_user_sessions(db, user_id)
     
     LoggingService.log(
         db=db,
@@ -556,6 +614,7 @@ async def delete_user(
     # Cannot delete admin
     if user.is_admin:
         raise HTTPException(status_code=400, detail="Cannot delete admin user")
+    _guard_target(current_user, user)
     
     username = user.username
     
@@ -843,6 +902,7 @@ async def reset_user_password(
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    _guard_target(current_user, user)
     
     # Validate password
     lang = request.cookies.get("language", "en")
@@ -888,6 +948,7 @@ async def unlock_user(
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    _guard_target(current_user, user)
     
     user.failed_login_attempts = 0
     user.locked_until = None
@@ -924,6 +985,7 @@ async def admin_disable_two_factor(
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    _guard_target(current_user, user)
 
     if not user.two_factor_enabled and not user.two_factor_secret:
         return {"message": "2FA is not enabled for this user"}
@@ -961,6 +1023,7 @@ async def terminate_user_sessions(
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    _guard_target(current_user, user)
     
     count = SecurityService.terminate_all_user_sessions(db, user_id)
     
@@ -1176,7 +1239,7 @@ async def terminate_all_sessions(
 
 @router.get("/api/security/events")
 async def list_security_events(
-    limit: int = 50,
+    limit: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
     current_user: User = Depends(PermissionChecker("setting:manage"))
 ):

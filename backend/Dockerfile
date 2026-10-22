@@ -32,13 +32,14 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Только runtime-зависимости. docker.io даёт CLI `docker` для self-update через сокет.
+# Только runtime-зависимости. Docker CLI не нужен: self-update выполняет
+# хостовый сервис по файлу-триггеру (services/update_service.py), сокет Docker
+# в контейнер не монтируется.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libpq5 \
         openssh-client \
         curl \
         git \
-        docker.io \
         tzdata \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/* \

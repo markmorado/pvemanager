@@ -9,6 +9,7 @@ Key generation:
 """
 
 import logging
+from functools import lru_cache
 from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy import TypeDecorator, String
 
@@ -30,7 +31,14 @@ def _get_fernet():
             )
             _warned_no_key = True
         return None
-    return Fernet(key.encode() if isinstance(key, str) else key)
+    return _fernet_for(key.encode() if isinstance(key, str) else key)
+
+
+@lru_cache(maxsize=4)
+def _fernet_for(key: bytes) -> Fernet:
+    # Building a Fernet decodes/validates the key; every encrypted column read
+    # went through this, so cache the instance per key.
+    return Fernet(key)
 
 
 def encrypt_value(value: str) -> str:

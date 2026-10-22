@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -30,14 +30,16 @@ class InstallRequest(BaseModel):
     app_id: str
     name: str
     server_id: int
-    node: Optional[str] = None
     form_answers: dict = {}
     # advanced (ТЗ 7.2, шаг 2)
-    cores: int = 2
-    memory: int = 2048          # МБ
-    disk: int = 8               # ГБ
-    storage: str = "local-lvm"
-    bridge: str = "vmbr0"
+    cores: int = Field(default=2, ge=1, le=512)
+    memory: int = Field(default=2048, ge=64, le=4 * 1024 * 1024)   # МБ
+    disk: int = Field(default=8, ge=1, le=65536)                  # ГБ
+    # storage/bridge are spliced into Proxmox option strings (rootfs=, net0=):
+    # a ',' would let the caller append options such as firewall=0.
+    storage: str = Field(default="local-lvm", pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+    bridge: str = Field(default="vmbr0", pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+    node: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9.-]{0,62}$")
     ostemplate: Optional[str] = None  # переопределение золотого шаблона
     # Кастомный рабочий порт приложения (переопределяет порт из каталога).
     # None — использовать порт по умолчанию из config.json приложения.
@@ -64,9 +66,14 @@ def _get_owned(db: Session, app_id: int, user: User) -> InstalledApp:
 @router.post("/api/appstore/apps/install")
 def install_app(
     req: InstallRequest,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(PermissionChecker("app:install")),
 ):
+    from ..proxmox._helpers import get_visible_server_ids
+    visible = get_visible_server_ids(request, db, current_user)
+    if visible is not None and req.server_id not in visible:
+        raise HTTPException(status_code=404, detail="Proxmox сервер не найден")
     try:
         result = engine.install(
             db, current_user,
@@ -242,7 +249,8 @@ def app_logs(
 @router.post("/api/appstore/apps/reconcile")
 def reconcile(
     db: Session = Depends(get_db),
-    _: User = Depends(PermissionChecker("app:view")),
+    # Walks every installed app and polls Proxmox for each — not for viewers.
+    _: User = Depends(PermissionChecker("app:manage")),
 ):
     return engine.reconcile(db)
 

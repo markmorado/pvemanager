@@ -31,7 +31,7 @@ from sqlalchemy.orm import Session
 from ..api.proxmox._helpers import _get_proxmox_client, get_next_vmid
 from ..config import settings
 from ..models import ProxmoxServer
-from ..ssh_client import SSHClient
+from ..ssh_client import SSHClient, write_file_commands
 
 # Docker-сеть, на которую ссылаются compose-файлы Runtipi как external.
 TIPI_NETWORK = "tipi_main_network"
@@ -570,10 +570,11 @@ def _push_file(ssh: SSHClient, vmid: int, content, dest: str, *,
     content — str (utf-8) или bytes (бинарные файлы каталога).
     """
     raw = content.encode("utf-8") if isinstance(content, str) else content
-    b64 = base64.b64encode(raw).decode("ascii")
-    tmp = f"/tmp/appstore_{vmid}_{abs(hash(dest)) % 100000}"
-    # b64 состоит из [A-Za-z0-9+/=], безопасно внутри одинарных кавычек.
-    _run(ssh, f"printf '%s' '{b64}' | base64 -d > {tmp}", what=f"write {dest} on node")
+    # Random name: .env carries app secrets, a guessable /tmp path could be
+    # pre-planted as a symlink on the node.
+    tmp = f"/tmp/appstore_{vmid}_{secrets.token_hex(8)}"
+    for cmd in write_file_commands(tmp, raw):
+        _run(ssh, cmd, what=f"write {dest} on node")
     perms_arg = f" --perms {perms}" if perms else ""
     _run(ssh, f"pct push {vmid} {tmp} {dest}{perms_arg}", what=f"pct push {dest}")
     _run(ssh, f"rm -f {tmp}", what="cleanup temp")
@@ -654,8 +655,14 @@ def _env_file_value(v) -> str:
     return s
 
 
+_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
 def _env_file_content(env: Dict[str, str]) -> str:
-    return "".join(f"{k}={_env_file_value(v)}\n" for k, v in env.items())
+    # A key with '=' or a newline would smuggle extra variables into .env.
+    return "".join(
+        f"{k}={_env_file_value(v)}\n" for k, v in env.items() if _ENV_KEY_RE.match(str(k))
+    )
 
 
 def _wait_ip(ssh: SSHClient, vmid: int, timeout: int) -> Optional[str]:
@@ -753,7 +760,7 @@ def poc_install(db: Session, spec: InstallSpec, on_step: StepCb = _noop) -> Inst
 
     ssh = _node_ssh(server, client)
     if not ssh.connect():
-        raise PocError("SSH к ноде не установлен (нужен root-доступ к ноде для pct exec/push)")
+        raise PocError(ssh.last_error or "SSH к ноде не установлен (нужен root-доступ к ноде для pct exec/push)")
     try:
         on_step("Ожидание IP-адреса...", 55)
         # Статический IP из IPAM известен заранее — подтверждаем через контейнер,
@@ -839,7 +846,7 @@ def poc_update(server, client, vmid: int, node: str, compose_yaml: str,
     """
     ssh = _node_ssh(server, client)
     if not ssh.connect():
-        raise PocError("SSH к ноде не установлен (нужен root-доступ для pct exec/push)")
+        raise PocError(ssh.last_error or "SSH к ноде не установлен (нужен root-доступ для pct exec/push)")
     try:
         on_step("Доставка нового docker-compose.yml...", 45)
         _run(ssh, _pct(vmid, f"mkdir -p {APP_DIR} {APP_DATA_DIR}"), what="mkdir app dirs")

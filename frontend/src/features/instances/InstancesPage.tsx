@@ -491,7 +491,12 @@ export default function InstancesPage() {
             qc.invalidateQueries({ queryKey: vmKeys.resourcesAll });
             setTimeout(() => removeTask(task.id), 5000);
           }
-        } catch { /* ignore */ }
+        } catch (e) {
+          // Persisted task the backend no longer has (or another user's after
+          // re-login): drop it instead of polling it every 2 s forever.
+          const status = (e as { status?: number }).status;
+          if (status === 404 || status === 403) removeTask(task.id);
+        }
       }
     };
     poll();

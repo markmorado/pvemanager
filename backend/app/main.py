@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -29,6 +30,31 @@ from .api import scripts as scripts_router
 from .logging_middleware import RequestLoggingMiddleware
 from .language_middleware import LanguageMiddleware
 from .i18n import I18nService
+
+
+# Browsers cannot set headers on WebSocket requests, so WS tickets and
+# console handles travel in the query string (outdated clients may still send
+# the session JWT as ?token=) — and uvicorn logs WebSocket connections with it
+# ("WebSocket /ws/tasks?ticket=..." [accepted]).
+_SECRET_QUERY_RE = re.compile(r"((?:token|ticket|auth_ticket|vncticket|vnc_password)=)[^&\s\"']+")
+
+
+def _redact_secrets(message: str) -> str:
+    if "=" not in message:
+        return message
+    return _SECRET_QUERY_RE.sub(r"\1***", message)
+
+
+class _RedactSecretsFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage()
+        except Exception:
+            return True
+        redacted = _redact_secrets(message)
+        if redacted != message:
+            record.msg, record.args = redacted, ()
+        return True
 
 
 # Configure logging
@@ -71,9 +97,12 @@ def setup_logging():
                 frame = frame.f_back
                 depth += 1
             
-            logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
+            logger.opt(depth=depth, exception=record.exc_info).log(level, _redact_secrets(record.getMessage()))
     
     logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
+    # uvicorn's loggers keep their own handlers (propagate=False).
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        logging.getLogger(name).addFilter(_RedactSecretsFilter())
 
     # Suppress noisy third-party loggers
     for noisy_logger in (
@@ -109,6 +138,37 @@ def setup_logging():
         uvicorn_logger.addFilter(_UvicornAccessFilter())
 
 
+# Placeholder values shipped in .env.example / deploy.sh templates. A panel
+# started with one of them signs JWTs with a publicly known key, so anyone could
+# forge an admin token — refuse to start instead.
+_INSECURE_SECRET_KEYS = {
+    "your-secret-key-here",
+    "your-very-secure-secret-key-change-this-in-production-minimum-32-chars",
+}
+
+
+def _load_or_create_secret_key() -> str:
+    """Read the generated JWT key from the data volume, creating it once."""
+    import secrets
+    key_file = Path(settings.APPSTORE_DATA_DIR).parent / "secret_key"
+    try:
+        if key_file.exists():
+            stored = key_file.read_text().strip()
+            if len(stored) >= 32:
+                return stored
+        key_file.parent.mkdir(parents=True, exist_ok=True)
+        key = secrets.token_hex(32)
+        key_file.write_text(key)
+        try:
+            key_file.chmod(0o600)
+        except OSError:
+            pass
+        return key
+    except OSError as e:
+        logger.error(f"Cannot persist generated SECRET_KEY to {key_file}: {e} — sessions reset on restart")
+        return secrets.token_hex(32)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler"""
@@ -118,10 +178,19 @@ async def lifespan(app: FastAPI):
     setup_logging()
     
     # Security checks
-    if not settings.SECRET_KEY or settings.SECRET_KEY == "your-secret-key-here":
-        logger.error("CRITICAL: SECRET_KEY is missing or uses the default insecure value!")
-        logger.error("Please set a secure SECRET_KEY in your .env file.")
-        raise Exception("Insecure SECRET_KEY")
+    if len(settings.SECRET_KEY or "") < 32 and settings.SECRET_KEY not in _INSECURE_SECRET_KEYS:
+        # Not fatal: refusing to start would take down existing installs on
+        # self-update. Weak keys are brute-forceable offline from any JWT.
+        logger.warning("SECRET_KEY is shorter than 32 characters — generate one with `openssl rand -hex 32`.")
+    if not settings.SECRET_KEY or settings.SECRET_KEY in _INSECURE_SECRET_KEYS:
+        # A placeholder key is public knowledge: anyone could mint an admin
+        # JWT. Swap in a generated key persisted on the data volume rather than
+        # refusing to start (which would brick installs on self-update).
+        settings.SECRET_KEY = _load_or_create_secret_key()
+        logger.error(
+            "SECRET_KEY was missing or a published placeholder — using a generated key "
+            "instead (existing sessions are logged out). Set SECRET_KEY in backend/.env."
+        )
 
     if not settings.FERNET_KEY:
         logger.warning("FERNET_KEY is not set. Sensitive fields (like passwords) will be stored as plaintext.")
@@ -276,7 +345,8 @@ def create_app() -> FastAPI:
         response.headers["X-Frame-Options"] = "SAMEORIGIN"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Content-Security-Policy"] = (
+        # setdefault: an endpoint may set a stricter policy (sandboxed catalog logos).
+        response.headers.setdefault("Content-Security-Policy", (
             "default-src 'self'; "
             "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://esm.sh; "
             "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://fonts.googleapis.com; "
@@ -284,7 +354,7 @@ def create_app() -> FastAPI:
             "connect-src 'self' wss: ws: https://esm.sh https://api.github.com; "
             "font-src 'self' data: https://cdnjs.cloudflare.com https://fonts.gstatic.com; "
             "frame-ancestors 'self';"
-        )
+        ))
         if not settings.DEBUG:
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response
@@ -327,36 +397,31 @@ def create_app() -> FastAPI:
 
     # WebSocket endpoint for real-time task updates
     @app.websocket("/ws/tasks")
-    async def websocket_tasks(websocket: WebSocket, token: str = Query(None)):
+    async def websocket_tasks(websocket: WebSocket, ticket: str = Query(None)):
         """
         WebSocket endpoint for live task manager updates.
-        Auth via ?token=<jwt> query parameter (browsers cannot set WS headers).
+        Auth via ?ticket= from POST /api/auth/ws-ticket (browsers cannot set
+        WS headers).
         """
-        from .auth import decode_access_token
+        from .auth import authenticate_ws_session, watch_ws_access
         from .db import SessionLocal
-        from .models import TaskQueue, ProxmoxTask, User
+        from .models import TaskQueue, ProxmoxTask
         from .websocket_manager import ws_manager
+        from .services.ws_access import authorize_channel, authorize_rrd_request
         import asyncio
         import json
 
         # --- Authenticate --------------------------------------------------
-        if not token:
-            await websocket.close(code=4001, reason="Missing token")
+        # authenticate_ws also validates the bound session and the lock
+        # state, so a logged-out / terminated session cannot keep streaming.
+        if not ticket:
+            await websocket.close(code=4001, reason="Missing ticket")
             return
-        try:
-            payload = decode_access_token(token)
-            username = payload.get("sub")
-            if not username:
-                raise ValueError("No subject in token")
-        except Exception:
-            await websocket.close(code=4001, reason="Invalid token")
-            return
-
         db = SessionLocal()
         try:
-            user = db.query(User).filter(User.username == username, User.is_active == True).first()
+            user, ws_session = authenticate_ws_session(ticket, db)
             if not user:
-                await websocket.close(code=4001, reason="User not found")
+                await websocket.close(code=4001, reason="Invalid token")
                 return
             user_id = user.id
         finally:
@@ -365,20 +430,37 @@ def create_app() -> FastAPI:
         # --- Connect -------------------------------------------------------
         await ws_manager.connect(websocket, user_id)
 
-        try:
-            # Send initial snapshot
+        # The socket outlives the handshake check: drop it once the session is
+        # logged out / terminated or the account is disabled (4001 = re-auth).
+        async def _close_when_revoked() -> None:
+            await watch_ws_access(user_id, ws_session)
+            try:
+                await websocket.close(code=4001, reason="Session ended")
+            except Exception:
+                pass
+
+        watchdog = asyncio.create_task(_close_when_revoked())
+
+        # In-flight on-demand requests of this socket: held so they are not
+        # garbage-collected mid-run, cancelled when the client goes away.
+        pending_requests: set = set()
+
+        def _initial_snapshot() -> list:
             db = SessionLocal()
             try:
                 bulk = db.query(TaskQueue).filter(TaskQueue.user_id == user_id).order_by(TaskQueue.created_at.desc()).limit(30).all()
                 prox = db.query(ProxmoxTask).filter(ProxmoxTask.user_id == user_id).order_by(ProxmoxTask.created_at.desc()).limit(30).all()
+                return sorted(
+                    [t.to_dict() for t in bulk] + [t.to_dict() for t in prox],
+                    key=lambda x: x.get("created_at") or "",
+                    reverse=True,
+                )[:30]
             finally:
                 db.close()
 
-            all_tasks = sorted(
-                [t.to_dict() for t in bulk] + [t.to_dict() for t in prox],
-                key=lambda x: x.get("created_at") or "",
-                reverse=True,
-            )[:30]
+        try:
+            # Send initial snapshot (DB work off the event loop)
+            all_tasks = await asyncio.to_thread(_initial_snapshot)
             await websocket.send_text(json.dumps({"type": "task_list", "tasks": all_tasks}, default=str))
 
             # Keep connection alive – wait for client messages / ping-pong
@@ -394,19 +476,35 @@ def create_app() -> FastAPI:
                         msg = json.loads(raw)
                     except Exception:
                         continue
+                    if not isinstance(msg, dict):
+                        # e.g. a bare JSON array used to raise on .get() and drop the socket
+                        continue
                     msg_type = msg.get("type", "")
                     if msg_type == "ping":
                         await websocket.send_text(json.dumps({"type": "pong"}))
                     elif msg_type == "subscribe":
                         channel = msg.get("channel", "")
-                        if channel:
-                            ws_manager.subscribe(websocket, channel)
+                        if isinstance(channel, str) and 0 < len(channel) <= 200:
+                            allowed, payload_filter = await asyncio.to_thread(
+                                authorize_channel, SessionLocal, user_id, channel
+                            )
+                            if not allowed:
+                                await websocket.send_text(json.dumps(
+                                    # not "channel": the client routes any message carrying that key
+                                    # to the channel handlers, which expect metrics payloads.
+                                    {"type": "subscribe_denied", "denied_channel": channel}
+                                ))
+                                continue
+                            ws_manager.subscribe(websocket, channel, payload_filter)
                             # Immediately send cached payload so client sees data without waiting
                             from .services.metrics_broadcaster import get_cached_metrics
                             _cached = get_cached_metrics(channel)
                             if _cached:
                                 try:
-                                    await websocket.send_text(json.dumps(_cached, default=str))
+                                    await websocket.send_text(json.dumps(
+                                        ws_manager.filter_payload(websocket, channel, _cached),
+                                        default=str,
+                                    ))
                                 except Exception:
                                     pass
                     elif msg_type == "unsubscribe":
@@ -416,23 +514,36 @@ def create_app() -> FastAPI:
                     elif msg_type == "request":
                         action = msg.get("action", "")
                         request_id = msg.get("request_id", "")
-                        if action in ("get_rrd", "get_node_rrd") and request_id:
+                        params = msg.get("params") or {}
+                        if action in ("get_rrd", "get_node_rrd") and request_id and isinstance(params, dict):
                             from .services.metrics_broadcaster import handle_rrd_request
-                            from .db import SessionLocal as _SL
-                            asyncio.create_task(
+                            if not await asyncio.to_thread(
+                                authorize_rrd_request, SessionLocal, user_id, action, params
+                            ):
+                                await websocket.send_text(json.dumps({
+                                    "type": "rrd_response", "request_id": request_id,
+                                    "data": None, "error": "Access denied",
+                                }))
+                                continue
+                            task = asyncio.create_task(
                                 handle_rrd_request(
                                     websocket,
                                     request_id,
                                     action,
-                                    msg.get("params", {}),
-                                    _SL,
+                                    params,
+                                    SessionLocal,
                                 )
                             )
+                            pending_requests.add(task)
+                            task.add_done_callback(pending_requests.discard)
                 except WebSocketDisconnect:
                     break
                 except Exception:
                     break
         finally:
+            watchdog.cancel()
+            for task in list(pending_requests):
+                task.cancel()
             ws_manager.disconnect(websocket, user_id)
 
     # Include routers

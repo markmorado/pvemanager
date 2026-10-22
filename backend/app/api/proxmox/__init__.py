@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from .servers import router as servers_router
 from .sdn import router as sdn_router
 from .snapshots import router as snapshots_router
@@ -16,9 +16,11 @@ from .disks import router as disks_router
 from .access import router as access_router
 from .node_admin import router as node_admin_router
 from .topology import router as topology_router
-from ._helpers import get_next_vmid, save_vm_instance, get_vm_instance
+from ._helpers import get_next_vmid, save_vm_instance, get_vm_instance, validate_pve_identifiers
 
-router = APIRouter()
+# Applies to every included route, WebSockets too: path segments / node names
+# go into Proxmox API URLs (see validate_pve_identifiers).
+router = APIRouter(dependencies=[Depends(validate_pve_identifiers)])
 router.include_router(servers_router)
 router.include_router(sdn_router)
 router.include_router(snapshots_router)

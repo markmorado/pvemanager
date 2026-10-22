@@ -30,6 +30,7 @@ import { useTemplates, useAutoImportTemplates, useDeleteTemplate } from '@/hooks
 import { useServers } from '@/hooks/use-nodes';
 import { toast } from 'sonner';
 import { useConfirm } from '@/components/shared/ConfirmDialog';
+import { GroupIcon } from '@/components/shared/GroupIcon';
 
 function SortHeader({ label, onClick }: { label: string; onClick: () => void }) {
   return (
@@ -88,7 +89,7 @@ export default function OsTemplatesTab() {
               {tpl.vm_type === 'qemu' ? (
                 <OsLogo name={tpl.name} className="h-6 w-6" />
               ) : tpl.group_icon ? (
-                <span className="text-lg" dangerouslySetInnerHTML={{ __html: tpl.group_icon }} />
+                <GroupIcon icon={tpl.group_icon} />
               ) : (
                 <Monitor className="h-4 w-4 text-muted-foreground" />
               )}

@@ -25,9 +25,14 @@ from ...ipam_service import IPAMService
 from ...logging_service import LoggingService
 from ...models import DeployTask, IPAMNetwork, ProxmoxServer, User
 from ...websocket_manager import broadcast_task_update
-from ._helpers import _get_proxmox_client, get_next_vmid, save_vm_instance
+from ._helpers import (_get_proxmox_client, get_next_vmid, save_vm_instance,
+                       require_server_visible, ISO_VOLID_RE, PveNode)
 
-router = APIRouter()
+from ._helpers import enforce_server_visibility  # noqa: E402
+
+# Every {server_id} route: tenants only reach servers assigned to them
+# (directly or through a workspace) — see enforce_server_visibility.
+router = APIRouter(dependencies=[Depends(enforce_server_visibility)])
 
 _iso_vm_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="iso_vm")
 
@@ -44,7 +49,7 @@ def _utcnow() -> datetime:
 
 class ISOVMCreateRequest(BaseModel):
     server_id: int
-    node: str
+    node: PveNode
     name: str
     iso: str                       # volid, e.g. "local:iso/ubuntu-24.04.iso"
     vmid: Optional[int] = None
@@ -323,8 +328,14 @@ async def create_vm_from_iso(
         raise HTTPException(status_code=400, detail=str(e))
     if not req.node:
         raise HTTPException(status_code=400, detail="Укажите ноду для размещения ВМ")
+    require_server_visible(db, current_user, server.id)
     if not req.iso:
         raise HTTPException(status_code=400, detail="Выберите установочный ISO-образ")
+    # Only ISO volumes: any other volid (another guest's disk) would be
+    # attached to the new VM as a CD-ROM.
+    for volid in (req.iso, req.extra_iso):
+        if volid and not ISO_VOLID_RE.match(volid):
+            raise HTTPException(status_code=400, detail="ISO must be <storage>:iso/<file>")
     if req.disk_bus not in DISK_BUSES:
         raise HTTPException(status_code=400, detail=f"Шина диска должна быть одной из: {', '.join(DISK_BUSES)}")
     if req.net_model not in NET_MODELS:

@@ -100,9 +100,25 @@ class TestClientIPParsing:
             client=SimpleNamespace(host=client_host),
         )
 
-    def test_returns_first_valid_xff(self, auth):
-        req = self._request_with_headers({"X-Forwarded-For": "203.0.113.5, 10.0.0.1"})
+    def test_uses_proxy_appended_xff_entry(self, auth):
+        # nginx's $proxy_add_x_forwarded_for appends the real peer; left-most
+        # entries come from the client and must not be trusted.
+        req = self._request_with_headers({"X-Forwarded-For": "1.2.3.4, 203.0.113.5"})
         assert auth.get_client_ip(req) == "203.0.113.5"
+
+    def test_prefers_x_real_ip(self, auth):
+        req = self._request_with_headers(
+            {"X-Real-IP": "203.0.113.7", "X-Forwarded-For": "1.2.3.4, 203.0.113.7"}
+        )
+        assert auth.get_client_ip(req) == "203.0.113.7"
+
+    def test_ignores_proxy_headers_from_public_peer(self, auth):
+        # A client hitting the API directly cannot choose its own address.
+        req = self._request_with_headers(
+            {"X-Real-IP": "10.9.9.9", "X-Forwarded-For": "10.9.9.9"},
+            client_host="8.8.4.4",
+        )
+        assert auth.get_client_ip(req) == "8.8.4.4"
 
     def test_rejects_spoofed_xff(self, auth):
         # Non-IP value must be ignored — fall back to client.host.

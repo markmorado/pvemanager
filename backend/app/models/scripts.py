@@ -120,8 +120,8 @@ class ScriptExecution(Base):
     started_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     finished_at = Column(DateTime(timezone=True), nullable=True)
 
-    def to_dict(self) -> dict:
-        return {
+    def to_dict(self, *, with_output: bool = True) -> dict:
+        data = {
             "id": self.id,
             "kind": "script",
             "script_id": self.script_id,
@@ -139,6 +139,9 @@ class ScriptExecution(Base):
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
         }
+        if not with_output:
+            data.pop("output")
+        return data
 
     def to_task_dict(self) -> dict:
         """Представление для общего списка «Задачи» (/api/all-tasks)."""

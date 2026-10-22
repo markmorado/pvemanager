@@ -4,11 +4,36 @@ Replaces old PermissionChecker with enhanced functionality
 """
 
 from typing import Optional, List, Union
-from fastapi import Depends, HTTPException, status, Request
+from fastapi import HTTPException, status, Request
 from sqlalchemy.orm import Session
 
 from .engine import PermissionEngine
 from .permissions import ScopeType
+
+
+def _authenticate_request(request: Request, db: Session):
+    """Resolve the bearer token to an active user, validating its session.
+
+    Decoding the JWT alone would accept tokens of logged-out sessions and
+    disabled or locked accounts.
+    """
+    from ..auth import authenticate_ws_token
+
+    auth_header = request.headers.get("Authorization") or ""
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    user = authenticate_ws_token(auth_header[len("Bearer "):].strip(), db)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return user
 
 
 class PermissionChecker:
@@ -48,54 +73,20 @@ class PermissionChecker:
     def __call__(self, request: Request, db: Session = None):
         """Check permissions for current user"""
         # Import here to avoid circular imports
-        from ..auth import get_current_user
-        from ..db import get_db
         
         # Get user from request state if available
         user = getattr(request.state, 'user', None)
         
         if user is None:
-            # Fall back to standard auth
-            from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-            from ..auth import decode_access_token
-            from ..models import User
-            from sqlalchemy.orm import joinedload
-            
-            security = HTTPBearer()
-            
-            # Get token from header
-            auth_header = request.headers.get("Authorization")
-            if not auth_header or not auth_header.startswith("Bearer "):
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Not authenticated",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-            
-            token = auth_header.split(" ")[1]
-            payload = decode_access_token(token)
-            username = payload.get("sub")
-            
             if db is None:
-                # Get DB session
                 from ..db import SessionLocal
-                db = SessionLocal()
+                own = SessionLocal()
                 try:
-                    user = db.query(User).options(joinedload(User.role)).filter(
-                        User.username == username
-                    ).first()
+                    user = _authenticate_request(request, own)
                 finally:
-                    db.close()
+                    own.close()
             else:
-                user = db.query(User).options(joinedload(User.role)).filter(
-                    User.username == username
-                ).first()
-            
-            if user is None:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="User not found",
-                )
+                user = _authenticate_request(request, db)
         
         # Check permissions
         if self.require_all:
@@ -152,40 +143,16 @@ class ScopedPermissionChecker:
     
     def __call__(self, request: Request):
         """Check scoped permission"""
-        from ..auth import get_current_user
         from ..db import SessionLocal
-        from ..models import User
-        from sqlalchemy.orm import joinedload
         
         # Get resource ID from path params
         resource_id = request.path_params.get(self.resource_param)
         organization_id = request.path_params.get(self.organization_param) if self.organization_param else None
         workspace_id = request.path_params.get(self.workspace_param) if self.workspace_param else None
         
-        # Get user
-        auth_header = request.headers.get("Authorization")
-        if not auth_header or not auth_header.startswith("Bearer "):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Not authenticated",
-            )
-        
-        token = auth_header.split(" ")[1]
-        from ..auth import decode_access_token
-        payload = decode_access_token(token)
-        username = payload.get("sub")
-        
         db = SessionLocal()
         try:
-            user = db.query(User).options(joinedload(User.role)).filter(
-                User.username == username
-            ).first()
-            
-            if user is None:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="User not found",
-                )
+            user = _authenticate_request(request, db)
             
             # Check permission with scope
             if not PermissionEngine.has_permission(

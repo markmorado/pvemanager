@@ -11,7 +11,11 @@ from ...logging_service import LoggingService
 from ._helpers import _get_proxmox_client
 from ...proxmox import _run_in_executor
 
-router = APIRouter()
+from ._helpers import enforce_server_visibility  # noqa: E402
+
+# Every {server_id} route: tenants only reach servers assigned to them
+# (directly or through a workspace) — see enforce_server_visibility.
+router = APIRouter(dependencies=[Depends(enforce_server_visibility)])
 
 
 # ==================== SDN (Software Defined Networking) ====================
@@ -64,6 +68,8 @@ def get_sdn_zones(
         
         zones = client.get_sdn_zones()
         return JSONResponse(content={"zones": zones})
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting SDN zones for server {server_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -83,6 +89,8 @@ def get_sdn_dns(
     try:
         client = _get_proxmox_client(server)
         return JSONResponse(content={"dns": client.get_sdn_dns()})
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting SDN DNS entries for server {server_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -171,6 +179,8 @@ def get_sdn_vnets(
         
         vnets = client.get_sdn_vnets()
         return JSONResponse(content={"vnets": vnets})
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting SDN vnets for server {server_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -261,6 +271,8 @@ def get_sdn_subnets(
         
         subnets = client.get_sdn_subnets(vnet)
         return JSONResponse(content={"subnets": subnets})
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting SDN subnets for vnet {vnet}: {e}")
         raise HTTPException(status_code=500, detail=str(e))

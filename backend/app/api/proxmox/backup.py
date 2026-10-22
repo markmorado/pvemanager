@@ -5,6 +5,7 @@ Endpoints for managing Proxmox storages, backup files,
 creating backups (vzdump), restoring, and scheduled backup jobs.
 """
 
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -17,11 +18,66 @@ from ...db import get_db
 from ...models import BackupJob, ProxmoxServer, User
 from ...auth import PermissionChecker
 from ...logging_service import LoggingService
-from ._helpers import _get_proxmox_client
+from ._helpers import (_get_proxmox_client, require_vm_access,
+                       can_view_all_instances, get_owned_vmids,
+                       require_node_name, require_pve_id)
 from ...proxmox import _run_in_executor
-from .tasks import ProxmoxTaskService
+from .tasks import ProxmoxTaskService, _require_upid_access
 
-router = APIRouter()
+from ._helpers import enforce_server_visibility  # noqa: E402
+
+# Every {server_id} route: tenants only reach servers assigned to them
+# (directly or through a workspace) — see enforce_server_visibility.
+router = APIRouter(dependencies=[Depends(enforce_server_visibility)])
+
+
+# vzdump archives: "<storage>:backup/vzdump-qemu-101-2024_01_01-00_00_00.vma.zst";
+# PBS snapshots: "<storage>:backup/vm/101/2024-01-01T00:00:00Z".
+_ARCHIVE_VMID_RES = (
+    re.compile(r"vzdump-(?:qemu|lxc|openvz)-(\d+)-"),
+    re.compile(r":backup/(?:vm|ct)/(\d+)/"),
+)
+
+
+def archive_vmid(volid: str) -> Optional[int]:
+    """Guest VMID a backup archive belongs to, or None when it can't be told."""
+    for rx in _ARCHIVE_VMID_RES:
+        m = rx.search(volid or "")
+        if m:
+            return int(m.group(1))
+    return None
+
+
+_BACKUP_VOLID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*:backup/[^\s?#\\]+$")
+
+
+def _require_backup_volid(volid) -> None:
+    """A backup volid, with no '..' segments (it is split into URL path parts)."""
+    if not (isinstance(volid, str) and _BACKUP_VOLID_RE.match(volid)) or ".." in volid.split("/"):
+        raise HTTPException(status_code=400, detail="Invalid backup volume id")
+
+
+def _require_archive_access(db: Session, user: User, server_id: int, volid: str) -> None:
+    """Tenants may only touch backups of guests they own.
+
+    Restoring someone else's archive into one's own guest (or a new VMID)
+    hands over that guest's disks; deleting it destroys their backup.
+    """
+    if can_view_all_instances(user):
+        return
+    vmid = archive_vmid(volid)
+    if vmid is None or vmid not in get_owned_vmids(db, user, server_id):
+        raise HTTPException(status_code=403, detail="You do not have access to this backup")
+
+
+def _require_new_vmid_allowed(user: User) -> None:
+    # A restore to a fresh VMID creates a guest the panel does not track
+    # (no owner, outside quotas) — keep it to users with the global view.
+    if not can_view_all_instances(user):
+        raise HTTPException(
+            status_code=403,
+            detail="Restoring to a new VMID requires the vm:manage permission",
+        )
 
 
 # ==================== Storage Management ====================
@@ -48,6 +104,8 @@ def get_storages(
             s["nodes_status"] = statuses
             s["inactive_nodes"] = [n["node"] for n in statuses if not n["active"]]
         return JSONResponse(content={"storages": storages})
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error listing storages for server {server_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -191,6 +249,12 @@ def list_backups(
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
+    # Tenants only see backups of the guests they own.
+    owned: Optional[set] = None
+    if not can_view_all_instances(current_user):
+        owned = get_owned_vmids(db, current_user, server_id)
+        if vmid is not None and vmid not in owned:
+            return JSONResponse(content={"backups": []})
     try:
         client = _get_proxmox_client(server)
 
@@ -216,6 +280,12 @@ def list_backups(
                 logger.warning(f"Skipping node {n} when listing backups: {e}")
                 continue
             for item in items:
+                if owned is not None:
+                    try:
+                        if int(item.get("vmid")) not in owned:
+                            continue
+                    except (TypeError, ValueError):
+                        continue
                 volid = item.get("volid")
                 if volid and volid in seen:
                     continue
@@ -252,6 +322,11 @@ async def delete_backup(
     volid = data.get("volid")
     if not all([node, storage, volid]):
         raise HTTPException(status_code=400, detail="node, storage, volid are required")
+    # All three become Proxmox API path segments.
+    require_node_name(node)
+    require_pve_id(storage, "storage")
+    _require_backup_volid(volid)
+    _require_archive_access(db, current_user, server.id, volid)
 
     try:
         client = _get_proxmox_client(server)
@@ -285,6 +360,7 @@ async def create_backup(
     node = data.get("node")
     vmid = data.get("vmid")
     storage = data.get("storage")
+    require_node_name(node)
 
     if not all([server_id, node, vmid, storage]):
         raise HTTPException(status_code=400, detail="server_id, node, vmid, storage are required")
@@ -292,6 +368,11 @@ async def create_backup(
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
+    try:
+        vmid = int(vmid)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="vmid must be an integer")
+    require_vm_access(db, current_user, server.id, vmid)
 
     mode = data.get("mode", "snapshot")
     compress = data.get("compress", "zstd")
@@ -337,11 +418,14 @@ def get_task_status(
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
+    _require_upid_access(db, current_user, server_id, upid)
     try:
         client = _get_proxmox_client(server)
         status = client.get_task_status(node, upid)
         log = client.get_task_log(node, upid)
         return JSONResponse(content={"status": status, "log": log})
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -360,6 +444,7 @@ async def restore_backup(
     node = data.get("node")
     vmid = data.get("vmid")
     archive = data.get("archive")   # volume id
+    require_node_name(node)
     # Target storage for the restored disks. Empty => "from backup configuration"
     # (disks go to the storage recorded in the backup). NOT the backup storage.
     storage = data.get("storage") or None
@@ -377,6 +462,15 @@ async def restore_backup(
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
+    try:
+        vmid = int(vmid)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="vmid must be an integer")
+    # Restoring without new_vmid overwrites the original guest.
+    require_vm_access(db, current_user, server.id, vmid)
+    _require_archive_access(db, current_user, server.id, archive)
+    if new_vmid:
+        _require_new_vmid_allowed(current_user)
 
     try:
         client = _get_proxmox_client(server)
@@ -455,9 +549,28 @@ async def restore_backup_bulk(
     if mode not in ("in_place", "new_vmid"):
         raise HTTPException(status_code=400, detail="mode must be 'in_place' or 'new_vmid'")
 
+    if not isinstance(items, list) or len(items) > 200:
+        raise HTTPException(status_code=400, detail="items must be a list of at most 200 entries")
+
     server = db.query(ProxmoxServer).filter(ProxmoxServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
+
+    # Authorize every item before restoring any: an in-place restore is a
+    # forced overwrite of the guest.
+    if mode == "new_vmid":
+        _require_new_vmid_allowed(current_user)
+    for it in items:
+        if not isinstance(it, dict):
+            raise HTTPException(status_code=400, detail="items must be objects")
+        require_node_name(it.get("node"))
+        try:
+            item_vmid = int(it.get("vmid"))
+        except (TypeError, ValueError):
+            continue  # reported per item below
+        if it.get("archive"):
+            require_vm_access(db, current_user, server.id, item_vmid)
+            _require_archive_access(db, current_user, server.id, it["archive"])
 
     client = _get_proxmox_client(server)
     allocated: set = set()
@@ -734,6 +847,66 @@ async def delete_proxmox_native_job(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _is_job_admin(user: User) -> bool:
+    return bool(user.is_admin or (user.role and user.role.name == "admin"))
+
+
+def _get_job_for_user(db: Session, user: User, job_id: int) -> BackupJob:
+    job = db.query(BackupJob).filter(BackupJob.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if not (_is_job_admin(user) or job.owner_id == user.id):
+        raise HTTPException(status_code=403, detail="Access denied")
+    return job
+
+
+def _clean_job_vmids(db: Session, user: User, server_id: int, vmids) -> list:
+    """Normalize ``vmids`` to ``["all"]`` or a list of ints the user may back up.
+
+    A job backs up with panel credentials and prunes older archives of every
+    listed guest (keep_last), so a tenant listing someone else's VMID could
+    wipe that guest's backups.
+    """
+    if isinstance(vmids, str):
+        vmids = [v.strip() for v in vmids.split(",") if v.strip()]
+    if not isinstance(vmids, list) or not vmids:
+        raise HTTPException(status_code=400, detail="vmids must be a non-empty list or 'all'")
+    if vmids == ["all"]:
+        if not can_view_all_instances(user):
+            raise HTTPException(status_code=403, detail="Backing up all guests requires vm:manage")
+        return ["all"]
+    try:
+        cleaned = sorted({int(v) for v in vmids})
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="vmids must be integers or 'all'")
+    if any(v < 100 for v in cleaned):
+        raise HTTPException(status_code=400, detail="Invalid VMID")
+    for v in cleaned:
+        require_vm_access(db, user, server_id, v)
+    return cleaned
+
+
+def _check_cron(expr) -> str:
+    from apscheduler.triggers.cron import CronTrigger
+    if not isinstance(expr, str) or len(expr.split()) != 5:
+        raise HTTPException(status_code=400, detail="cron_expression must have 5 fields")
+    try:
+        CronTrigger.from_crontab(expr, timezone="UTC")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid cron expression: {e}")
+    return expr.strip()
+
+
+def _int_field(data: dict, name: str, default: int) -> int:
+    try:
+        value = int(data.get(name, default))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail=f"{name} must be an integer")
+    if value < 0:
+        raise HTTPException(status_code=400, detail=f"{name} must not be negative")
+    return value
+
+
 @router.get("/api/backups/jobs")
 def list_backup_jobs(
     db: Session = Depends(get_db),
@@ -767,18 +940,18 @@ async def create_backup_job(
         raise HTTPException(status_code=404, detail="Server not found")
 
     job = BackupJob(
-        server_id=data["server_id"],
+        server_id=server.id,
         node=data["node"],
-        vmids=data["vmids"],
+        vmids=_clean_job_vmids(db, current_user, server.id, data["vmids"]),
         storage=data["storage"],
         mode=data.get("mode", "snapshot"),
         compress=data.get("compress", "zstd"),
         notes=data.get("notes"),
-        keep_last=int(data.get("keep_last", 3)),
-        keep_daily=int(data.get("keep_daily", 7)),
-        keep_weekly=int(data.get("keep_weekly", 4)),
-        keep_monthly=int(data.get("keep_monthly", 6)),
-        cron_expression=data["cron_expression"],
+        keep_last=_int_field(data, "keep_last", 3),
+        keep_daily=_int_field(data, "keep_daily", 7),
+        keep_weekly=_int_field(data, "keep_weekly", 4),
+        keep_monthly=_int_field(data, "keep_monthly", 6),
+        cron_expression=_check_cron(data["cron_expression"]),
         enabled=bool(data.get("enabled", True)),
         owner_id=current_user.id,
     )
@@ -809,16 +982,18 @@ async def update_backup_job(
     current_user: User = Depends(PermissionChecker("backup:manage")),
 ):
     """Update a scheduled backup job"""
-    job = db.query(BackupJob).filter(BackupJob.id == job_id).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    if not (current_user.is_admin or
-            (current_user.role and current_user.role.name == "admin") or
-            job.owner_id == current_user.id):
-        raise HTTPException(status_code=403, detail="Access denied")
+    job = _get_job_for_user(db, current_user, job_id)
 
     data = await request.json()
+    if "vmids" in data:
+        data["vmids"] = _clean_job_vmids(db, current_user, job.server_id, data["vmids"])
+    if "cron_expression" in data:
+        data["cron_expression"] = _check_cron(data["cron_expression"])
+    for name in ("keep_last", "keep_daily", "keep_weekly", "keep_monthly"):
+        if name in data:
+            data[name] = _int_field(data, name, 0)
+    if "enabled" in data:
+        data["enabled"] = bool(data["enabled"])
     updatable = ["node", "vmids", "storage", "mode", "compress", "notes",
                  "keep_last", "keep_daily", "keep_weekly", "keep_monthly",
                  "cron_expression", "enabled"]
@@ -845,14 +1020,7 @@ def delete_backup_job(
     current_user: User = Depends(PermissionChecker("backup:manage")),
 ):
     """Delete a scheduled backup job"""
-    job = db.query(BackupJob).filter(BackupJob.id == job_id).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    if not (current_user.is_admin or
-            (current_user.role and current_user.role.name == "admin") or
-            job.owner_id == current_user.id):
-        raise HTTPException(status_code=403, detail="Access denied")
+    job = _get_job_for_user(db, current_user, job_id)
 
     try:
         from ...services.backup_scheduler import scheduler
@@ -872,9 +1040,7 @@ def toggle_backup_job(
     current_user: User = Depends(PermissionChecker("backup:manage")),
 ):
     """Enable or disable a scheduled backup job"""
-    job = db.query(BackupJob).filter(BackupJob.id == job_id).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+    job = _get_job_for_user(db, current_user, job_id)
 
     job.enabled = not job.enabled
     job.updated_at = datetime.now(timezone.utc)
@@ -899,9 +1065,7 @@ def run_backup_job_now(
     current_user: User = Depends(PermissionChecker("backup:create")),
 ):
     """Trigger a scheduled backup job immediately"""
-    job = db.query(BackupJob).filter(BackupJob.id == job_id).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+    _get_job_for_user(db, current_user, job_id)
 
     try:
         from ...services.backup_scheduler import run_backup_job

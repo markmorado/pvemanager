@@ -3,9 +3,16 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from loguru import logger
-from typing import List, Optional
+from typing import Annotated, List, Optional
+from pydantic import Field
+from starlette.requests import HTTPConnection
+from fastapi import WebSocketException
 import re
+import secrets
 import ssl
+import threading
+import time
+from types import SimpleNamespace
 import asyncio
 import httpx
 import websockets
@@ -108,8 +115,62 @@ def can_view_all_instances(current_user: User) -> bool:
     role = current_user.role
     if role and role.name == 'admin':
         return True
-    perms = (role.permissions if role else None) or {}
-    return bool(perms.get('vm:manage', False))
+    # Same evaluation as PermissionChecker("vm:manage") — a raw dict lookup
+    # missed ``vm:*``, so such a role passed vm:manage-gated endpoints while
+    # being treated as a tenant everywhere else.
+    return check_permission(current_user, 'vm:manage')
+
+
+# Stand-in request without headers: visibility checks that must not be
+# narrowed by the client-chosen X-Active-Workspace header.
+_NO_WORKSPACE_HEADER = SimpleNamespace(headers={})
+
+
+def pve_authority(server: ProxmoxServer) -> str:
+    """``host:port`` of the server's Proxmox API (as ProxmoxClient.from_server).
+
+    Console endpoints built their URLs with a hard-coded ``:8006`` and failed
+    on servers registered with another port.
+    """
+    host = server.ip_address or getattr(server, "hostname", "") or ""
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"  # bare IPv6
+    return f"{host}:{server.port or 8006}"
+
+
+# Console sessions need a PVE auth ticket (PVEAuthCookie) of the panel's
+# Proxmox account — usually root@pam. It used to be returned to the browser,
+# handing every tenant with vm:console a root ticket for the whole cluster.
+# Now the ticket stays here and the browser gets an opaque, single-use handle
+# bound to the user and guest. In-memory: the backend runs one uvicorn worker.
+_PVE_TICKET_TTL = 120.0
+_pve_tickets: dict = {}
+_pve_tickets_lock = threading.Lock()
+
+
+def stash_pve_ticket(ticket: Optional[str], user_id: int, server_id: int, vmid: int) -> Optional[str]:
+    if not ticket:
+        return None
+    handle = secrets.token_urlsafe(32)
+    now = time.monotonic()
+    with _pve_tickets_lock:
+        for key in [k for k, v in _pve_tickets.items() if v[4] < now]:
+            del _pve_tickets[key]
+        _pve_tickets[handle] = (ticket, user_id, server_id, vmid, now + _PVE_TICKET_TTL)
+    return handle
+
+
+def claim_pve_ticket(handle: Optional[str], user_id: int, server_id: int, vmid: int) -> Optional[str]:
+    """Redeem a handle from :func:`stash_pve_ticket` (once), or None."""
+    if not handle:
+        return None
+    with _pve_tickets_lock:
+        entry = _pve_tickets.pop(handle, None)
+    if not entry or entry[4] < time.monotonic():
+        return None
+    if entry[1:4] != (user_id, server_id, vmid):
+        return None
+    return entry[0]
 
 
 def get_visible_server_ids(
@@ -164,6 +225,43 @@ def get_visible_server_ids(
     return effective_ids
 
 
+def enforce_server_visibility(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """Router dependency: 404 for {server_id} routes outside the user's servers.
+
+    Permission checks alone (node:view, firewall:view, storage:view … are in
+    the stock ``user`` role) let a tenant read node syslog, firewall rules,
+    disks or pools of every server in the panel. Privileged users are not
+    narrowed; the active-workspace header is ignored here (it is a UI
+    filter, not an access boundary). Guests the user owns stay reachable
+    even on a server that is not assigned to them.
+    """
+    raw = request.path_params.get("server_id")
+    if raw is None:
+        return
+    try:
+        server_id = int(raw)
+    except (TypeError, ValueError):
+        return
+    if current_user.is_admin or (
+        current_user.role and current_user.role.name in ('admin', 'moderator')
+    ):
+        return
+    vmid = request.path_params.get("vmid")
+    if vmid is not None:
+        try:
+            if check_vm_access(db, current_user, server_id, int(vmid)):
+                return
+        except (TypeError, ValueError):
+            pass
+    visible = get_visible_server_ids(_NO_WORKSPACE_HEADER, db, current_user)
+    if visible is not None and server_id not in visible:
+        raise HTTPException(status_code=404, detail="Proxmox server not found")
+
+
 def check_vm_access(db: Session, current_user: User, server_id: int, vmid: int) -> bool:
     """
     Check if user has access to a specific VM instance.
@@ -183,6 +281,90 @@ def check_vm_access(db: Session, current_user: User, server_id: int, vmid: int) 
     ).first()
 
     return bool(instance and instance.owner_id == current_user.id)
+
+
+def require_server_visible(db: Session, current_user: User, server_id: int) -> None:
+    """404 unless the server is visible to the user.
+
+    For endpoints taking ``server_id`` in the request BODY: the router-level
+    :func:`enforce_server_visibility` only sees path parameters.
+    """
+    visible = get_visible_server_ids(_NO_WORKSPACE_HEADER, db, current_user)
+    if visible is not None and server_id not in visible:
+        raise HTTPException(status_code=404, detail="Proxmox server not found")
+
+
+# Volume ids a create request may reference. Anything else lets the request
+# point at another guest's disk or backup (pct create from a vzdump archive is
+# a restore; a disk volume can be attached as a CD-ROM).
+ISO_VOLID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*:iso/[^/\s]+$")
+VZTMPL_VOLID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*:vztmpl/[^/\s]+$")
+
+
+# ── Identifiers that end up in Proxmox API URL paths ──────────────────────
+# proxmoxer splits path arguments on '/' and joins them unescaped, so a node,
+# storage or other segment carrying '/', '#' or '?' rewrites the request path:
+# an access check made for one guest would act on another resource.
+NODE_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9.-]{0,62}$"
+PVE_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$"
+_NODE_RE = re.compile(NODE_PATTERN)
+_PVE_ID_RE = re.compile(PVE_ID_PATTERN)
+_UPID_RE = re.compile(r"^UPID:[A-Za-z0-9.-]+:[0-9A-Fa-f]+:[0-9A-Fa-f]+:[0-9A-Fa-f]+:[\w.-]*:[^:/?#\s]*:[^:/?#\s]+:?$")
+_UNSAFE_SEGMENT_RE = re.compile(r"[/#?\\\x00-\x1f]")
+# Path parameters declared with the :path converter (or CIDRs) may hold '/'.
+_SLASH_PATH_PARAMS = {"subnet_cidr"}
+_SUBNET_RE = re.compile(r"^[A-Za-z0-9_.:-]+(/\d{1,3})?$")
+_NODE_QUERY_KEYS = ("node", "target_node", "source_node")
+
+PveNode = Annotated[str, Field(pattern=NODE_PATTERN)]
+PveId = Annotated[str, Field(pattern=PVE_ID_PATTERN)]
+
+
+def require_node_name(value, field: str = "node") -> None:
+    """400 unless ``value`` is a plain node name (for dict/form bodies)."""
+    if value is not None and value != "" and not (isinstance(value, str) and _NODE_RE.match(value)):
+        raise HTTPException(status_code=400, detail=f"Invalid {field}")
+
+
+def require_pve_id(value, field: str) -> None:
+    """400 unless ``value`` is a plain storage/pool/bridge-like id."""
+    if value is not None and value != "" and not (isinstance(value, str) and _PVE_ID_RE.match(value)):
+        raise HTTPException(status_code=400, detail=f"Invalid {field}")
+
+
+def _identifier_error(conn: HTTPConnection) -> Optional[str]:
+    for key, value in conn.path_params.items():
+        if not isinstance(value, str):
+            continue
+        if key == "upid":
+            if not _UPID_RE.match(value):
+                return key
+        elif key in _SLASH_PATH_PARAMS:
+            if not _SUBNET_RE.match(value):
+                return key
+        elif _UNSAFE_SEGMENT_RE.search(value):
+            return key
+    for key in _NODE_QUERY_KEYS:
+        value = conn.query_params.get(key)
+        if value and not _NODE_RE.match(value):
+            return key
+    storage = conn.query_params.get("storage")  # e.g. backup listing: storage(...) path
+    if storage and not _PVE_ID_RE.match(storage):
+        return "storage"
+    upid = conn.query_params.get("upid")
+    if upid and not _UPID_RE.match(upid):
+        return "upid"
+    return None
+
+
+def validate_pve_identifiers(conn: HTTPConnection) -> None:
+    """Router dependency for every /proxmox route (HTTP and WebSocket)."""
+    bad = _identifier_error(conn)
+    if bad is None:
+        return
+    if conn.scope.get("type") == "websocket":
+        raise WebSocketException(code=1008, reason=f"Invalid {bad}")
+    raise HTTPException(status_code=400, detail=f"Invalid {bad}")
 
 
 def require_vm_access(db: Session, current_user: User, server_id: int, vmid: int):

@@ -7,12 +7,15 @@ import time
 import uuid
 import json
 from typing import Callable, Optional
+from urllib.parse import parse_qsl
 from fastapi import Request, Response
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 from loguru import logger
 
-from .db import SessionLocal
+from . import db as _db
+from .auth import get_client_ip
 from .logging_service import LoggingService
 
 
@@ -100,10 +103,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             try:
                 body_bytes = await request.body()
                 if len(body_bytes) <= self.MAX_BODY_SIZE:
-                    try:
-                        request_body = json.loads(body_bytes)
-                    except Exception:
-                        request_body = {"_raw": body_bytes.decode('utf-8', errors='replace')[:1000]}
+                    request_body = self._parse_body(request.headers.get("content-type", ""), body_bytes)
             except Exception as e:
                 logger.debug(f"Could not read request body: {e}")
         
@@ -137,60 +137,50 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 should_log = response.status_code >= 400 or duration_ms > 5000
                 break
         
-        # Log to database (async-safe)
+        # Log to database. LoggingService is synchronous (SQLAlchemy commit);
+        # run it in the threadpool so a slow DB write does not stall the event
+        # loop — and with it every WebSocket console and metrics stream.
         if should_log and (path.startswith("/api/") or path.startswith("/proxmox/") or path.startswith("/ipam/")):
-            try:
-                db = SessionLocal()
-                try:
-                    error_message = None
-                    error_traceback = None
-                    if response.status_code >= 400:
-                        error_message = f"HTTP {response.status_code}"
-                    
-                    # Determine log level
-                    level = LoggingService.DEBUG
-                    if response.status_code >= 500:
-                        level = LoggingService.ERROR
-                    elif response.status_code >= 400:
-                        level = LoggingService.WARNING
-                    elif duration_ms > 3000:
-                        level = LoggingService.WARNING  # Slow requests
-                    
-                    # Determine action from path and method
-                    action = self._get_action_from_request(request.method, path)
-                    
-                    # Create detailed message
-                    message = f"{request.method} {path}"
-                    if duration_ms > 1000:
-                        message += f" (slow: {duration_ms}ms)"
-                    message += f" -> {response.status_code}"
-                    
-                    LoggingService.log(
-                        db=db,
-                        level=level,
-                        category=LoggingService.API,
-                        action=action,
-                        message=message,
-                        request_id=request_id,
-                        session_id=session_id,
-                        username=username,
-                        user_id=user_id,
-                        ip_address=client_ip,
-                        user_agent=user_agent,
-                        request_method=request.method,
-                        request_path=path,
-                        query_params=query_params,
-                        request_body=request_body,
-                        response_status=response.status_code,
-                        duration_ms=duration_ms,
-                        success=response.status_code < 400,
-                        error_message=error_message,
-                        error_traceback=error_traceback
-                    )
-                finally:
-                    db.close()
-            except Exception as e:
-                logger.warning(f"Failed to log API request: {e}")
+            status_code = response.status_code
+            error_message = f"HTTP {status_code}" if status_code >= 400 else None
+
+            # Determine log level
+            level = LoggingService.DEBUG
+            if status_code >= 500:
+                level = LoggingService.ERROR
+            elif status_code >= 400:
+                level = LoggingService.WARNING
+            elif duration_ms > 3000:
+                level = LoggingService.WARNING  # Slow requests
+
+            # Create detailed message
+            message = f"{request.method} {path}"
+            if duration_ms > 1000:
+                message += f" (slow: {duration_ms}ms)"
+            message += f" -> {status_code}"
+
+            await run_in_threadpool(
+                self._write_log,
+                level=level,
+                category=LoggingService.API,
+                action=self._get_action_from_request(request.method, path),
+                message=message,
+                request_id=request_id,
+                session_id=session_id,
+                username=username,
+                user_id=user_id,
+                ip_address=client_ip,
+                user_agent=user_agent,
+                request_method=request.method,
+                request_path=path,
+                query_params=query_params,
+                request_body=request_body,
+                response_status=status_code,
+                duration_ms=duration_ms,
+                success=status_code < 400,
+                error_message=error_message,
+                error_traceback=None,
+            )
         
         # Add request ID to response headers for debugging
         response.headers["X-Request-ID"] = request_id
@@ -198,30 +188,39 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         return response
     
     @staticmethod
-    def _is_valid_ip(ip: str) -> bool:
-        import ipaddress
+    def _write_log(**fields) -> None:
         try:
-            ipaddress.ip_address(ip)
-            return True
-        except ValueError:
-            return False
+            db = _db.SessionLocal()
+            try:
+                LoggingService.log(db=db, **fields)
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning(f"Failed to log API request: {e}")
+
+    @staticmethod
+    def _parse_body(content_type: str, body: bytes) -> Optional[dict]:
+        """Decode a request body into a dict so LoggingService can mask secrets.
+
+        Form posts (e.g. /api/auth/change-password) used to be stored verbatim
+        as ``_raw`` — masking only applies to dict keys, so old and new
+        passwords landed in the audit log in plaintext. Bodies that cannot be
+        turned into key/value pairs are not logged at all.
+        """
+        if not body:
+            return None
+        ctype = content_type.split(";", 1)[0].strip().lower()
+        try:
+            if ctype == "application/x-www-form-urlencoded":
+                return dict(parse_qsl(body.decode("utf-8", errors="replace"), keep_blank_values=True))
+            data = json.loads(body)
+            return data if isinstance(data, dict) else {"_items": data}
+        except Exception:
+            return {"_omitted": f"{len(body)} bytes ({ctype or 'unknown type'})"}
 
     def _get_client_ip(self, request: Request) -> str:
-        """Extract client IP from request, validating proxy headers to prevent spoofing."""
-        forwarded_for = request.headers.get("x-forwarded-for")
-        if forwarded_for:
-            candidate = forwarded_for.split(",")[0].strip()
-            if self._is_valid_ip(candidate):
-                return candidate
-
-        real_ip = request.headers.get("x-real-ip", "").strip()
-        if real_ip and self._is_valid_ip(real_ip):
-            return real_ip
-
-        if request.client:
-            return request.client.host
-
-        return "unknown"
+        """Client IP using the same trusted-proxy rules as authentication."""
+        return get_client_ip(request)
     
     def _get_action_from_request(self, method: str, path: str) -> str:
         """Determine action name from HTTP method and path"""

@@ -118,7 +118,7 @@ class LxcMixin:
             )
             try:
                 if not ssh.connect():
-                    return {'success': False, 'error': 'SSH connection to node failed'}
+                    return {'success': False, 'error': ssh.last_error or 'SSH connection to node failed'}
                 # printf + chpasswd; shlex.quote защищает от shell-injection
                 entry = shlex.quote(f'{username}:{password}')
                 inner = f"printf '%s\\n' {entry} | chpasswd"

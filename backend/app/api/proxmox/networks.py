@@ -9,7 +9,11 @@ from ...auth import PermissionChecker
 from ._helpers import _get_proxmox_client
 from ...proxmox import _run_in_executor
 
-router = APIRouter()
+from ._helpers import enforce_server_visibility  # noqa: E402
+
+# Every {server_id} route: tenants only reach servers assigned to them
+# (directly or through a workspace) — see enforce_server_visibility.
+router = APIRouter(dependencies=[Depends(enforce_server_visibility)])
 
 
 # ==================== Node list ====================
@@ -29,6 +33,8 @@ def get_server_nodes(
         client = _get_proxmox_client(server)
         nodes = client.get_nodes()
         return JSONResponse(content={"nodes": nodes})
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting nodes for server {server_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -99,6 +105,8 @@ def list_node_networks(
             sdn_vnets.append(record)
 
         return JSONResponse(content={"node": node, "interfaces": enriched, "sdn_vnets": sdn_vnets})
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error listing node {node} networks for server {server_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))

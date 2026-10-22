@@ -37,27 +37,31 @@ export interface TaskItem {
   [key: string]: unknown;
 }
 
-export function useAllTasks(params?: { limit?: number; status?: string }) {
+export function useAllTasks(
+  params?: { limit?: number; status?: string },
+  { refetchInterval = 5000 }: { refetchInterval?: number } = {},
+) {
   const qs = new URLSearchParams();
   if (params?.limit) qs.set('limit', String(params.limit));
   if (params?.status) qs.set('status', params.status);
   return useQuery({
     queryKey: taskKeys.all(params),
     queryFn: () => apiClient.get<{ tasks: TaskItem[] }>(`/proxmox/api/all-tasks?${qs}`),
-    refetchInterval: 5000,
+    refetchInterval,
   });
 }
 
 export interface TaskLogLine { n: number; t: string }
 
-export function useTaskLog(serverId: number, upid: string, node: string, enabled = true) {
+export function useTaskLog(serverId: number, upid: string, node: string, enabled = true, live = true) {
   return useQuery({
     queryKey: ['task-log', serverId, upid, node],
     queryFn: () => apiClient.get<{ logs: TaskLogLine[] }>(
       `/proxmox/api/${serverId}/task/${upid}/log?node=${encodeURIComponent(node)}&limit=500`,
     ),
     enabled: enabled && serverId > 0 && !!upid && !!node,
-    refetchInterval: enabled ? 3000 : false,
+    // A finished task's log no longer changes — stop polling it.
+    refetchInterval: enabled && live ? 3000 : false,
   });
 }
 
@@ -68,7 +72,8 @@ export function useTaskStatus(serverId: number, upid: string, node: string, enab
       `/proxmox/api/${serverId}/task/${upid}/status?node=${encodeURIComponent(node)}`,
     ),
     enabled: enabled && serverId > 0 && !!upid && !!node,
-    refetchInterval: enabled ? 3000 : false,
+    refetchInterval: (query) =>
+      enabled && query.state.data?.status !== 'stopped' ? 3000 : false,
   });
 }
 

@@ -204,6 +204,17 @@ export function useProvisionServerToken() {
   });
 }
 
+/**
+ * Forget the SSH host key pinned on first connection (TOFU) — needed after a
+ * node reinstall, otherwise the panel refuses SSH to it as a possible MITM.
+ */
+export function useResetSshHostKey() {
+  return useMutation({
+    mutationFn: (id: number) =>
+      apiClient.delete<{ success: boolean; removed: number }>(`/proxmox/api/servers/${id}/ssh-host-key`),
+  });
+}
+
 export function useTestServer() {
   return useMutation({
     mutationFn: (id: number) => apiClient.post<{ success: boolean; status?: string; message?: string }>(`/proxmox/api/servers/${id}/test`, {}),
