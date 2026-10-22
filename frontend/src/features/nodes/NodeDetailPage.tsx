@@ -15,7 +15,7 @@ import { useVirtualMachines } from '@/hooks/use-instances';
 import { useNodePower } from '@/hooks/use-node-admin';
 import { useConfirm } from '@/components/shared/ConfirmDialog';
 import { ServerStatusBadge } from '@/components/shared/ServerStatusBadge';
-import { useAuthStore } from '@/stores/auth-store';
+import { useHasPermission } from '@/lib/permissions';
 import { StatusDot } from '@/components/shared/status-dot';
 import { formatBytes, formatUptime, formatPercent } from '@/lib/format';
 
@@ -24,7 +24,9 @@ function NodeActionsMenu({ serverId, node }: { serverId: number; node: string })
   const { t } = useTranslation();
   const confirm = useConfirm();
   const power = useNodePower(serverId, node);
-  const canPower = !!useAuthStore((s) => s.user?.permissions?.['node:power']);
+  // hasPermission, not a raw map lookup: an admin bound to a role gets only
+  // that role's map from /me, yet the backend lets admins through.
+  const canPower = useHasPermission('node:power');
 
   const doPower = async (command: 'reboot' | 'shutdown') => {
     const ok = await confirm(

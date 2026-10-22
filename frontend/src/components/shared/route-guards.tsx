@@ -62,6 +62,18 @@ export function RequirePermission({
   );
 }
 
+/**
+ * Landing page ("/", unknown URLs, after login or an identity switch): the
+ * first page the user may open. Sending everybody to /dashboard made users
+ * without dashboard:view bounce off RequirePermission with an "access denied"
+ * toast on every sign-in.
+ */
+export function HomeRedirect() {
+  const user = useAuthStore((s) => s.user);
+  if (!user) return <Spinner />;
+  return <Navigate to={firstAccessiblePath(!!user.is_admin, user.permissions) ?? '/profile'} replace />;
+}
+
 export function ProtectedRoute() {
   const { isAuthenticated, isLoading } = useAuthStore();
 
@@ -80,7 +92,7 @@ export function PublicRoute() {
   const { isAuthenticated } = useAuthStore();
 
   if (isAuthenticated) {
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to="/" replace />;
   }
 
   return <Outlet />;

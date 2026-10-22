@@ -58,7 +58,10 @@ export default function NotificationsDropdown() {
           <div className="px-3 py-6 text-center text-sm text-muted-foreground">{t('notifications.empty')}</div>
         ) : (
           notifications.slice(0, 20).map(n => (
-            <DropdownMenuItem key={n.id} className="flex flex-col items-start gap-1 p-3 cursor-default" onSelect={e => e.preventDefault()}>
+            // closeOnClick={false}: the mark-read / delete buttons live inside the
+            // item, so a click on them must not close the whole menu (Base UI has
+            // no Radix-style onSelect to cancel).
+            <DropdownMenuItem key={n.id} className="flex flex-col items-start gap-1 p-3 cursor-default" closeOnClick={false}>
               <div className="flex w-full items-start justify-between gap-2">
                 <div className="min-w-0 flex-1">
                   <p className={`text-sm leading-tight ${n.is_read ? 'text-muted-foreground' : 'font-medium'}`}>

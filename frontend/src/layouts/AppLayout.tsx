@@ -197,7 +197,7 @@ function ImpersonationBanner() {
     try {
       await stopImpersonate();
       toast.success(t('users.impersonate_stopped'));
-      navigate('/dashboard');
+      navigate('/');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     }

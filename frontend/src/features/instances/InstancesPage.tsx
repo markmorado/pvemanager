@@ -168,7 +168,7 @@ function RowActionMenu({ vm }: { vm: VMInstance }) {
       { action: pendingPower },
       {
         onSuccess: () => {
-          toast.success(`${pendingPower} sent for ${vm.name || vm.vmid}`);
+          toast.success(t('console.action_sent'), { description: vm.name || String(vm.vmid) });
           setPendingPower(null);
         },
         onError: (err) => {
@@ -1119,7 +1119,6 @@ export default function InstancesPage() {
       },
     ],
     // Volatile data is read via cellCtxRef (see above) — only l10n identities here.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [t, bulkActionLabel]
   );
 

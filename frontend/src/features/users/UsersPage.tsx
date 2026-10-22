@@ -116,7 +116,7 @@ function UsersTab() {
     try {
       await impersonate(u.id);
       toast.success(t('users.impersonate_started', { name: u.username }));
-      navigate('/dashboard');
+      navigate('/');
     } catch (e) {
       toast.error(getErrMsg(e));
     }

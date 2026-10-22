@@ -25,7 +25,7 @@ export default function LoginPage() {
         setTwoFactorRequired(true);
         return;
       }
-      navigate('/dashboard');
+      navigate('/');
     } catch {
       // Error is already handled in store
     }

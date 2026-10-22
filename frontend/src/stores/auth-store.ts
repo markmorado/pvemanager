@@ -3,7 +3,23 @@ import { apiClient } from '@/lib/api-client';
 import { queryClient } from '@/lib/query-client';
 import { resetTasksWebSocket } from '@/lib/websocket';
 import { useWorkspaceStore } from '@/stores/workspace-store';
+import { useDeployTasksStore } from '@/stores/deploy-tasks-store';
+import { useMinimizedOpsStore } from '@/stores/minimized-ops-store';
+import { useBulkTasksStore } from '@/stores/bulk-tasks-store';
 import type { User, LoginRequest, AuthResponse } from '@/types';
+
+const LOAD_USER_RETRY_MS = 3_000;
+
+// Per-identity client state that outlives the React Query cache: the active
+// workspace (sent as X-Active-Workspace) and the task trays, two of which are
+// persisted in localStorage. Left in place, the next identity in this browser
+// saw the previous one's task names and sent its workspace id.
+function resetIdentityState(): void {
+  useWorkspaceStore.getState().setActiveWorkspace(null);
+  useDeployTasksStore.setState({ tasks: [] });
+  useMinimizedOpsStore.setState({ items: [] });
+  useBulkTasksStore.setState({ tasks: [] });
+}
 
 interface AuthState {
   user: User | null;
@@ -30,15 +46,14 @@ async function switchToken(
   apiClient.setToken(token);
   queryClient.clear();
   resetTasksWebSocket(true);
-  // Reset the active workspace: the previous identity's selection (sent via the
-  // X-Active-Workspace header) may not belong to the new one.
-  useWorkspaceStore.getState().setActiveWorkspace(null);
+  // The previous identity's workspace selection may not belong to the new one.
+  resetIdentityState();
   set({ token, isAuthenticated: true });
   const user = await apiClient.get<User>('/api/auth/me');
   set({ user });
 }
 
-export const useAuthStore = create<AuthState>((set) => ({
+export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   token: localStorage.getItem('access_token'),
   isAuthenticated: !!localStorage.getItem('access_token'),
@@ -85,6 +100,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     // пользователю, который войдёт в этой же вкладке.
     queryClient.clear();
     resetTasksWebSocket(false);
+    resetIdentityState();
     set({ user: null, token: null, isAuthenticated: false });
   },
 
@@ -99,9 +115,21 @@ export const useAuthStore = create<AuthState>((set) => ({
       apiClient.setToken(token);
       const user = await apiClient.get<User>('/api/auth/me');
       set({ user, isAuthenticated: true, isLoading: false });
-    } catch {
-      apiClient.setToken(null);
-      set({ user: null, token: null, isAuthenticated: false, isLoading: false });
+    } catch (err) {
+      const status = (err as { status?: number }).status;
+      const rejected = status === 401 || status === 403
+        || (err instanceof Error && err.message === 'Unauthorized');
+      if (rejected) {
+        apiClient.setToken(null);
+        set({ user: null, token: null, isAuthenticated: false, isLoading: false });
+        return;
+      }
+      // Network error / 5xx (panel restarting, e.g. self-update): the session is
+      // still valid — dropping the token here logged everybody out on a reload
+      // during a restart. Keep the spinner up and try again.
+      setTimeout(() => {
+        if (localStorage.getItem('access_token')) get().loadUser();
+      }, LOAD_USER_RETRY_MS);
     }
   },
 

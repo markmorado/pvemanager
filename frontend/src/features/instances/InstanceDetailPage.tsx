@@ -91,7 +91,7 @@ export default function InstanceDetailPage() {
       { action: pendingPower },
       {
         onSuccess: () => {
-          toast.success(`${pendingPower} sent successfully`);
+          toast.success(t('console.action_sent'));
           setPendingPower(null);
         },
         onError: (err) => {

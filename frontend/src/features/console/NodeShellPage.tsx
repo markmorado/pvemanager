@@ -32,6 +32,12 @@ export default function NodeShellPage() {
 
   const sid = Number(serverId);
 
+  // `t` changes identity on a language switch. As a dependency of connect() it
+  // tore the session down and reconnected — for cmd=upgrade that starts
+  // `apt dist-upgrade` on the node a second time. Read it through a ref.
+  const tRef = useRef(t);
+  useEffect(() => { tRef.current = t; }, [t]);
+
   const cleanupSession = useCallback(() => {
     if (wsRef.current) {
       wsRef.current.close();
@@ -111,12 +117,12 @@ export default function NodeShellPage() {
       ws.onclose = () => {
         if (guard.cancelled) return;
         setStatus('error');
-        setErrorMsg(t('console.terminal_closed', 'Соединение с терминалом закрыто'));
+        setErrorMsg(tRef.current('console.terminal_closed', 'Соединение с терминалом закрыто'));
       };
       ws.onerror = () => {
         if (guard.cancelled) return;
         setStatus('error');
-        setErrorMsg(t('console.terminal_error', 'Ошибка соединения с терминалом'));
+        setErrorMsg(tRef.current('console.terminal_error', 'Ошибка соединения с терминалом'));
       };
 
       terminal.onData((data: string) => {
@@ -149,7 +155,7 @@ export default function NodeShellPage() {
       setStatus('error');
       setErrorMsg(err instanceof Error ? err.message : 'Failed to connect');
     }
-  }, [sid, node, cmd, t]);
+  }, [sid, node, cmd]);
 
   const startSession = useCallback(() => {
     if (guardRef.current) guardRef.current.cancelled = true;
@@ -170,14 +176,17 @@ export default function NodeShellPage() {
     };
   }, [startSession, cleanupSession]);
 
+  // Driven by fullscreenchange: leaving with Esc never reached the toggle.
+  useEffect(() => {
+    const sync = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', sync);
+    return () => document.removeEventListener('fullscreenchange', sync);
+  }, []);
   const toggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen();
-      setIsFullscreen(true);
-    } else {
-      document.exitFullscreen();
-      setIsFullscreen(false);
-    }
+    const req = document.fullscreenElement
+      ? document.exitFullscreen()
+      : document.documentElement.requestFullscreen();
+    req.catch(() => { /* denied by the browser */ });
   };
 
   return (
@@ -191,7 +200,7 @@ export default function NodeShellPage() {
               <><TerminalSquare className="mr-1 h-3 w-3" />Shell</>
             )}
           </Badge>
-          <span className="text-xs text-muted-foreground">Node: {node}</span>
+          <span className="text-xs text-muted-foreground">{t('common.node', 'Node')}: {node}</span>
           <Badge
             variant="secondary"
             className={`text-2xs ${

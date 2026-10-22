@@ -9,7 +9,7 @@ import {
   type NodeCertificate,
 } from '@/hooks/use-node-admin';
 import { useConfirm } from '@/components/shared/ConfirmDialog';
-import { useAuthStore } from '@/stores/auth-store';
+import { useHasPermission } from '@/lib/permissions';
 
 /** Форматирование unix-времени (сек) в локальную дату; пустое — прочерк. */
 function fmtDate(ts?: number): string {
@@ -39,7 +39,7 @@ function ExpiryBadge({ notafter }: { notafter?: number }) {
 export default function NodeCertificates({ serverId, node }: { serverId: number; node: string }) {
   const { t } = useTranslation();
   const confirm = useConfirm();
-  const canManage = !!useAuthStore((s) => s.user?.permissions?.['node:manage']);
+  const canManage = useHasPermission('node:manage');
 
   const { data, isFetching, refetch } = useNodeCertificates(serverId, node);
   const upload = useUploadNodeCertificate(serverId, node);

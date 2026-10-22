@@ -152,21 +152,24 @@ export function useVMLiveMetrics(
   type: string,
   node: string,
 ): VMLiveStatus | null {
-  const [live, setLive] = useState<VMLiveStatus | null>(null);
+  const channel = `instance_metrics:${serverId}_${vmid}_${type}_${node}`;
+  // Tagged with its channel: the detail page stays mounted when the route
+  // switches to another instance, and an untagged sample kept showing the
+  // previous instance's metrics until the new channel's first message.
+  const [live, setLive] = useState<{ channel: string; data: VMLiveStatus } | null>(null);
   const { data: http } = useVMStatus(serverId, vmid, type, node);
 
   useEffect(() => {
     const ws = getTasksWebSocket();
     ws.connect();
-    const channel = `instance_metrics:${serverId}_${vmid}_${type}_${node}`;
     const unsub = ws.subscribe(channel, (msg: unknown) => {
       const payload = msg as { data?: VMLiveStatus };
-      if (payload?.data) setLive(payload.data);
+      if (payload?.data) setLive({ channel, data: payload.data });
     });
     return () => unsub();
-  }, [serverId, vmid, type, node]);
+  }, [channel]);
 
-  return live ?? (http as VMLiveStatus) ?? null;
+  return (live?.channel === channel ? live.data : null) ?? (http as VMLiveStatus) ?? null;
 }
 
 export function useVMConfig(serverId: number, vmid: number, type: string, node: string, enabled = true) {
@@ -388,21 +391,19 @@ export function useExecuteScript(serverId: number, vmid: number) {
       fd.set('script', script);
       fd.set('interpreter', interpreter);
       const qs = new URLSearchParams({ node, timeout: String(timeout) });
-      const res = await fetch(`/proxmox/api/${serverId}/vm/${vmid}/execute-script?${qs}`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${apiClient.getToken()}` },
-        body: fd,
-      });
-      if (!res.ok) {
-        const e = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
-        throw new Error((e as { detail?: string }).detail || `HTTP ${res.status}`);
-      }
-      return res.json() as Promise<ExecuteScriptResult>;
+      // postForm, not a bare fetch: it adds X-Active-Workspace, handles an
+      // expired session (401) and turns 422 detail arrays into readable text.
+      return apiClient.postForm<ExecuteScriptResult>(`/proxmox/api/${serverId}/vm/${vmid}/execute-script?${qs}`, fd);
     },
   });
 }
 
 // ==================== Power Actions ====================
+// reset/resume leave the guest running; treating them as "stopped" flashed the
+// row as stopped and kept polling for a state that never came.
+const RUNNING_AFTER = new Set(['start', 'restart', 'reboot', 'reset', 'resume']);
+const expectedStatusAfter = (action: string) => (RUNNING_AFTER.has(action) ? 'running' : 'stopped');
+
 interface PowerActionResult {
   status: string;
   action: string;
@@ -423,7 +424,7 @@ export function usePowerAction(serverId: number, vmid: number, type: string, nod
     onMutate: async ({ action }) => {
       await qc.cancelQueries({ queryKey: vmKeys.all });
       const previousVMs = qc.getQueryData<VMInstance[]>(vmKeys.all);
-      const expectedStatus = action === 'start' || action === 'restart' ? 'running' : 'stopped';
+      const expectedStatus = expectedStatusAfter(action);
       qc.setQueryData<VMInstance[]>(vmKeys.all, (old) =>
         old?.map((vm) =>
           vm.server_id === serverId && vm.vmid === vmid
@@ -439,7 +440,7 @@ export function usePowerAction(serverId: number, vmid: number, type: string, nod
       }
     },
     onSuccess: (_data, { action }) => {
-      const expectedStatus = action === 'start' || action === 'restart' ? 'running' : 'stopped';
+      const expectedStatus = expectedStatusAfter(action);
       let attempts = 0;
       const maxAttempts = 12; // 12 * 3s = 36s max
       const poll = () => {

@@ -368,14 +368,18 @@ export default function ConsolePage() {
   }, [startSession, cleanupSession]);
 
   // ==================== Fullscreen ====================
+  // Driven by fullscreenchange: leaving with Esc (or a refused request) never
+  // reached the toggle, so the button kept showing the wrong icon.
+  useEffect(() => {
+    const sync = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', sync);
+    return () => document.removeEventListener('fullscreenchange', sync);
+  }, []);
   const toggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen();
-      setIsFullscreen(true);
-    } else {
-      document.exitFullscreen();
-      setIsFullscreen(false);
-    }
+    const req = document.fullscreenElement
+      ? document.exitFullscreen()
+      : document.documentElement.requestFullscreen();
+    req.catch(() => { /* denied by the browser — the icon stays as is */ });
   };
 
   // ==================== Send Ctrl+Alt+Del (VNC) ====================
@@ -467,7 +471,7 @@ export default function ConsolePage() {
           <Badge variant="outline" className="text-xs border-border/50">
             {vmTypeLabel(type)} #{vmid}
           </Badge>
-          <span className="text-xs text-muted-foreground">Node: {node}</span>
+          <span className="text-xs text-muted-foreground">{t('common.node', 'Node')}: {node}</span>
           <Badge
             variant="secondary"
             className={`text-2xs ${

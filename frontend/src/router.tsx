@@ -3,7 +3,7 @@ import { createBrowserRouter, Navigate } from 'react-router';
 import AppLayout from '@/layouts/AppLayout';
 import AuthLayout from '@/layouts/AuthLayout';
 import ConsoleLayout from '@/layouts/ConsoleLayout';
-import { ProtectedRoute, PublicRoute, RequirePermission } from '@/components/shared/route-guards';
+import { HomeRedirect, ProtectedRoute, PublicRoute, RequirePermission } from '@/components/shared/route-guards';
 import LoginPage from '@/features/auth/LoginPage';
 const ForgotPasswordPage = lazy(() => import('./features/auth/ForgotPasswordPage.tsx'));
 const ResetPasswordPage = lazy(() => import('./features/auth/ResetPasswordPage.tsx'));
@@ -97,7 +97,7 @@ export const router = createBrowserRouter([
       {
         element: <AppLayout />,
         children: [
-          { path: '/', element: <Navigate to="/dashboard" replace /> },
+          { path: '/', element: <HomeRedirect /> },
           { path: '/dashboard', element: <Page perm="dashboard:view"><DashboardPage /></Page> },
           { path: '/instances', element: <Page perm="vm:view"><InstancesPage /></Page> },
           { path: '/instances/create', element: <Page perm="vm:create"><CreateInstanceWizard /></Page> },
@@ -132,5 +132,5 @@ export const router = createBrowserRouter([
       },
     ],
   },
-  { path: '*', element: <Navigate to="/dashboard" replace /> },
+  { path: '*', element: <Navigate to="/" replace /> },
 ]);

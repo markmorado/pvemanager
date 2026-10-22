@@ -56,13 +56,20 @@ export default function CommandPalette() {
     ];
   }, [query, isAdmin, permissions, t]);
 
-  // Reset transient UI state whenever the dialog's open state changes, driven
-  // straight from the event (not an effect) to avoid a cascading re-render.
-  const handleOpenChange = (next: boolean) => {
-    setOpen(next);
-    setQuery('');
-    setActiveIndex(0);
-  };
+  // Start every opening with an empty query. Done while rendering (not in an
+  // effect, not in onOpenChange): Ctrl+K, the top-bar button and go() flip the
+  // store directly and bypass onOpenChange, so the previous search used to
+  // reappear on the next open.
+  const [prevOpen, setPrevOpen] = useState(open);
+  if (open !== prevOpen) {
+    setPrevOpen(open);
+    if (open) {
+      setQuery('');
+      setActiveIndex(0);
+    }
+  }
+
+  const handleOpenChange = (next: boolean) => setOpen(next);
 
   const handleQueryChange = (value: string) => {
     setQuery(value);

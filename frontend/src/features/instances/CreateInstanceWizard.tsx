@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useMutation } from '@tanstack/react-query';
@@ -44,9 +44,11 @@ function NumericInput({ value, onChange, ...props }: Omit<React.ComponentProps<t
   onChange: (n: number) => void;
 }) {
   const [raw, setRaw] = useState(String(value));
-  const committed = useRef(value);
-  if (value !== committed.current) {
-    committed.current = value;
+  // Last value this input reported (or received). Kept in state, not a ref:
+  // refs must not be read or written during render.
+  const [committed, setCommitted] = useState(value);
+  if (value !== committed) {
+    setCommitted(value);
     setRaw(String(value));
   }
   return (
@@ -58,7 +60,7 @@ function NumericInput({ value, onChange, ...props }: Omit<React.ComponentProps<t
         setRaw(e.target.value);
         const n = e.target.value === '' ? 0 : Number(e.target.value);
         if (!Number.isNaN(n)) {
-          committed.current = n;
+          setCommitted(n);
           onChange(n);
         }
       }}
