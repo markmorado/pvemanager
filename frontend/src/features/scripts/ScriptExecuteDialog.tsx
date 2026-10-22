@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { Loader2, Play, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
@@ -45,15 +45,19 @@ export default function ScriptExecuteDialog({ script, onOpenChange }: Props) {
     [vms, serverIdNum],
   );
 
-  useEffect(() => {
-    if (!open) return;
-    setServerId(''); setNode(''); setGuestKey(''); setExecutionId(null);
-    const defaults: Record<string, string> = {};
-    for (const p of script?.params_schema || []) {
-      defaults[p.name] = p.default != null ? String(p.default) : '';
+  // Fresh form (with the script's parameter defaults) for every script opened.
+  const [filledFor, setFilledFor] = useState<typeof script>(null);
+  if (script !== filledFor) {
+    setFilledFor(script);
+    if (script) {
+      setServerId(''); setNode(''); setGuestKey(''); setExecutionId(null);
+      const defaults: Record<string, string> = {};
+      for (const p of script.params_schema || []) {
+        defaults[p.name] = p.default != null ? String(p.default) : '';
+      }
+      setParamValues(defaults);
     }
-    setParamValues(defaults);
-  }, [open, script]);
+  }
 
   const execute = useExecuteScript(script?.id || 0);
 

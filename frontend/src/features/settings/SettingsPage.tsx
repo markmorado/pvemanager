@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -58,11 +58,12 @@ function PanelTab({ canEdit }: { canEdit: boolean }) {
   const updatePanel = useUpdatePanelSettings();
   const [logRetention, setLogRetention] = useState('30');
 
-  useEffect(() => {
-    if (settings) {
-      setLogRetention(String(settings.log_retention_days || 30));
-    }
-  }, [settings]);
+  // Refill from each newly loaded response (also a cached one on mount).
+  const [syncedFrom, setSyncedFrom] = useState<typeof settings>(undefined);
+  if (settings && settings !== syncedFrom) {
+    setSyncedFrom(settings);
+    setLogRetention(String(settings.log_retention_days || 30));
+  }
 
   return (
     <Card>
@@ -93,13 +94,14 @@ function SecurityTab() {
   const [lockoutDuration, setLockoutDuration] = useState('');
   const [sessionTimeout, setSessionTimeout] = useState('');
 
-  useEffect(() => {
-    if (security) {
-      setMaxAttempts(String(security.max_login_attempts ?? 5));
-      setLockoutDuration(String(security.lockout_duration_minutes ?? 30));
-      setSessionTimeout(String(security.session_timeout_minutes ?? 60));
-    }
-  }, [security]);
+  // Refill from each newly loaded response (also a cached one on mount).
+  const [syncedFrom, setSyncedFrom] = useState<typeof security>(undefined);
+  if (security && security !== syncedFrom) {
+    setSyncedFrom(security);
+    setMaxAttempts(String(security.max_login_attempts ?? 5));
+    setLockoutDuration(String(security.lockout_duration_minutes ?? 30));
+    setSessionTimeout(String(security.session_timeout_minutes ?? 60));
+  }
 
   return (
     <Card>
@@ -133,20 +135,23 @@ function NotificationChannelsCards() {
   const [smtpFrom, setSmtpFrom] = useState('');
   const [tgToken, setTgToken] = useState('');
 
-  useEffect(() => {
-    if (channels?.smtp) {
-      setSmtpHost(String(channels.smtp.host ?? ''));
-      setSmtpPort(String(channels.smtp.port ?? 587));
-      setSmtpUser(String(channels.smtp.username ?? ''));
-      setSmtpFrom(String(channels.smtp.from_email ?? ''));
-    }
-  }, [channels?.smtp]);
+  // Each block refills from every newly loaded channel config (also a cached one on mount).
+  const smtp = channels?.smtp;
+  const [smtpSyncedFrom, setSmtpSyncedFrom] = useState<typeof smtp>(undefined);
+  if (smtp && smtp !== smtpSyncedFrom) {
+    setSmtpSyncedFrom(smtp);
+    setSmtpHost(String(smtp.host ?? ''));
+    setSmtpPort(String(smtp.port ?? 587));
+    setSmtpUser(String(smtp.username ?? ''));
+    setSmtpFrom(String(smtp.from_email ?? ''));
+  }
 
-  useEffect(() => {
-    if (channels?.telegram) {
-      setTgToken(String(channels.telegram.telegram_bot_token ?? channels.telegram.bot_token ?? ''));
-    }
-  }, [channels?.telegram]);
+  const telegram = channels?.telegram;
+  const [tgSyncedFrom, setTgSyncedFrom] = useState<typeof telegram>(undefined);
+  if (telegram && telegram !== tgSyncedFrom) {
+    setTgSyncedFrom(telegram);
+    setTgToken(String(telegram.telegram_bot_token ?? telegram.bot_token ?? ''));
+  }
 
   const testSmtp = useTestSMTP();
   const botInfo = useTelegramBotInfo();
@@ -242,9 +247,12 @@ function UpdateSection() {
   const [repoUrl, setRepoUrl] = useState('');
   const [repoEdit, setRepoEdit] = useState(false);
 
-  useEffect(() => {
-    if (repo?.repository_url) setRepoUrl(repo.repository_url);
-  }, [repo?.repository_url]);
+  const storedRepoUrl = repo?.repository_url;
+  const [repoSyncedFrom, setRepoSyncedFrom] = useState<string | undefined>(undefined);
+  if (storedRepoUrl && storedRepoUrl !== repoSyncedFrom) {
+    setRepoSyncedFrom(storedRepoUrl);
+    setRepoUrl(storedRepoUrl);
+  }
 
   const handleSaveRepo = () => {
     setRepo.mutate(repoUrl, {

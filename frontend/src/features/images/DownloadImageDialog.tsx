@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader2, Download } from 'lucide-react';
 import {
@@ -50,9 +50,9 @@ export default function DownloadImageDialog({ open, onClose, serverId, node, ima
   const { t } = useTranslation();
   const isQcow2 = image?.kind === 'qcow2';
 
-  const [storage, setStorage] = useState('');        // download storage (import / vztmpl)
+  const [storagePick, setStorage] = useState('');        // download storage (import / vztmpl)
   const [toTemplate, setToTemplate] = useState(true);
-  const [diskStorage, setDiskStorage] = useState(''); // VM disk storage (images)
+  const [diskStoragePick, setDiskStorage] = useState(''); // VM disk storage (images)
   const [vmid, setVmid] = useState<string>('');
   const [cores, setCores] = useState(2);
   const [memory, setMemory] = useState(2048);
@@ -77,17 +77,24 @@ export default function DownloadImageDialog({ open, onClose, serverId, node, ima
   const download = useDownloadImage(serverId);
   const addDeployTask = useDeployTasksStore((s) => s.addTask);
 
-  useEffect(() => {
+  // Fresh choices on every opening.
+  const [wasOpen, setWasOpen] = useState(false);
+  if (open !== wasOpen) {
+    setWasOpen(open);
     if (open) {
-      setStorage(storages.length === 1 ? storages[0].storage : '');
+      setStorage('');
+      setDiskStorage('');
       setToTemplate(true);
       setVmid('');
     }
-  }, [open, storages]);
-
-  useEffect(() => {
-    if (open) setDiskStorage(diskStorages.length === 1 ? diskStorages[0].storage : '');
-  }, [open, diskStorages]);
+  }
+  // A storage that is the only option is picked for the user.
+  const storage = storages.some((s) => s.storage === storagePick)
+    ? storagePick
+    : (storages.length === 1 ? storages[0].storage : '');
+  const diskStorage = diskStorages.some((s) => s.storage === diskStoragePick)
+    ? diskStoragePick
+    : (diskStorages.length === 1 ? diskStorages[0].storage : '');
 
   if (!image) return null;
 

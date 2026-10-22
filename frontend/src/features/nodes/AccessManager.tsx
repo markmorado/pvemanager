@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Plus, Trash2, RefreshCw, KeyRound, ShieldQuestion, Copy } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -38,13 +38,16 @@ function RealmDialog({ serverId, open, onClose }: { serverId: number; open: bool
   const [usernameClaim, setUsernameClaim] = useState('sub');
   const [secure, setSecure] = useState(true);
 
-  useEffect(() => {
+  // Fresh form on every opening.
+  const [wasOpen, setWasOpen] = useState(false);
+  if (open !== wasOpen) {
+    setWasOpen(open);
     if (open) {
       setRealm(''); setType('ldap'); setComment('');
       setServer1(''); setBaseDn(''); setUserAttr('uid'); setDomain('');
       setIssuerUrl(''); setClientId(''); setUsernameClaim('sub'); setSecure(true);
     }
-  }, [open]);
+  }
 
   const submit = () => {
     if (!realm.trim()) { toast.error(t('access.err_realm', 'Укажите имя realm')); return; }
@@ -137,9 +140,12 @@ function TokenDialog({ serverId, userid, open, onClose }: { serverId: number; us
   const [privsep, setPrivsep] = useState(true);
   const [secret, setSecret] = useState<{ full: string; value: string } | null>(null);
 
-  useEffect(() => {
+  // Fresh form on every opening (and the previous secret is never shown again).
+  const [wasOpen, setWasOpen] = useState(false);
+  if (open !== wasOpen) {
+    setWasOpen(open);
     if (open) { setTokenid(''); setComment(''); setPrivsep(true); setSecret(null); }
-  }, [open]);
+  }
 
   const submit = () => {
     if (!tokenid.trim()) { toast.error(t('access.err_tokenid', 'Укажите ID токена')); return; }
@@ -216,11 +222,9 @@ function TokensTab({ serverId }: { serverId: number }) {
   const confirm = useConfirm();
   const { data: usersData } = useAccessUsers(serverId);
   const users = usersData?.users ?? [];
-  const [userid, setUserid] = useState('');
-
-  useEffect(() => {
-    if (users.length > 0 && !users.some(u => u.userid === userid)) setUserid(users[0].userid);
-  }, [users, userid]);
+  const [useridPick, setUserid] = useState('');
+  // The picked user, or the first one while none (or a removed one) is picked.
+  const userid = users.some(u => u.userid === useridPick) ? useridPick : (users[0]?.userid ?? '');
 
   const { data: tokensData } = useUserTokens(serverId, userid);
   const tokens = tokensData?.tokens ?? [];

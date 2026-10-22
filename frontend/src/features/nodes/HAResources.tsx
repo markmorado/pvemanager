@@ -45,7 +45,7 @@ export default function HAResources({ serverId, vms }: { serverId: number; vms: 
   const [form, setForm] = useState<AddForm>(emptyAddForm);
   const set = <K extends keyof AddForm>(k: K, v: AddForm[K]) => setForm(p => ({ ...p, [k]: v }));
 
-  const resources = data?.resources ?? [];
+  const resources = useMemo(() => data?.resources ?? [], [data]);
   const groups = data?.groups ?? [];
 
   // Guests not yet managed by HA, for the add dialog

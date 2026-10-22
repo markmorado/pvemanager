@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { Server, Monitor, Container, Plus, Pencil, Trash2, Wifi, Loader2, Clock, Layers, LayoutGrid, ExternalLink, KeyRound, FingerprintPattern } from 'lucide-react';
@@ -143,9 +143,12 @@ function ServerFormDialog({
   const [form, setForm] = useState<ServerFormData>(initialData);
   const testServer = useTestServerCredentials();
 
-  useEffect(() => {
+  // Refill the form each time the dialog opens (or gets other initial data).
+  const [filledFor, setFilledFor] = useState({ open: false, initialData: null as ServerFormData | null });
+  if (filledFor.open !== open || filledFor.initialData !== initialData) {
+    setFilledFor({ open, initialData });
     if (open) setForm(initialData);
-  }, [open, initialData]);
+  }
 
   const set = (field: keyof ServerFormData, value: string | boolean) =>
     setForm(prev => ({ ...prev, [field]: value }));

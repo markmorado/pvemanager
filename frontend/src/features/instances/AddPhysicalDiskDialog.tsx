@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { HardDrive } from 'lucide-react';
 import {
@@ -54,18 +54,21 @@ export default function AddPhysicalDiskDialog({ open, onClose, serverId, vmid, n
   const [ssd, setSsd] = useState(false);
   const [discard, setDiscard] = useState(false);
 
-  const disks = data?.disks ?? [];
+  const disks = useMemo(() => data?.disks ?? [], [data]);
   const diskKey = useMemo(() => nextDiskKey(bus, config), [bus, config]);
   const selected = useMemo(() => disks.find((d) => (d.passthrough_path || d.devpath) === devpath), [disks, devpath]);
 
-  useEffect(() => {
+  // Fresh form on every opening.
+  const [wasOpen, setWasOpen] = useState(false);
+  if (open !== wasOpen) {
+    setWasOpen(open);
     if (open) {
       setDevpath('');
       setBus('scsi');
       setSsd(false);
       setDiscard(false);
     }
-  }, [open]);
+  }
 
   const submit = () => {
     if (!devpath) {

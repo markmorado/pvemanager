@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Save, Globe, Clock, FileText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -17,16 +17,17 @@ export default function NodeSystemConfig({ serverId, node }: { serverId: number;
   const { data: dnsData } = useNodeDns(serverId, node);
   const setDns = useSetNodeDns(serverId, node);
   const [dns, setDnsForm] = useState({ search: '', dns1: '', dns2: '', dns3: '' });
-  useEffect(() => {
-    if (dnsData?.dns) {
-      setDnsForm({
-        search: dnsData.dns.search ?? '',
-        dns1: dnsData.dns.dns1 ?? '',
-        dns2: dnsData.dns.dns2 ?? '',
-        dns3: dnsData.dns.dns3 ?? '',
-      });
-    }
-  }, [dnsData]);
+  // Each form below refills from every newly loaded response (also a cached one on mount).
+  const [dnsFrom, setDnsFrom] = useState<typeof dnsData>(undefined);
+  if (dnsData?.dns && dnsData !== dnsFrom) {
+    setDnsFrom(dnsData);
+    setDnsForm({
+      search: dnsData.dns.search ?? '',
+      dns1: dnsData.dns.dns1 ?? '',
+      dns2: dnsData.dns.dns2 ?? '',
+      dns3: dnsData.dns.dns3 ?? '',
+    });
+  }
   const saveDns = () => setDns.mutate(dns, {
     onSuccess: () => toast.success(t('nodeadm.dns_saved', 'DNS сохранён')),
     onError: (e: Error) => toast.error(e.message),
@@ -36,7 +37,11 @@ export default function NodeSystemConfig({ serverId, node }: { serverId: number;
   const { data: timeData } = useNodeTime(serverId, node);
   const setTz = useSetNodeTimezone(serverId, node);
   const [tz, setTz2] = useState('');
-  useEffect(() => { if (timeData?.time?.timezone) setTz2(timeData.time.timezone); }, [timeData]);
+  const [tzFrom, setTzFrom] = useState<typeof timeData>(undefined);
+  if (timeData?.time?.timezone && timeData !== tzFrom) {
+    setTzFrom(timeData);
+    setTz2(timeData.time.timezone);
+  }
   const saveTz = () => setTz.mutate(tz, {
     onSuccess: () => toast.success(t('nodeadm.tz_saved', 'Часовой пояс сохранён')),
     onError: (e: Error) => toast.error(e.message),
@@ -46,7 +51,11 @@ export default function NodeSystemConfig({ serverId, node }: { serverId: number;
   const { data: hostsData } = useNodeHosts(serverId, node);
   const setHosts = useSetNodeHosts(serverId, node);
   const [hosts, setHostsForm] = useState('');
-  useEffect(() => { if (hostsData?.hosts?.data != null) setHostsForm(hostsData.hosts.data); }, [hostsData]);
+  const [hostsFrom, setHostsFrom] = useState<typeof hostsData>(undefined);
+  if (hostsData?.hosts?.data != null && hostsData !== hostsFrom) {
+    setHostsFrom(hostsData);
+    setHostsForm(hostsData.hosts.data);
+  }
   const saveHosts = () => setHosts.mutate({ data: hosts, digest: hostsData?.hosts?.digest }, {
     onSuccess: () => toast.success(t('nodeadm.hosts_saved', '/etc/hosts сохранён')),
     onError: (e: Error) => toast.error(e.message),

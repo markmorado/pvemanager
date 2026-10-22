@@ -163,16 +163,17 @@ function AutostartCard({ serverId, vmid, type, node }: { serverId: number; vmid:
   const [up, setUp] = useState('');
   const [down, setDown] = useState('');
 
-  // Инициализация из конфига Proxmox
-  useEffect(() => {
-    if (!config) return;
+  // Инициализация из каждого загруженного конфига Proxmox (в т.ч. уже закэшированного)
+  const [syncedConfig, setSyncedConfig] = useState<typeof config>(undefined);
+  if (config && config !== syncedConfig) {
+    setSyncedConfig(config);
     setOnboot(Number(config.onboot) === 1);
     setProtection(Number(config.protection) === 1);
     const s = parseStartup(config.startup);
     setOrder(s.order);
     setUp(s.up);
     setDown(s.down);
-  }, [config]);
+  }
 
   const save = () => {
     const updates: Record<string, unknown> = {
@@ -366,8 +367,10 @@ function CloudInitCard({ serverId, vmid, type, node }: { serverId: number; vmid:
     return Object.values(config).some(v => typeof v === 'string' && v.includes('cloudinit'));
   }, [config]);
 
-  useEffect(() => {
-    if (!config) return;
+  // Refill from each newly loaded config (also the one already cached on mount).
+  const [syncedConfig, setSyncedConfig] = useState<typeof config>(undefined);
+  if (config && config !== syncedConfig) {
+    setSyncedConfig(config);
     setUser(typeof config.ciuser === 'string' ? config.ciuser : '');
     setNameserver(typeof config.nameserver === 'string' ? config.nameserver : '');
     setSearchdomain(typeof config.searchdomain === 'string' ? config.searchdomain : '');
@@ -384,7 +387,7 @@ function CloudInitCard({ serverId, vmid, type, node }: { serverId: number; vmid:
       setIpCidr(ip.match(/ip=([^,]+)/)?.[1] ?? '');
       setGateway(ip.match(/gw=([^,]+)/)?.[1] ?? '');
     }
-  }, [config]);
+  }
 
   const save = () => {
     let ipconfig0: string | undefined;
@@ -640,15 +643,17 @@ function VmOptionsCard({ serverId, vmid, type, node }: { serverId: number; vmid:
   const [kvm, setKvm] = useState(true);
   const [hotplug, setHotplug] = useState(true);
 
-  useEffect(() => {
-    if (!config) return;
+  // Refill from each newly loaded config (also the one already cached on mount).
+  const [syncedConfig, setSyncedConfig] = useState<typeof config>(undefined);
+  if (config && config !== syncedConfig) {
+    setSyncedConfig(config);
     const agentRaw = typeof config.agent === 'string' ? config.agent : String(config.agent ?? '');
     setAgent(agentRaw.startsWith('1'));
     setTablet(config.tablet == null ? true : Number(config.tablet) === 1);
     setKvm(config.kvm == null ? true : Number(config.kvm) === 1);
     const hp = typeof config.hotplug === 'string' ? config.hotplug : '';
     setHotplug(config.hotplug == null ? true : hp !== '0' && hp !== '');
-  }, [config]);
+  }
 
   const lock = typeof config?.lock === 'string' ? config.lock : '';
 

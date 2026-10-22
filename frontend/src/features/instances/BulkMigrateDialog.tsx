@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ArrowRightLeft } from 'lucide-react';
 import {
@@ -30,18 +30,15 @@ export default function BulkMigrateDialog({
 }: Props) {
   const { t } = useTranslation();
   const { data: nodesData } = useNodes(serverId);
-  const [target, setTarget] = useState('');
+  const [targetPick, setTarget] = useState('');
   const [online, setOnline] = useState(true);
 
   const nodeNames = useMemo(() => (nodesData?.nodes ?? []).map((n) => n.node), [nodesData]);
   const singleSource = sourceNodes.length === 1 ? sourceNodes[0] : null;
 
-  // Автовыбор первой подходящей ноды при открытии.
-  useEffect(() => {
-    if (!open) return;
-    const candidates = nodeNames.filter((n) => n !== singleSource);
-    if (!target || !candidates.includes(target)) setTarget(candidates[0] ?? '');
-  }, [open, nodeNames, singleSource]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Выбранная нода, а пока выбора нет (или он стал недопустим) — первая подходящая.
+  const candidates = nodeNames.filter((n) => n !== singleSource);
+  const target = candidates.includes(targetPick) ? targetPick : (candidates[0] ?? '');
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

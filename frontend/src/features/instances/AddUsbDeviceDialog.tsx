@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Usb } from 'lucide-react';
 import {
@@ -54,12 +54,15 @@ export default function AddUsbDeviceDialog({ open, onClose, serverId, vmid, node
 
   const usbKey = useMemo(() => nextUsbKey(config), [config]);
 
-  useEffect(() => {
+  // Fresh form on every opening.
+  const [wasOpen, setWasOpen] = useState(false);
+  if (open !== wasOpen) {
+    setWasOpen(open);
     if (open) {
       setSelected('');
       setUsb3(false);
     }
-  }, [open]);
+  }
 
   const submit = () => {
     if (!selected) {

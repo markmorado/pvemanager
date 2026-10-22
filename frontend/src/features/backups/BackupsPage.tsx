@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Archive, Play, Calendar, RotateCcw, Trash2, Loader2, Plus, Pencil } from 'lucide-react';
 
@@ -99,15 +99,40 @@ function detectVmType(volid: string): 'qemu' | 'lxc' {
 export default function BackupsPage() {
   const { t } = useTranslation();
   const [tab, setTab] = useState('files');
-  const [selectedServer, setSelectedServer] = useState<string>('');
+  const [serverPick, setSelectedServer] = useState<string>('');
   const [selectedNode, setSelectedNode] = useState<string>(ALL_NODES);
-  const [selectedStorage, setSelectedStorage] = useState('');
+  const [storagePick, setSelectedStorage] = useState('');
   const [search, setSearch] = useState('');
 
   const { data: servers = [] } = useServers();
+  // The picked server, or the first one when nothing (or a server no longer in
+  // the active workspace) is picked — a stale id would silently empty the list
+  // and make the Select show the raw id instead of a name.
+  const selectedServer = servers.some(s => String(s.id) === serverPick)
+    ? serverPick
+    : (servers[0] ? String(servers[0].id) : '');
   const sid = selectedServer ? Number(selectedServer) : 0;
+  // A different server (picked, or fallen back to) invalidates the node choice.
+  const [nodesOfServer, setNodesOfServer] = useState(selectedServer);
+  if (nodesOfServer !== selectedServer) {
+    setNodesOfServer(selectedServer);
+    setSelectedNode(ALL_NODES);
+    setSelectedStorage('');
+  }
   const { data: nodesData } = useNodes(sid);
   const { data: storagesData } = useBackupStorages(sid);
+  const allStorages = useMemo(
+    () => (storagesData?.storages || []) as { storage: string; type: string; content: string; nodes?: string; used?: number; total?: number }[],
+    [storagesData],
+  );
+  const storages = useMemo(
+    () => allStorages.filter(s => (s.content || '').split(',').includes('backup')),
+    [allStorages],
+  );
+  // The picked backup storage, or the first backup-capable one.
+  const selectedStorage = storages.some(s => s.storage === storagePick)
+    ? storagePick
+    : (storages[0]?.storage ?? '');
   const nodeParam = selectedNode === ALL_NODES ? '' : selectedNode;
   const { data: backupsData } = useBackupList(sid, nodeParam, selectedStorage);
   const { data: jobsData } = useBackupJobs();
@@ -151,14 +176,6 @@ export default function BackupsPage() {
   const [bulkConfirm, setBulkConfirm] = useState(false);
 
   const nodes = useMemo(() => (nodesData?.nodes || []), [nodesData]);
-  const allStorages = useMemo(
-    () => (storagesData?.storages || []) as { storage: string; type: string; content: string; nodes?: string; used?: number; total?: number }[],
-    [storagesData],
-  );
-  const storages = useMemo(
-    () => allStorages.filter(s => (s.content || '').split(',').includes('backup')),
-    [allStorages],
-  );
   // Storages that can hold restored guest disks on a given node.
   // qemu => content 'images', lxc => 'rootdir', 'any' => either (bulk, mixed types).
   const diskStoragesFor = (node: string, vmType: 'qemu' | 'lxc' | 'any') => {
@@ -171,7 +188,7 @@ export default function BackupsPage() {
       return true;
     });
   };
-  const allBackups = (backupsData?.backups || []) as BackupItem[];
+  const allBackups = useMemo(() => (backupsData?.backups || []) as BackupItem[], [backupsData]);
   const backups = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return allBackups;
@@ -224,36 +241,6 @@ export default function BackupsPage() {
     return map;
   }, [servers]);
 
-  // Auto-select first server when list arrives
-  useEffect(() => {
-    if (!selectedServer && servers.length > 0) {
-      setSelectedServer(String(servers[0].id));
-    }
-  }, [servers, selectedServer]);
-
-  // Drop a stale server selection when its server is not in the active
-  // workspace anymore (e.g. after switching workspaces) — otherwise the list
-  // silently empties and the Select shows the raw server id instead of a name.
-  useEffect(() => {
-    if (selectedServer && servers.length > 0 && !servers.some(s => String(s.id) === selectedServer)) {
-      setSelectedServer('');
-      setSelectedNode(ALL_NODES);
-      setSelectedStorage('');
-    }
-  }, [servers, selectedServer]);
-
-  // Auto-select first backup-capable storage when none selected (or current is unavailable)
-  useEffect(() => {
-    if (!sid) return;
-    if (storages.length === 0) {
-      if (selectedStorage) setSelectedStorage('');
-      return;
-    }
-    if (!selectedStorage || !storages.some(s => s.storage === selectedStorage)) {
-      setSelectedStorage(storages[0].storage);
-    }
-  }, [storages, sid, selectedStorage]);
-
   const openRestore = (b: BackupItem) => {
     setRestoreTarget(b);
     setRestoreTargetNode(b.node || (selectedNode === ALL_NODES ? '' : selectedNode) || nodes[0]?.node || '');
@@ -300,9 +287,12 @@ export default function BackupsPage() {
 
   // --- Bulk restore selection helpers (one archive per VMID) ---
   // Reset selection whenever the visible backup set changes (server/node/storage switch).
-  useEffect(() => {
+  const backupSetKey = `${sid}|${nodeParam}|${selectedStorage}`;
+  const [selectionSetKey, setSelectionSetKey] = useState(backupSetKey);
+  if (selectionSetKey !== backupSetKey) {
+    setSelectionSetKey(backupSetKey);
     setSelectedBackups(new Map());
-  }, [sid, nodeParam, selectedStorage]);
+  }
 
   const toggleBackupSelected = (b: BackupItem) => {
     setSelectedBackups(prev => {

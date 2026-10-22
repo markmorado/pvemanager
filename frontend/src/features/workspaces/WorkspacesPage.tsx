@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Plus, Search, Trash2, Users, Server, Pencil } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -146,13 +146,13 @@ function EditWorkspaceDialog({
   const [selectedServerIds, setSelectedServerIds] = useState<number[]>([]);
   const [selectedUserIds, setSelectedUserIds] = useState<number[]>([]);
 
-  // Populate selections from loaded workspace
-  useEffect(() => {
-    if (workspace) {
-      setSelectedServerIds(workspace.servers?.map((s: any) => s.id) ?? []);
-      setSelectedUserIds(workspace.users?.map((u: any) => u.id) ?? []);
-    }
-  }, [workspace?.id]);
+  // Populate selections once per loaded workspace (refetches keep the user's edits).
+  const [populatedFor, setPopulatedFor] = useState<number | null>(null);
+  if (workspace && workspace.id !== populatedFor) {
+    setPopulatedFor(workspace.id);
+    setSelectedServerIds(workspace.servers?.map((s) => s.id) ?? []);
+    setSelectedUserIds(workspace.users?.map((u) => u.id) ?? []);
+  }
 
   const handleOpen = (v: boolean) => {
     if (v) {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Plus, Pencil, Trash2, Loader2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -49,19 +49,21 @@ function MirrorFormDialog({
   const update = useUpdateMirror();
   const pending = create.isPending || update.isPending;
 
-  useEffect(() => {
-    if (!open) return;
-    if (editing) {
+  // Refill the form each time the dialog opens (or is pointed at another mirror).
+  const [filledFor, setFilledFor] = useState({ open: false, editing: null as ImageMirrorItem | null });
+  if (filledFor.open !== open || filledFor.editing !== editing) {
+    setFilledFor({ open, editing });
+    if (open && editing) {
       setForm({
         name: editing.name, kind: editing.kind, os: editing.os || '', version: editing.version || '',
         arch: editing.arch, url: editing.url || '', template: editing.template || '',
         checksum: editing.checksum || '', checksum_algorithm: editing.checksum_algorithm || '',
         description: editing.description || '', enabled: editing.enabled,
       });
-    } else {
+    } else if (open) {
       setForm(EMPTY);
     }
-  }, [open, editing]);
+  }
 
   const set = (k: keyof ImageMirrorInput, v: string | boolean) => setForm((f) => ({ ...f, [k]: v }));
 

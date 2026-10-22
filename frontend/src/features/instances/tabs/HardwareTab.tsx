@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Cpu, Usb, HardDrive, Plus, Trash2, MemoryStick, Loader2, AlertTriangle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -86,14 +86,16 @@ function PlatformCard({
     serverId, node, needsEfiDisk ? 'images' : undefined,
   );
 
-  useEffect(() => {
-    if (!config) return;
+  // Refill from each newly loaded config (also the one already cached on mount).
+  const [syncedConfig, setSyncedConfig] = useState<typeof config>(undefined);
+  if (config && config !== syncedConfig) {
+    setSyncedConfig(config);
     setBios(typeof config.bios === 'string' ? config.bios : 'seabios');
     setMachine(machineToOption(config.machine));
     setVga(typeof config.vga === 'string' ? String(config.vga).split(',')[0] : 'std');
     setScsihw(typeof config.scsihw === 'string' ? config.scsihw : 'virtio-scsi-single');
     setSockets(config.sockets != null ? String(config.sockets) : '');
-  }, [config]);
+  }
 
   const save = () => {
     if (needsEfiDisk && !efiStorage) {
@@ -226,8 +228,10 @@ function CpuOptionsCard({ serverId, vmid, type, node }: Props) {
   const [cpuunits, setCpuunits] = useState('');
   const [numa, setNuma] = useState(false);
 
-  useEffect(() => {
-    if (!config) return;
+  // Refill from each newly loaded config (also the one already cached on mount).
+  const [syncedConfig, setSyncedConfig] = useState<typeof config>(undefined);
+  if (config && config !== syncedConfig) {
+    setSyncedConfig(config);
     // cpu из конфига может быть "host" или "cputype=host,flags=..."
     const raw = typeof config.cpu === 'string' ? config.cpu : '';
     const parsed = raw.includes('cputype=') ? (raw.match(/cputype=([^,]+)/)?.[1] ?? '') : raw;
@@ -236,7 +240,7 @@ function CpuOptionsCard({ serverId, vmid, type, node }: Props) {
     setCpulimit(config.cpulimit != null ? String(config.cpulimit) : '');
     setCpuunits(config.cpuunits != null ? String(config.cpuunits) : '');
     setNuma(Number(config.numa) === 1);
-  }, [config]);
+  }
 
   const save = () => {
     const updates: Record<string, unknown> = {
@@ -344,7 +348,9 @@ function DiskManagementCard({ serverId, vmid, type, node }: Props) {
       .map(([k]) => k);
   }, [config, type]);
 
-  const [moveDiskDev, setMoveDiskDev] = useState('');
+  const [moveDiskPick, setMoveDiskDev] = useState('');
+  // The picked disk, or the first one while none (or a removed one) is picked.
+  const moveDiskDev = disks.includes(moveDiskPick) ? moveDiskPick : (disks[0] ?? '');
   const [moveStorage, setMoveStorage] = useState('');
   const [moveDelete, setMoveDelete] = useState(true);
 
@@ -353,10 +359,6 @@ function DiskManagementCard({ serverId, vmid, type, node }: Props) {
   const [addSize, setAddSize] = useState('16');
   const [addSsd, setAddSsd] = useState(false);
   const [addDiscard, setAddDiscard] = useState(false);
-
-  useEffect(() => {
-    if (disks.length && !disks.includes(moveDiskDev)) setMoveDiskDev(disks[0]);
-  }, [disks, moveDiskDev]);
 
   const doMove = () => {
     if (!moveDiskDev || !moveStorage) return;

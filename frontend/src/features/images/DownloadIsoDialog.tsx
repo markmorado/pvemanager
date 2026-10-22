@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader2, Download, Upload, Wand2, FileUp, X } from 'lucide-react';
 import {
@@ -72,7 +72,7 @@ export default function DownloadIsoDialog({ open, onClose, serverId, node, sourc
   const [mode, setMode] = useState<Mode>('url');
   const [url, setUrl] = useState('');
   const [filename, setFilename] = useState('');
-  const [storage, setStorage] = useState('');
+  const [storagePick, setStorage] = useState('');
   const [checksum, setChecksum] = useState('');
   const [checksumAlgo, setChecksumAlgo] = useState('sha256');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -90,20 +90,26 @@ export default function DownloadIsoDialog({ open, onClose, serverId, node, sourc
   const resolveFilename = useResolveFilename();
   const addDeployTask = useDeployTasksStore((s) => s.addTask);
 
-  useEffect(() => {
-    if (!open) return;
-    setMode('url');
-    setUrl(source?.url ?? '');
-    setFilename(source?.url ? filenameFromUrl(source.url) : '');
-    setChecksum('');
-    setChecksumAlgo('sha256');
-    setSelectedFile(null);
-    setIsDragging(false);
-  }, [open, source?.url]);
-
-  useEffect(() => {
-    if (open) setStorage(storages.length === 1 ? storages[0].storage : '');
-  }, [open, storages]);
+  // Fresh form on every opening (and when the dialog is pointed at another URL).
+  const sourceUrl = source?.url;
+  const [filledFor, setFilledFor] = useState<{ open: boolean; url?: string }>({ open: false });
+  if (filledFor.open !== open || filledFor.url !== sourceUrl) {
+    setFilledFor({ open, url: sourceUrl });
+    if (open) {
+      setMode('url');
+      setUrl(sourceUrl ?? '');
+      setFilename(sourceUrl ? filenameFromUrl(sourceUrl) : '');
+      setStorage('');
+      setChecksum('');
+      setChecksumAlgo('sha256');
+      setSelectedFile(null);
+      setIsDragging(false);
+    }
+  }
+  // A storage that is the only option is picked for the user.
+  const storage = storages.some((s) => s.storage === storagePick)
+    ? storagePick
+    : (storages.length === 1 ? storages[0].storage : '');
 
   // Пользователь мог не тронуть имя — тогда ведём его за URL.
   const effectiveFilename = filename.trim() || filenameFromUrl(url);

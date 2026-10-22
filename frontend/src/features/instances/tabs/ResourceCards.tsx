@@ -134,7 +134,7 @@ export function DiskResizeCard({ serverId, vmid, type, node }: Props) {
   const resizeDisk = useResizeDisk(serverId, vmid, type, node);
 
   const [diskSize, setDiskSize] = useState('');
-  const [diskDevice, setDiskDevice] = useState('');
+  const [diskDevicePick, setDiskDevice] = useState('');
   const [growResult, setGrowResult] = useState<{ grown: boolean; output: string } | null>(null);
 
   // Реальные дисковые устройства из конфига Proxmox (исключая cd-rom).
@@ -148,16 +148,16 @@ export function DiskResizeCard({ serverId, vmid, type, node }: Props) {
   }, [config]);
 
   // Загрузочный диск из boot=order=... — выбираем по умолчанию.
+  const bootOrder = typeof config?.boot === 'string' ? config.boot : '';
   const bootDisk = useMemo(() => {
-    const order = typeof config?.boot === 'string' ? config.boot : '';
-    const first = order.match(/order=([^;]+)/)?.[1]?.split(';')[0]?.trim();
+    const first = bootOrder.match(/order=([^;]+)/)?.[1]?.split(';')[0]?.trim();
     return first && diskDevices.includes(first) ? first : undefined;
-  }, [config?.boot, diskDevices]);
+  }, [bootOrder, diskDevices]);
 
-  useEffect(() => {
-    if (diskDevices.length === 0) return;
-    setDiskDevice((cur) => (diskDevices.includes(cur) ? cur : bootDisk ?? diskDevices[0]));
-  }, [diskDevices, bootDisk]);
+  // The picked disk, or the boot disk (else the first one) until one is picked.
+  const diskDevice = diskDevices.includes(diskDevicePick)
+    ? diskDevicePick
+    : (bootDisk ?? diskDevices[0] ?? '');
 
   // Текущий размер выбранного диска (ГБ). Proxmox не умеет уменьшать диск,
   // поэтому показываем его и не даём ввести значение меньше текущего.
@@ -169,9 +169,11 @@ export function DiskResizeCard({ serverId, vmid, type, node }: Props) {
 
   // При смене диска подставляем текущий размер как стартовое значение,
   // чтобы пользователь увеличивал его, а не угадывал.
-  useEffect(() => {
-    if (currentDiskGb != null) setDiskSize(String(Math.ceil(currentDiskGb)));
-  }, [currentDiskGb]);
+  const [sizeFilledFor, setSizeFilledFor] = useState<number | null>(null);
+  if (currentDiskGb != null && currentDiskGb !== sizeFilledFor) {
+    setSizeFilledFor(currentDiskGb);
+    setDiskSize(String(Math.ceil(currentDiskGb)));
+  }
 
   const handleDiskResize = () => {
     if (!diskSize || !diskDevice) return;

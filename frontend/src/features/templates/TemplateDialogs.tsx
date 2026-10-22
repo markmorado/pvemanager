@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -28,15 +28,21 @@ export function DeployDialog({ template, onClose }: { template: OSTemplate | nul
   const [start, setStart] = useState(true);
 
   // Prefill from the quick-deploy info (authoritative defaults from backend).
-  useEffect(() => {
-    if (info?.template) {
-      setCores(String(info.template.default_cores));
-      setMemory(String(info.template.default_memory));
-      setDisk(String(info.template.default_disk));
-    }
-  }, [info?.template]);
+  const defaults = info?.template;
+  const [prefilledFrom, setPrefilledFrom] = useState<typeof defaults>(undefined);
+  if (defaults && defaults !== prefilledFrom) {
+    setPrefilledFrom(defaults);
+    setCores(String(defaults.default_cores));
+    setMemory(String(defaults.default_memory));
+    setDisk(String(defaults.default_disk));
+  }
 
-  useEffect(() => { if (template) setName(''); }, [template]);
+  // A new template starts with an empty name.
+  const [namedFor, setNamedFor] = useState<OSTemplate | null>(null);
+  if (template && template !== namedFor) {
+    setNamedFor(template);
+    setName('');
+  }
 
   const submit = () => {
     if (!template) return;
@@ -94,12 +100,14 @@ export function DownloadCTDialog({ open, onClose }: { open: boolean; onClose: ()
   const { t } = useTranslation();
   const { data: servers = [] } = useServers();
   const [serverId, setServerId] = useState(0);
-  const [node, setNode] = useState('');
+  const [nodePick, setNode] = useState('');
   const [storage, setStorage] = useState('');
   const [template, setTemplate] = useState('');
 
   const { data: nodesData } = useNodes(serverId);
   const nodes = nodesData?.nodes ?? [];
+  // Default node to the first one.
+  const node = nodePick || nodes[0]?.node || '';
   const { data: available = [], isFetching } = useAvailableLXCTemplates(serverId || undefined, node || undefined);
   const { data: storagesRaw = [] } = useStorages(serverId, node);
   const download = useDownloadLXCTemplate(serverId);
@@ -111,9 +119,6 @@ export function DownloadCTDialog({ open, onClose }: { open: boolean; onClose: ()
     ),
     [storagesRaw],
   );
-
-  // Default node to the first one.
-  useEffect(() => { if (!node && nodes.length) setNode(nodes[0].node); }, [nodes, node]);
 
   const submit = () => {
     if (!node || !storage || !template) { toast.error(t('templates.download_fields_required')); return; }
@@ -189,9 +194,11 @@ export function EditTemplateDialog({ template, onClose }: { template: OSTemplate
   const update = useUpdateTemplate();
   const [groupId, setGroupId] = useState('');
 
-  useEffect(() => {
-    if (template) setGroupId(String(template.group_id));
-  }, [template]);
+  const [filledFor, setFilledFor] = useState<OSTemplate | null>(null);
+  if (template && template !== filledFor) {
+    setFilledFor(template);
+    setGroupId(String(template.group_id));
+  }
 
   const submit = () => {
     if (!template || !groupId) return;

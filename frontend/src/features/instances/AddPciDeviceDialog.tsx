@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Cpu } from 'lucide-react';
 import {
@@ -56,7 +56,10 @@ export default function AddPciDeviceDialog({ open, onClose, serverId, vmid, node
 
   const hostpciKey = useMemo(() => nextHostpciKey(config), [config]);
 
-  useEffect(() => {
+  // Fresh form on every opening.
+  const [wasOpen, setWasOpen] = useState(false);
+  if (open !== wasOpen) {
+    setWasOpen(open);
     if (open) {
       setDeviceId('');
       setPcie(true);
@@ -64,7 +67,7 @@ export default function AddPciDeviceDialog({ open, onClose, serverId, vmid, node
       setPrimaryGpu(false);
       setRomBar(true);
     }
-  }, [open]);
+  }
 
   const buildValue = (): string => {
     // "All functions" пробрасывает всё устройство: 0000:01:00 (без .функции)

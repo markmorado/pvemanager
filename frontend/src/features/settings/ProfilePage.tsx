@@ -66,13 +66,14 @@ function ProfileTab() {
   const [newPwd, setNewPwd] = useState('');
   const [confirmPwd, setConfirmPwd] = useState('');
 
-  useEffect(() => {
-    if (profile) {
-      setDisplayName(profile.full_name || '');
-      setEmail(profile.email || '');
-      setLang(profile.language || 'ru');
-    }
-  }, [profile]);
+  // Refill from each newly loaded profile (also the one already cached on mount).
+  const [syncedProfile, setSyncedProfile] = useState<typeof profile>(undefined);
+  if (profile && profile !== syncedProfile) {
+    setSyncedProfile(profile);
+    setDisplayName(profile.full_name || '');
+    setEmail(profile.email || '');
+    setLang(profile.language || 'ru');
+  }
 
   return (
     <div className="space-y-4">
@@ -338,8 +339,10 @@ function NotificationPreferencesCard() {
   const [quietEnd, setQuietEnd] = useState('');
   const [testChannel, setTestChannel] = useState('all');
 
-  useEffect(() => {
-    if (!prefs) return;
+  // Refill from each newly loaded preferences object (also a cached one on mount).
+  const [syncedPrefs, setSyncedPrefs] = useState<typeof prefs>(undefined);
+  if (prefs && prefs !== syncedPrefs) {
+    setSyncedPrefs(prefs);
     setEnabled(prefs.enabled);
     setEmailEnabled(prefs.email_enabled);
     setEmailCritical(prefs.email_critical_only);
@@ -348,7 +351,7 @@ function NotificationPreferencesCard() {
     setWebhook(prefs.webhook_url ?? '');
     setQuietStart(prefs.quiet_hours_start ?? '');
     setQuietEnd(prefs.quiet_hours_end ?? '');
-  }, [prefs]);
+  }
 
   const handleSave = () => {
     update.mutate({

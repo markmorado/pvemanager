@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Network } from 'lucide-react';
 import {
@@ -76,7 +76,10 @@ export default function AddNetworkInterfaceDialog({ open, onClose, serverId, vmi
     return `net${n}`;
   }, [config]);
 
-  useEffect(() => {
+  // Fresh form on every opening.
+  const [wasOpen, setWasOpen] = useState(false);
+  if (open !== wasOpen) {
+    setWasOpen(open);
     if (open) {
       setModel('virtio');
       setBridge('');
@@ -88,7 +91,7 @@ export default function AddNetworkInterfaceDialog({ open, onClose, serverId, vmi
       setIpCidr('');
       setGateway('');
     }
-  }, [open]);
+  }
 
   const validationError = (): string | null => {
     if (!bridge) return t('netif.err_bridge_required', 'Выберите сетевой мост');

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -20,14 +20,12 @@ const PRESETS = [...TIMEFRAME_PRESETS, { tf: 'year', label: '1y' }];
 
 export default function NodeGraphs({ serverId, nodeNames }: Props) {
   const { t } = useTranslation();
-  const [node, setNode] = useState(nodeNames[0] || '');
+  const [nodePick, setNode] = useState('');
   const [timeframe, setTimeframe] = useState('hour');
 
-  // Nodes arrive asynchronously; adopt the first one once it shows up, and
-  // fall back if the selected node disappears from the cluster.
-  useEffect(() => {
-    if (nodeNames.length && !nodeNames.includes(node)) setNode(nodeNames[0]);
-  }, [nodeNames, node]);
+  // Nodes arrive asynchronously; use the first one until a node is picked, and
+  // fall back to it if the picked node disappears from the cluster.
+  const node = nodeNames.includes(nodePick) ? nodePick : (nodeNames[0] ?? '');
 
   const { data: points = [], isLoading } = useNodeMetrics(serverId, node, timeframe);
   const xTick = tickFormatterFor(timeframe);

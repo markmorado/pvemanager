@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Plus, Pencil, Trash2, Database, CalendarClock, Power, PowerOff, AlertTriangle, Search } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -357,9 +357,12 @@ function NativeJobDialog({ serverId, open, onOpenChange, editing, backupStorages
   const update = useUpdateProxmoxJob(serverId);
   const pending = create.isPending || update.isPending;
 
-  useEffect(() => {
+  // Refill the form each time the dialog opens (or is pointed at another job).
+  const [filledFor, setFilledFor] = useState({ open: false, editing: null as NativeJob | null });
+  if (filledFor.open !== open || filledFor.editing !== editing) {
+    setFilledFor({ open, editing });
     if (open) setForm(jobToForm(editing));
-  }, [open, editing]);
+  }
 
   const set = <K extends keyof NativeJobForm>(k: K, v: NativeJobForm[K]) =>
     setForm(prev => ({ ...prev, [k]: v }));
@@ -494,19 +497,11 @@ export default function StoragesTab() {
   const { t } = useTranslation();
   const confirm = useConfirm();
   const { data: servers = [] } = useServers();
-  const [serverId, setServerId] = useState(0);
-
-  useEffect(() => {
-    if (serverId === 0 && servers.length > 0) setServerId(servers[0].id);
-  }, [servers, serverId]);
-  // Сбросить протухший выбор сервера, если его нет в списке активной рабочей
-  // области (например, после переключения рабочей области) — иначе выбор
-  // молча остаётся, а Select показывает голый id сервера вместо имени.
-  useEffect(() => {
-    if (serverId !== 0 && servers.length > 0 && !servers.some((s) => s.id === serverId)) {
-      setServerId(0);
-    }
-  }, [servers, serverId]);
+  const [serverPick, setServerId] = useState(0);
+  // Выбранный сервер или первый из списка. Протухший выбор (сервера нет в
+  // активной рабочей области, например после её переключения) не держим —
+  // иначе Select показывает голый id сервера вместо имени.
+  const serverId = servers.some((s) => s.id === serverPick) ? serverPick : (servers[0]?.id ?? 0);
 
   const { data: storagesData, isLoading } = useBackupStorages(serverId);
   const { data: jobsData } = useProxmoxBackupJobs(serverId);

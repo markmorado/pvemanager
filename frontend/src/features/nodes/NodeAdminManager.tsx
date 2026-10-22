@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { RefreshCw, Server, Play, Square, RotateCw, PackageCheck, Download } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -26,10 +26,9 @@ function stateVariant(s?: string): 'default' | 'secondary' | 'destructive' {
 
 export default function NodeAdminManager({ serverId, nodeNames }: { serverId: number; nodeNames: string[] }) {
   const { t } = useTranslation();
-  const [node, setNode] = useState('');
-  useEffect(() => {
-    if (nodeNames.length > 0 && !nodeNames.includes(node)) setNode(nodeNames[0]);
-  }, [nodeNames, node]);
+  const [nodePick, setNode] = useState('');
+  // The picked node, or the first one while none (or a vanished one) is picked.
+  const node = nodeNames.includes(nodePick) ? nodePick : (nodeNames[0] ?? '');
 
   const { data: servicesData, refetch, isFetching } = useNodeServices(serverId, node);
   const serviceAction = useServiceAction(serverId, node);

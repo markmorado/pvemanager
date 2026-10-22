@@ -46,7 +46,7 @@ export type ImageCatalogSection = 'vm-images' | 'lxc' | 'iso' | 'repositories';
 export default function ImageCatalogPanel({ section }: { section: ImageCatalogSection }) {
   const { t } = useTranslation();
   const [serverId, setServerId] = useState<number | null>(null);
-  const [node, setNode] = useState<string>('');
+  const [nodePick, setNode] = useState<string>('');
   const [search, setSearch] = useState('');
   // По умолчанию показываем amd64 (доминирующая платформа PVE); уточняется по арх ноды
   const [archFilter, setArchFilter] = useState<string>('amd64');
@@ -60,6 +60,8 @@ export default function ImageCatalogPanel({ section }: { section: ImageCatalogSe
   const isAdmin = !!profile?.is_admin;
   const { data: nodesResp } = useNodes(serverId ?? 0);
   const nodes = nodesResp?.nodes ?? [];
+  // Выбранная нода, а пока выбора нет — первая нода сервера.
+  const node = nodePick || nodes[0]?.node || '';
 
   const { data: catalog } = useImageCatalog();
   const { data: lxcRepo = [] } = useImageLXCTemplates(serverId ?? undefined, node || undefined);
@@ -79,9 +81,6 @@ export default function ImageCatalogPanel({ section }: { section: ImageCatalogSe
       setNode('');
     }
   }, [servers, serverId]);
-  useEffect(() => {
-    if (!node && nodes.length > 0) setNode(nodes[0].node);
-  }, [nodes, node]);
   // Подстроить фильтр архитектуры под выбранную ноду (если арх определилась)
   useEffect(() => {
     if (nodeArch?.arch) setArchFilter(nodeArch.arch);

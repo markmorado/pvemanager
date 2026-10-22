@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader2, Disc, Eye, EyeOff, Sparkles, Copy, KeyRound, FileText, Terminal as TerminalIcon, Play, Square, RotateCcw, Power, AlertTriangle, ArrowRightLeft } from 'lucide-react';
 import {
@@ -110,7 +110,10 @@ function CloneDialog({ open, onClose, serverId, vmid, type, node, name }: Omit<P
   const effectiveNode = targetNode || node;
   const { data: storages = [] } = useLXCStorages(serverId, effectiveNode);
 
-  useEffect(() => {
+  // Fresh form on every opening.
+  const [wasOpen, setWasOpen] = useState(false);
+  if (open !== wasOpen) {
+    setWasOpen(open);
     if (open) {
       setNewName('');
       setFull(true);
@@ -119,7 +122,7 @@ function CloneDialog({ open, onClose, serverId, vmid, type, node, name }: Omit<P
       setDescription('');
       setOwnerId(null);
     }
-  }, [open]);
+  }
 
   const submit = () => {
     if (!newName.trim()) return;
@@ -252,13 +255,17 @@ function MigrateDialog({ open, onClose, serverId, vmid, type, node, name }: Omit
   const isRunning = status?.status === 'running';
   const { data: storages = [] } = useLXCStorages(serverId, targetNode || node);
 
-  useEffect(() => {
-    if (open) {
+  // Fresh form on every opening; "online" follows the guest's state, which
+  // may only arrive after the dialog opened.
+  const [filledFor, setFilledFor] = useState({ open: false, isRunning: false });
+  if (filledFor.open !== open || filledFor.isRunning !== isRunning) {
+    setFilledFor({ open, isRunning });
+    if (open && !filledFor.open) {
       setTargetNode('');
       setTargetStorage('');
-      setOnline(isRunning);
     }
-  }, [open, isRunning]);
+    if (open) setOnline(isRunning);
+  }
 
   const submit = () => {
     if (!targetNode) return;
@@ -372,16 +379,20 @@ function RemoteMigrateDialog({ open, onClose, serverId, vmid, type, node, name }
   const { data: networksResp } = useNodeNetworks(targetServerId ?? 0, targetNode);
   const bridges = (networksResp?.interfaces ?? []).filter((i) => i.type === 'bridge');
 
-  useEffect(() => {
-    if (open) {
+  // Fresh form on every opening; "online" follows the guest's state, which
+  // may only arrive after the dialog opened.
+  const [filledFor, setFilledFor] = useState({ open: false, isRunning: false });
+  if (filledFor.open !== open || filledFor.isRunning !== isRunning) {
+    setFilledFor({ open, isRunning });
+    if (open && !filledFor.open) {
       setTargetServerId(null);
       setTargetNode('');
       setTargetStorage('');
       setTargetBridge('');
-      setOnline(isRunning);
       setDeleteSource(true);
     }
-  }, [open, isRunning]);
+    if (open) setOnline(isRunning);
+  }
 
   const submit = () => {
     if (!targetServerId || !targetNode) return;
@@ -669,13 +680,17 @@ function NotesDialog({ open, onClose, serverId, vmid, type, node, description }:
   const { t } = useTranslation();
   const config = useVMConfig(serverId, vmid, type, node, open);
   const remote = (config.data?.description as string | undefined) ?? description ?? '';
-  const [value, setValue] = useState('');
+  // Until the user types, the field mirrors the stored notes (which may load
+  // after the dialog opened); closing the dialog discards the edit.
+  const [edited, setEdited] = useState('');
   const [touched, setTouched] = useState(false);
-
-  useEffect(() => {
-    if (open && !touched) setValue(remote);
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
     if (!open) setTouched(false);
-  }, [open, remote, touched]);
+  }
+  const value = touched ? edited : remote;
+  const setValue = setEdited;
 
   const mut = useUpdateNotes(serverId, vmid, type, node);
 
@@ -831,9 +846,13 @@ function IsoDialog({ open, onClose, serverId, vmid, node, type }: Omit<Props, 'o
     return v.split(',')[0] || null;
   }, [config.data, device]);
 
-  useEffect(() => {
+  // Preselect the ISO mounted on the chosen device whenever the dialog opens,
+  // the device changes or the config (re)loads.
+  const [filledFor, setFilledFor] = useState({ open: false, device: '', currentVolid: null as string | null });
+  if (filledFor.open !== open || filledFor.device !== device || filledFor.currentVolid !== currentVolid) {
+    setFilledFor({ open, device, currentVolid });
     if (open) setVolid(currentVolid || '');
-  }, [open, device, currentVolid]);
+  }
 
   if (!isQemu) {
     return (
@@ -967,7 +986,7 @@ function BackupDialog({ open, onClose, serverId, vmid, type, node, name }: Omit<
   const { t } = useTranslation();
   const { data: storagesData } = useBackupStorages(open ? serverId : 0);
   const createBackup = useCreateBackup();
-  const [storage, setStorage] = useState('');
+  const [storagePick, setStorage] = useState('');
   const [mode, setMode] = useState('snapshot');
   const [compress, setCompress] = useState('zstd');
 
@@ -977,12 +996,8 @@ function BackupDialog({ open, onClose, serverId, vmid, type, node, name }: Omit<
       .filter((s) => (s.content || '').includes('backup'))
       .filter((s) => !s.nodes || s.nodes.split(',').includes(node));
   }, [storagesData, node]);
-
-  useEffect(() => {
-    if (open && storages.length > 0 && !storages.some((s) => s.storage === storage)) {
-      setStorage(storages[0].storage);
-    }
-  }, [open, storages, storage]);
+  // The picked storage, or the first suitable one.
+  const storage = storages.some((s) => s.storage === storagePick) ? storagePick : (storages[0]?.storage ?? '');
 
   const submit = () => {
     if (!storage) return;

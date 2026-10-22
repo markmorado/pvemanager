@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { Loader2, Plus, Trash2 } from 'lucide-react';
@@ -32,9 +32,11 @@ export default function ScriptEditDialog({ open, onOpenChange, script }: Props) 
   const [content, setContent] = useState('#!/bin/bash\n');
   const [params, setParams] = useState<ScriptParamField[]>([]);
 
-  useEffect(() => {
-    if (!open) return;
-    if (script) {
+  // Refill the form each time the dialog opens (or is pointed at another script).
+  const [filledFor, setFilledFor] = useState<{ open: boolean; script: typeof script }>({ open: false, script: null });
+  if (filledFor.open !== open || filledFor.script !== script) {
+    setFilledFor({ open, script });
+    if (open && script) {
       setName(script.name);
       setSlug(script.slug);
       setDescription(script.description || '');
@@ -43,11 +45,11 @@ export default function ScriptEditDialog({ open, onOpenChange, script }: Props) 
       setInterpreter(script.interpreter);
       setContent(script.content || '');
       setParams(script.params_schema || []);
-    } else {
+    } else if (open) {
       setName(''); setSlug(''); setDescription(''); setCategory('');
       setTargetType('guest'); setInterpreter('/bin/bash'); setContent('#!/bin/bash\n'); setParams([]);
     }
-  }, [open, script]);
+  }
 
   const create = useCreateScript();
   const update = useUpdateScript(script?.id || 0);

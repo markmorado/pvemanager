@@ -30,9 +30,11 @@ function PoolMembers({ serverId, poolid, vms }: { serverId: number; poolid: stri
   const updatePool = useUpdatePool(serverId);
   const [addVmid, setAddVmid] = useState('');
 
-  const members = data?.pool?.members ?? [];
-  const memberVmids = new Set(members.filter(m => m.vmid != null).map(m => m.vmid));
-  const available = useMemo(() => vms.filter(v => !memberVmids.has(v.vmid)), [vms, memberVmids]);
+  const members = useMemo(() => data?.pool?.members ?? [], [data]);
+  const available = useMemo(() => {
+    const memberVmids = new Set(members.filter(m => m.vmid != null).map(m => m.vmid));
+    return vms.filter(v => !memberVmids.has(v.vmid));
+  }, [vms, members]);
 
   const add = () => {
     if (!addVmid) return;

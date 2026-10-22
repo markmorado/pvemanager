@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { HardDrive, RefreshCw, Activity, Trash2, Plus, Database, Eraser } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -103,9 +103,12 @@ function CreateZfsDialog({ serverId, node, disks, open, onClose }: {
   // Свободные диски (без файловой системы / роли) — кандидаты под пул.
   const available = useMemo(() => disks.filter(d => !d.used), [disks]);
 
-  useEffect(() => {
+  // Fresh form on every opening.
+  const [wasOpen, setWasOpen] = useState(false);
+  if (open !== wasOpen) {
+    setWasOpen(open);
     if (open) { setName(''); setRaid('single'); setAshift('12'); setCompression('on'); setSelected(new Set()); }
-  }, [open]);
+  }
 
   const toggle = (dev: string) => setSelected(prev => {
     const next = new Set(prev);
@@ -188,10 +191,9 @@ export default function DiskManager({ serverId, nodeNames }: { serverId: number;
   const { t } = useTranslation();
   const confirm = useConfirm();
 
-  const [node, setNode] = useState('');
-  useEffect(() => {
-    if (nodeNames.length > 0 && !nodeNames.includes(node)) setNode(nodeNames[0]);
-  }, [nodeNames, node]);
+  const [nodePick, setNode] = useState('');
+  // The picked node, or the first one while none (or a vanished one) is picked.
+  const node = nodeNames.includes(nodePick) ? nodePick : (nodeNames[0] ?? '');
 
   const { data: disksData, isLoading, refetch, isFetching } = useNodeDisks(serverId, node);
   const { data: zfsData } = useZfsPools(serverId, node);

@@ -636,7 +636,7 @@ export default function ClusterPage() {
   const [ejectState, setEjectState] = useState<{ via: ClusterServerEntry; node: ClusterServerEntry } | null>(null);
 
   const standalone = topology?.standalone ?? [];
-  const clusters = topology?.clusters ?? {};
+  const clusters = useMemo(() => topology?.clusters ?? {}, [topology]);
   const clusterMembers = useMemo(() => Object.values(clusters).flat(), [clusters]);
   const hasClusters = Object.keys(clusters).length > 0;
 
