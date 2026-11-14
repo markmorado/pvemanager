@@ -131,13 +131,20 @@ class ProxmoxClient(VmMixin, LxcMixin, ClusterMixin, StorageMixin, NetworkMixin,
                     password=server.password,
                     verify_ssl=server.verify_ssl,
                 )
-            return cls(
+            client = cls(
                 host=host,
                 user=server.api_user,
                 token_name=server.api_token_name,
                 token_value=server.api_token_value,
                 verify_ssl=server.verify_ssl,
             )
+            # API calls go through the token, but a password kept from token
+            # auto-provisioning is still needed for root SSH to the node
+            # (pct exec/push in App Store, golden template build, pvecm delnode).
+            # Without it SSH had no credentials at all and failed with
+            # "No authentication methods available".
+            client._password = getattr(server, "password", None) or None
+            return client
 
         def __init__(self, host: str, user: str = "root@pam", password: str = None,
                      token_name: str = None, token_value: str = None, verify_ssl: bool = True,

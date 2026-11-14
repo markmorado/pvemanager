@@ -303,8 +303,18 @@ class SSHClient:
                 self.last_error = f"SSH authentication failed for {self.hostname}: {e}"
                 logger.error(f"Authentication failed for {self.hostname}: {e}")
                 return False
-            except (SSHException, NoValidConnectionsError, socket.timeout, 
+            except (SSHException, NoValidConnectionsError, socket.timeout,
                    socket.error, ConnectionRefusedError) as e:
+                if isinstance(e, SSHException) and "No authentication methods available" in str(e):
+                    # No password and no usable key: retrying cannot help.
+                    self.last_error = (
+                        f"SSH connection to {self.hostname} failed: no credentials for "
+                        f"{self.username}@{self.hostname}. Store the root password on the "
+                        f"server (it is kept for SSH even with API-token auth) or add the "
+                        f"panel's SSH public key to the node's authorized_keys."
+                    )
+                    logger.error(self.last_error)
+                    return False
                 logger.warning(f"Connection attempt {attempt + 1} failed for {self.hostname}: {e}")
                 if attempt == self.max_retries - 1:
                     self.last_error = f"SSH connection to {self.hostname} failed: {e}"
